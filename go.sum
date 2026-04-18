@@ -1,5 +1,7 @@
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
+github.com/nhlmg93/gotor v0.0.0-20260418040523-a1d4ff984118 h1:9Bx4yuvrj0SAoS2Tide2w7KTZlsWJ9d0kJPoBzAsZWA=
+github.com/nhlmg93/gotor v0.0.0-20260418040523-a1d4ff984118/go.mod h1:/0THknhee6ww8iyZ0EM7FzsGKzerVGgkERCT+7av398=
 golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
 golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/term v0.42.0 h1:UiKe+zDFmJobeJ5ggPwOshJIVt6/Ft0rcfrXZDLWAWY=
