@@ -2,11 +2,9 @@ package main
 
 import (
 	"bufio"
-	"context"
-	"fmt"
 	"os"
-	"os/exec"
 
+	"github.com/nhlmg93/gotor/actor"
 	"golang.org/x/term"
 )
 
@@ -18,129 +16,99 @@ func main() {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	pane1, _ := NewPane(exec.Command("/bin/sh"))
-	pane2, _ := NewPane(exec.Command("/bin/sh"))
-	defer pane1.Close()
-	defer pane2.Close()
+	// Create supervisor (just handles top-level shutdown)
+	supervisor := NewSupervisorActor()
+	supervisorRef := actor.Spawn(supervisor, 10)
+	defer supervisorRef.Shutdown()
 
-	win := NewWindow()
-	win.AddPane(pane1)
-	win.AddPane(pane2)
+	// Create session
+	sessionRef := SpawnSessionActor(1, supervisorRef)
+	sessionRef.Send(CreateWindow{})
 
-	switchOutput := make(chan *Pane)
-	go copyOutput(switchOutput)
-	switchOutput <- win.Active
+	// Run input loop in goroutine
+	go runActorInputLoop(sessionRef, oldState)
 
-	fmt.Println("Ctrl+A 1/2=switch c=create x=kill q=quit")
-	runInputLoop(win, switchOutput)
+	// Wait for supervisor to signal quit (when last session closes)
+	supervisor.WaitForQuit()
+
+	// Restore terminal before exit
+	term.Restore(int(os.Stdin.Fd()), oldState)
 }
 
-func copyOutput(switchPane <-chan *Pane) {
-	var cancel func()
-	for {
-		newPane := <-switchPane
-		if cancel != nil {
-			cancel()
-		}
-		ctx, cncl := context.WithCancel(context.Background())
-		cancel = cncl
-		go func(p *Pane) {
-			buf := make([]byte, 1024)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					n, err := p.PTY.TTY.Read(buf)
-					if err != nil {
-						return
-					}
-					os.Stdout.Write(buf[:n])
-				}
-			}
-		}(newPane)
-	}
-}
-
-func runInputLoop(win *Window, switchOutput chan<- *Pane) {
-	prefixMode := false
+func runActorInputLoop(sessionRef *actor.Ref, oldState *term.State) {
 	reader := bufio.NewReader(os.Stdin)
+	prefixMode := false
 
 	for {
-		select {
-		case <-win.Active.Exited:
-			fmt.Printf("\n[Pane %d exited]\n", win.Active.ID)
-			win.Active.Close()
-			if len(win.Panes) == 1 {
+		ch, _ := reader.ReadByte()
+		if prefixMode {
+			prefixMode = false
+			switch ch {
+			case '1', '2':
+				sessionRef.Send(SwitchToPane{Index: int(ch - '1')})
+			case 'c':
+				// Need to get active window first
+				reply := sessionRef.Ask(GetActiveWindow{})
+				winRef := <-reply
+				if winRef != nil {
+					winRef.(*actor.Ref).Send(CreatePane{Cmd: "/bin/sh", Args: []string{}})
+				}
+			case 'x':
+				// Get active pane and kill it
+				reply := sessionRef.Ask(GetActivePane{})
+				paneRef := <-reply
+				if paneRef != nil {
+					paneRef.(*actor.Ref).Send(KillPane{})
+				}
+			case 'n':
+				sessionRef.Send(SwitchWindow{Delta: 1})
+			case 'p':
+				sessionRef.Send(SwitchWindow{Delta: -1})
+			case 'w':
+				sessionRef.Send(CreateWindow{})
+			case 'q':
+				term.Restore(int(os.Stdin.Fd()), oldState)
 				return
-			}
-			// Remove exited pane and switch to another
-			for i, p := range win.Panes {
-				if p == win.Active {
-					win.Panes = append(win.Panes[:i], win.Panes[i+1:]...)
-					break
+			default:
+				// Get active pane and write to it
+				reply := sessionRef.Ask(GetActivePane{})
+				paneRef := <-reply
+				if paneRef != nil {
+					paneRef.(*actor.Ref).Send(WriteToPane{Data: []byte{1, ch}})
 				}
 			}
-			win.Active = win.Panes[0]
-			switchOutput <- win.Active
-		default:
-			ch, _ := reader.ReadByte()
-			if prefixMode {
-				pane, quit := handlePrefixCommand(ch, win)
-				if quit {
-					return
-				}
-				if pane != nil {
-					switchOutput <- pane
-				}
-				prefixMode = false
-			} else if ch == 1 {
-				prefixMode = true
-			} else {
-				win.Active.PTY.TTY.Write([]byte{ch})
+		} else if ch == 1 { // Ctrl+A
+			prefixMode = true
+		} else {
+			// Get active pane and write to it
+			reply := sessionRef.Ask(GetActivePane{})
+			paneRef := <-reply
+			if paneRef != nil {
+				paneRef.(*actor.Ref).Send(WriteToPane{Data: []byte{ch}})
 			}
 		}
 	}
 }
 
-func handlePrefixCommand(ch byte, win *Window) (*Pane, bool) {
-	switch ch {
-	case '1':
-		if len(win.Panes) >= 1 {
-			win.SetActivePane(win.Panes[0])
-			fmt.Printf("\n[Switched to pane %d]\n", win.Active.ID)
-			return win.Active, false
-		}
-	case '2':
-		if len(win.Panes) >= 2 {
-			win.SetActivePane(win.Panes[1])
-			fmt.Printf("\n[Switched to pane %d]\n", win.Active.ID)
-			return win.Active, false
-		}
-	case 'c':
-		pane, _ := NewPane(exec.Command("/bin/sh"))
-		win.AddPane(pane)
-		fmt.Printf("\n[Created pane %d]\n", pane.ID)
-		return win.Active, false
-	case 'x':
-		win.Active.Close()
-		fmt.Printf("\n[Killed pane %d]\n", win.Active.ID)
-		// Remove killed pane from window
-		for i, p := range win.Panes {
-			if p == win.Active {
-				win.Panes = append(win.Panes[:i], win.Panes[i+1:]...)
-				break
-			}
-		}
-		if len(win.Panes) > 0 {
-			win.Active = win.Panes[0]
-			return win.Active, false
-		}
-		return nil, true
-	case 'q':
-		return nil, true
-	default:
-		win.Active.PTY.TTY.Write([]byte{1, ch})
+// SupervisorActor handles top-level coordination
+type SupervisorActor struct {
+	quitChan chan struct{}
+}
+
+func NewSupervisorActor() *SupervisorActor {
+	return &SupervisorActor{
+		quitChan: make(chan struct{}),
 	}
-	return nil, false
+}
+
+func (s *SupervisorActor) Receive(msg any) {
+	switch msg.(type) {
+	case SessionEmpty:
+		// Last session closed, signal quit
+		close(s.quitChan)
+	}
+}
+
+func (s *SupervisorActor) WaitForQuit() {
+	<-s.quitChan
 }
