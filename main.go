@@ -1,7 +1,18 @@
 package main
 
-import "fmt"
+import (
+	"io"
+	"os"
+	"os/exec"
+)
 
 func main() {
-	fmt.Println("Hello World")
+	pane, err := NewPane(exec.Command("/bin/sh"))
+	if err != nil {
+		panic(err)
+	}
+	defer pane.Close()
+
+	go io.Copy(pane.PTY.TTY, os.Stdin)
+	io.Copy(os.Stdout, pane.PTY.TTY)
 }
