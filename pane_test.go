@@ -44,3 +44,17 @@ func TestPaneUniqueIDs(t *testing.T) {
 		t.Error("Expected pane IDs to be unique")
 	}
 }
+
+func TestPaneExited(t *testing.T) {
+	pane, _ := NewPane(exec.Command("/bin/true"))
+
+	if pane.Exited() {
+		t.Error("Expected pane to not be exited immediately after creation")
+	}
+
+	pane.PTY.Wait()
+
+	if !pane.Exited() {
+		t.Error("Expected pane to be exited after process finishes")
+	}
+}

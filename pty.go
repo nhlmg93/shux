@@ -29,3 +29,8 @@ func (p *PTY) Close() error {
 	}
 	return nil
 }
+
+// Wait waits for the process to exit
+func (p *PTY) Wait() error {
+	return p.Cmd.Wait()
+}

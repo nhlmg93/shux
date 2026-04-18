@@ -31,3 +31,11 @@ func (p *Pane) Close() error {
 	}
 	return nil
 }
+
+// Exited returns true if the pane's process has exited
+func (p *Pane) Exited() bool {
+	if p.PTY == nil || p.PTY.Cmd == nil {
+		return true
+	}
+	return p.PTY.Cmd.ProcessState != nil
+}
