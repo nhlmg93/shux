@@ -9,8 +9,9 @@ var paneIDCounter uint32
 
 // Pane represents a single terminal pane with a PTY
 type Pane struct {
-	ID  uint32
-	PTY *PTY
+	ID     uint32
+	PTY    *PTY
+	Exited chan struct{}
 }
 
 // NewPane creates a new pane running the given command
@@ -21,7 +22,14 @@ func NewPane(cmd *exec.Cmd) (*Pane, error) {
 	}
 
 	id := atomic.AddUint32(&paneIDCounter, 1)
-	return &Pane{ID: id, PTY: pty}, nil
+	pane := &Pane{ID: id, PTY: pty, Exited: make(chan struct{})}
+	go pane.waitForExit()
+	return pane, nil
+}
+
+func (p *Pane) waitForExit() {
+	p.PTY.Wait()
+	close(p.Exited)
 }
 
 // Close closes the pane and its PTY
@@ -32,8 +40,8 @@ func (p *Pane) Close() error {
 	return nil
 }
 
-// Exited returns true if the pane's process has exited
-func (p *Pane) Exited() bool {
+// IsExited returns true if the pane's process has exited
+func (p *Pane) IsExited() bool {
 	if p.PTY == nil || p.PTY.Cmd == nil {
 		return true
 	}

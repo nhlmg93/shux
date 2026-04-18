@@ -47,14 +47,24 @@ func TestPaneUniqueIDs(t *testing.T) {
 
 func TestPaneExited(t *testing.T) {
 	pane, _ := NewPane(exec.Command("/bin/true"))
+	defer pane.Close()
 
-	if pane.Exited() {
+	if pane.IsExited() {
 		t.Error("Expected pane to not be exited immediately after creation")
 	}
 
-	pane.PTY.Wait()
+	// Wait for process to exit via the channel
+	<-pane.Exited
 
-	if !pane.Exited() {
+	if !pane.IsExited() {
 		t.Error("Expected pane to be exited after process finishes")
 	}
+}
+
+func TestPaneExitedChannel(t *testing.T) {
+	pane, _ := NewPane(exec.Command("/bin/true"))
+	defer pane.Close()
+
+	// Wait for the Exited channel to close
+	<-pane.Exited
 }
