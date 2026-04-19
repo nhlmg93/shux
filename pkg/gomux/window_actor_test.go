@@ -15,12 +15,12 @@ func TestWindowActorCreate(t *testing.T) {
 	if w.id != 1 {
 		t.Errorf("Expected window ID 1, got %d", w.id)
 	}
-	if len(w.panes) != 0 {
-		t.Error("Expected new window to have no panes")
+	if len(w.terms) != 0 {
+		t.Error("Expected new window to have no terms")
 	}
 }
 
-func TestWindowActorHandlePaneExited(t *testing.T) {
+func TestWindowActorHandleTermExited(t *testing.T) {
 	parent := &mockActor{}
 	parentRef := actor.Spawn(parent, 10)
 	defer parentRef.Stop()
@@ -29,15 +29,15 @@ func TestWindowActorHandlePaneExited(t *testing.T) {
 	ref := actor.Spawn(w, 10)
 	w.self = ref
 
-	// Simulate having a pane
-	w.panes[1] = ref
+	// Simulate having a term
+	w.terms[1] = ref
 	w.active = 1
 
-	// Handle pane exited
-	w.Receive(PaneExited{ID: 1})
+	// Handle term exited
+	w.Receive(TermExited{ID: 1})
 
-	// Pane should be removed
-	if _, exists := w.panes[1]; exists {
-		t.Error("Expected pane to be removed after exit")
+	// Term should be removed
+	if _, exists := w.terms[1]; exists {
+		t.Error("Expected term to be removed after exit")
 	}
 }
