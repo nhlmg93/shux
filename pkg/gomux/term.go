@@ -7,37 +7,49 @@ package gomux
 */
 import "C"
 import (
+	"os/exec"
 	"unsafe"
 
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// Term replaces PaneActor - each actor IS an Alacritty terminal
+// Term replaces PaneActor - wraps Alacritty FFI + Go PTY
 type Term struct {
 	id     uint32
-	term   C.GomuxPane  // Rust handle
+	term   C.GomuxPane  // Alacritty FFI handle
+	pty    *PTY          // Go PTY with shell process
 	parent *actor.Ref
 	self   *actor.Ref
 }
 
-// New creates terminal with shell
+// New creates terminal with shell using Go PTY + Alacritty Grid
 func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
+	// Create Alacritty Grid
 	cShell := C.CString(shell)
 	defer C.free(unsafe.Pointer(cShell))
 	
-	term := C.gomux_pane_new(C.uint(rows), C.uint(cols), cShell)
-	if term == nil {
+	alacrittyTerm := C.gomux_pane_new(C.uint(rows), C.uint(cols), cShell)
+	if alacrittyTerm == nil {
+		return nil
+	}
+	
+	// Create Go PTY with shell
+	cmd := exec.Command(shell)
+	pty, err := Start(cmd)
+	if err != nil {
+		C.gomux_pane_free(alacrittyTerm)
 		return nil
 	}
 	
 	return &Term{
 		id:     id,
-		term:   term,
+		term:   alacrittyTerm,
+		pty:    pty,
 		parent: parent,
 	}
 }
 
-// Spawn creates and spawns a Term
+// Spawn creates and spawns a Term with PTY read loop
 func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
 	t := New(id, rows, cols, shell, parent)
 	if t == nil {
@@ -45,23 +57,51 @@ func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Re
 	}
 	ref := actor.Spawn(t, 10)
 	t.self = ref
+	
+	// Start PTY read loop in goroutine
+	go t.readLoop()
+	
 	return ref
+}
+
+// readLoop reads from PTY and feeds bytes to Alacritty
+func (t *Term) readLoop() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := t.pty.TTY.Read(buf)
+		if err != nil {
+			// PTY closed or error
+			t.notifyExited()
+			return
+		}
+		if n > 0 {
+			// Feed bytes to Alacritty FFI
+			C.gomux_pane_write(t.term, (*C.char)(unsafe.Pointer(&buf[0])), C.uint(n))
+			// Notify parent that content changed
+			if t.parent != nil {
+				t.parent.Send(GridUpdated{ID: t.id})
+			}
+		}
+	}
+}
+
+func (t *Term) notifyExited() {
+	if t.parent != nil {
+		t.parent.Send(TermExited{ID: t.id})
+	}
 }
 
 func (t *Term) Receive(msg any) {
 	switch m := msg.(type) {
 	case WriteToTerm:
-		data := []byte(m.Data)
-		if len(data) > 0 {
-			C.gomux_pane_write(t.term, (*C.char)(unsafe.Pointer(&data[0])), C.uint(len(data)))
-		}
+		// Write user input directly to PTY
+		t.pty.TTY.Write([]byte(m.Data))
 	case KillTerm:
+		t.pty.Close()
 		C.gomux_pane_free(t.term)
 		if t.parent != nil {
 			t.parent.Send(TermExited{ID: t.id})
 		}
-	case GetTermContent:
-		// Handled via Ask
 	case actor.AskEnvelope:
 		t.handleAsk(m)
 	}
@@ -70,11 +110,11 @@ func (t *Term) Receive(msg any) {
 func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 	switch envelope.Msg.(type) {
 	case GetTermContent:
-		// Tick to process any pending PTY data
+		// Process any pending bytes (though readLoop handles most)
 		C.gomux_pane_tick(t.term)
 		
 		content := &TermContent{
-			Lines: make([]string, 24), // TODO: get actual size
+			Lines: make([]string, 24), // TODO: get actual size from Alacritty
 		}
 		
 		buf := make([]byte, 1024)
@@ -96,17 +136,14 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 	}
 }
 
-// Tick should be called regularly to process PTY output
-func (t *Term) Tick() {
-	C.gomux_pane_tick(t.term)
-}
-
-// NeedsRender checks if content changed
-func (t *Term) NeedsRender() bool {
-	return C.gomux_pane_needs_render(t.term) == 1
-}
-
-// MarkRendered resets dirty flag
+// MarkRendered resets dirty flag (optional optimization)
 func (t *Term) MarkRendered() {
 	C.gomux_pane_mark_rendered(t.term)
+}
+
+// Resize updates terminal size
+func (t *Term) Resize(rows, cols int) {
+	// TODO: Resize Alacritty grid and PTY
+	_ = rows
+	_ = cols
 }
