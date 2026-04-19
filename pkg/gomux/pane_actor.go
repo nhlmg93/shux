@@ -12,6 +12,7 @@ type PaneActor struct {
 	pty    *PTY
 	parent *actor.Ref
 	self   *actor.Ref
+	grid   *Grid
 }
 
 // Receive handles messages for the pane
@@ -26,6 +27,19 @@ func (p *PaneActor) Receive(msg any) {
 			p.pty.Close()
 		}
 		p.notifyExited()
+	case ResizeGrid:
+		p.grid.Resize(m.Width, m.Height)
+	case actor.AskEnvelope:
+		p.handleAsk(m)
+	}
+}
+
+func (p *PaneActor) handleAsk(envelope actor.AskEnvelope) {
+	switch envelope.Msg.(type) {
+	case GetGrid:
+		envelope.Reply <- p.grid
+	default:
+		envelope.Reply <- nil
 	}
 }
 
@@ -49,6 +63,7 @@ func SpawnPaneActor(id uint32, cmd *exec.Cmd, parent *actor.Ref) (*actor.Ref, er
 		id:     id,
 		pty:    pty,
 		parent: parent,
+		grid:   NewGrid(80, 24),
 	}
 
 	ref := actor.Spawn(pane, 10)
@@ -66,8 +81,56 @@ func (p *PaneActor) readLoop() {
 			p.notifyExited()
 			return
 		}
+		p.processBytes(buf[:n])
 		if p.parent != nil {
-			p.parent.Send(PaneOutput{ID: p.id, Data: append([]byte(nil), buf[:n]...)})
+			p.parent.Send(GridUpdated{ID: p.id})
+		}
+	}
+}
+
+func (p *PaneActor) processBytes(data []byte) {
+	inEscape := false
+	var escBuf []byte
+	for _, b := range data {
+		if inEscape {
+			escBuf = append(escBuf, b)
+			// Check if sequence is complete
+			if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == 0x07 || b == 0x9c {
+				inEscape = false
+				// Handle specific escape sequences
+				if len(escBuf) >= 2 && escBuf[len(escBuf)-1] == 'J' {
+					// ESC[...J - clear screen (2J = clear all, 0J = clear to end, 1J = clear to start)
+					p.grid.Clear()
+					p.grid.CursorX = 0
+					p.grid.CursorY = 0
+				}
+				escBuf = nil
+			}
+			continue
+		}
+		switch b {
+		case '\r':
+			p.grid.CursorX = 0
+		case '\n':
+			p.grid.NewLine()
+		case 0x08: // BS - backspace
+			if p.grid.CursorX > 0 {
+				p.grid.CursorX--
+				p.grid.Cells[p.grid.CursorY][p.grid.CursorX].Char = ' '
+			}
+		case 0x03: // Ctrl+C - interrupt
+			// Interrupt not visual, handled by PTY/process
+		case 0x0c: // Ctrl+L - form feed, clear screen
+			p.grid.Clear()
+			p.grid.CursorX = 0
+			p.grid.CursorY = 0
+		case 0x1b: // ESC - start escape sequence
+			inEscape = true
+			escBuf = []byte{b}
+		default:
+			if b >= 32 && b < 127 {
+				p.grid.WriteChar(rune(b))
+			}
 		}
 	}
 }

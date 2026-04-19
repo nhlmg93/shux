@@ -41,13 +41,20 @@ func (s *SessionActor) Receive(msg any) {
 		// Cannot handle here - need AskEnvelope
 	case GetActivePane:
 		// Cannot handle here - need AskEnvelope
+	case GridUpdated:
+		// Forward to parent (Supervisor) to notify UI
+		if s.parent != nil {
+			s.parent.Send(m)
+		}
+	case ResizeGrid:
+		s.handleResizeGrid(m)
 	case actor.AskEnvelope:
 		s.handleAsk(m)
 	}
 }
 
 func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
-	switch envelope.Msg.(type) {
+	switch m := envelope.Msg.(type) {
 	case GetActiveWindow:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
@@ -67,8 +74,26 @@ func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
 			}
 		}
 		envelope.Reply <- nil
+	case GetGrid:
+		if s.active != 0 {
+			if win, ok := s.windows[s.active]; ok {
+				reply := win.Ask(m)
+				grid := <-reply
+				envelope.Reply <- grid
+				return
+			}
+		}
+		envelope.Reply <- nil
 	default:
 		envelope.Reply <- nil
+	}
+}
+
+func (s *SessionActor) handleResizeGrid(r ResizeGrid) {
+	if s.active != 0 {
+		if win, ok := s.windows[s.active]; ok {
+			win.Send(r)
+		}
 	}
 }
 

@@ -45,17 +45,34 @@ func (w *WindowActor) Receive(msg any) {
 		if m.ID == w.active {
 			os.Stdout.Write(m.Data)
 		}
+	case GridUpdated:
+		// Forward to parent if from active pane
+		if m.ID == w.active && w.parent != nil {
+			w.parent.Send(m)
+		}
+	case ResizeGrid:
+		w.handleResizeGrid(m)
 	case actor.AskEnvelope:
 		w.handleAsk(m)
 	}
 }
 
 func (w *WindowActor) handleAsk(envelope actor.AskEnvelope) {
-	switch envelope.Msg.(type) {
+	switch m := envelope.Msg.(type) {
 	case GetActivePane:
 		if w.active != 0 {
 			if pane, ok := w.panes[w.active]; ok {
 				envelope.Reply <- pane
+				return
+			}
+		}
+		envelope.Reply <- nil
+	case GetGrid:
+		if w.active != 0 {
+			if pane, ok := w.panes[w.active]; ok {
+				reply := pane.Ask(m)
+				grid := <-reply
+				envelope.Reply <- grid
 				return
 			}
 		}
@@ -92,6 +109,14 @@ func (w *WindowActor) switchToPane(index int) {
 			return
 		}
 		i++
+	}
+}
+
+func (w *WindowActor) handleResizeGrid(r ResizeGrid) {
+	if w.active != 0 {
+		if pane, ok := w.panes[w.active]; ok {
+			pane.Send(r)
+		}
 	}
 }
 

@@ -39,3 +39,17 @@ type SwitchWindow struct {
 type GetActivePane struct{}
 
 type GetActiveWindow struct{}
+
+// GridUpdated is sent when a pane's grid content changes
+type GridUpdated struct {
+	ID uint32
+}
+
+// GetGrid requests the pane's grid content
+type GetGrid struct{}
+
+// ResizeGrid requests the pane's grid be resized
+type ResizeGrid struct {
+	Width  int
+	Height int
+}
