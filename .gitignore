@@ -19,6 +19,9 @@ go.work
 
 # Build output
 gomux
+bin/
+dist/
+build/
 
 # IDE
 .idea/
@@ -34,4 +37,7 @@ Thumbs.db
 # tmux source code (if downloaded for reference)
 tmux/
 
-./gomux
+# Environment/config
+.env
+.env.local
+*.log
