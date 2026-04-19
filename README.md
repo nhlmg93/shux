@@ -1,75 +1,84 @@
 # gomux
 
-A minimal terminal multiplexer in Go, built to understand how tmux works.
-
-## Overview
-
-This project explores terminal multiplexing concepts through hands-on implementation:
-
-- **PTY Management** - Pseudo-terminal creation and process spawning
-- **Actor Model** - Using [gotor](https://github.com/nhlmg93/gotor) for message-passing architecture
-- **Session/Window/Pane Hierarchy** - Like tmux's core abstractions
-- **Raw Mode Terminal** - Direct control character handling
+A terminal multiplexer in Go with full terminal emulation via Ghostty.
 
 ## Features
 
-- Multiple panes within windows
-- Multiple windows (tabs) within sessions
-- Keyboard-driven navigation (Ctrl+A prefix)
-- Process lifecycle management
-- Graceful terminal state handling
+- **Full Terminal Emulation** - Complete VT220/xterm compatibility via Ghostty
+- **Scrollback Buffer** - 10,000+ lines of history
+- **True Color** - 24-bit RGB color support
+- **Mouse Support** - Full mouse integration
+- **Kitty Graphics** - Modern terminal graphics protocol
+- **Unicode/Emoji** - Full Unicode support
+- **Actor Architecture** - Clean concurrency with goroutines
+- **Single Binary** - Static link everything into one file
 
-## Installation
+## Quick Start
+
+### Prerequisites
+
+You need to build Ghostty's C library once:
 
 ```bash
-go get github.com/nhlmg93/gomux
-go build
+./build-ghostty.sh
 ```
 
-## Usage
+This installs `libghostty-vt-static` to `/usr/local`.
+
+### Build
+
+```bash
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+go build ./cmd/gomux
+```
+
+For a fully static binary (no dynamic dependencies):
+
+```bash
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+go build -ldflags '-linkmode external -extldflags "-static"' ./cmd/gomux
+```
+
+### Run
 
 ```bash
 ./gomux
 ```
 
-**Key bindings (Ctrl+A prefix):**
-
-| Key | Action |
-|-----|--------|
-| `1`, `2` | Switch to pane 1/2 |
-| `c` | Create new pane |
-| `x` | Kill active pane |
-| `n` | Next window |
-| `p` | Previous window |
-| `w` | Create new window |
-| `q` | Quit |
+Keys:
+- `Ctrl+A` then `c` - Create new window
+- `Ctrl+A` then `n` - Next window
+- `Ctrl+A` then `p` - Previous window
+- `Ctrl+A` then `q` - Quit
 
 ## Architecture
 
 ```
-Supervisor (top-level coordination)
-  └── SessionActor (manages windows)
-        └── WindowActor (manages panes)
-              └── PaneActor (manages PTY)
+User Input → Bubble Tea → Actor System → Term → PTY → Shell
+                                    ↓
+                              libghostty (Ghostty terminal)
+                                    ↓
+                              GridRef API → Render to UI
 ```
 
-Messages flow up (PaneExited → WindowEmpty → SessionEmpty) and commands flow down.
+## Dependencies
 
-## Testing
+**Build-time:**
+- Go 1.21+
+- Zig (for building Ghostty)
+- pkg-config
 
-```bash
-go test ./...
-```
+**Runtime:**
+- None (static binary)
 
-## Learning Goals
+## Why Ghostty?
 
-This is a learning project focused on:
-- Understanding terminal multiplexing internals
-- Exploring actor model patterns in Go
-- Building PTY management from scratch
-
-Not intended for production use.
+Ghostty provides the most complete terminal emulation available:
+- Standards-compliant (xterm audit complete)
+- High performance (Zig-compiled, SIMD)
+- Modern features (Kitty graphics, true color)
+- Embeddable library (`libghostty-vt`)
 
 ## License
 
-MIT License - see LICENSE file
+MIT
