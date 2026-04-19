@@ -22,6 +22,10 @@ void gomux_term_free(GomuxTerm term);
 // Returns: bytes read (0=EOF, -1=error, >0=bytes processed)
 int gomux_term_process_pty(GomuxTerm term);
 
+// Process bytes directly through the terminal emulator
+// Returns: 0 on success, -1 on error
+int gomux_term_process_bytes(GomuxTerm term, const char* data, unsigned int len);
+
 // Write bytes to PTY (send user input)
 // Returns: 0 on success, -1 on error
 int gomux_term_write(GomuxTerm term, const char* data, unsigned int len);

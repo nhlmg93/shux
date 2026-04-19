@@ -1,7 +1,7 @@
 package gomux
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/../../gomux-term/target/release -lgomux_term
+#cgo LDFLAGS: -L${SRCDIR}/../../gomux-term/target/release -lgomux_term -lpthread -ldl
 #include "../../gomux-term/gomux_term.h"
 */
 import "C"
@@ -15,7 +15,7 @@ type AlacrittyTerm struct {
 	ptr C.GomuxTerm
 }
 
-// NewAlacrittyTerm creates a new terminal with PTY
+// NewAlacrittyTerm creates a new terminal
 func NewAlacrittyTerm(rows, cols int) (*AlacrittyTerm, error) {
 	ptr := C.gomux_term_new(C.uint(rows), C.uint(cols))
 	if ptr == nil {
@@ -32,28 +32,19 @@ func (t *AlacrittyTerm) Close() {
 	}
 }
 
-// ProcessPTY reads from PTY and updates internal grid
-func (t *AlacrittyTerm) ProcessPTY() (int, error) {
-	n := C.gomux_term_process_pty(t.ptr)
-	if n < 0 {
-		return 0, fmt.Errorf("PTY error")
-	}
-	return int(n), nil
-}
-
-// Write sends input to PTY
-func (t *AlacrittyTerm) Write(data []byte) error {
+// ProcessBytes feeds bytes through the terminal emulator
+func (t *AlacrittyTerm) ProcessBytes(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	ret := C.gomux_term_write(t.ptr, (*C.char)(unsafe.Pointer(&data[0])), C.uint(len(data)))
+	ret := C.gomux_term_process_bytes(t.ptr, (*C.char)(unsafe.Pointer(&data[0])), C.uint(len(data)))
 	if ret != 0 {
-		return fmt.Errorf("write failed")
+		return fmt.Errorf("process bytes failed")
 	}
 	return nil
 }
 
-// GetLine returns a row from the grid for rendering
+// GetLine returns a row from the grid
 func (t *AlacrittyTerm) GetLine(row int) string {
 	buf := make([]byte, 1024)
 	n := C.gomux_term_get_line(t.ptr, C.uint(row), (*C.char)(unsafe.Pointer(&buf[0])), 1024)
@@ -64,20 +55,22 @@ func (t *AlacrittyTerm) GetLine(row int) string {
 }
 
 // GetCursor returns cursor position
-func (t *AlacrittyTerm) GetCursor() (row, col int, err error) {
+func (t *AlacrittyTerm) GetCursor() (row, col int) {
 	var r, c C.uint
-	ret := C.gomux_term_get_cursor(t.ptr, &r, &c)
-	if ret != 0 {
-		return 0, 0, fmt.Errorf("failed to get cursor")
-	}
-	return int(r), int(c), nil
+	C.gomux_term_get_cursor(t.ptr, &r, &c)
+	return int(r), int(c)
 }
 
-// PollPTY checks if PTY has data (non-blocking with timeout)
-func (t *AlacrittyTerm) PollPTY(timeoutMs int) (bool, error) {
-	ret := C.gomux_term_poll_pty(t.ptr, C.int(timeoutMs))
-	if ret < 0 {
-		return false, fmt.Errorf("poll error")
+// Write sends input (for API compatibility, uses ProcessBytes internally)
+func (t *AlacrittyTerm) Write(data []byte) error {
+	return t.ProcessBytes(data)
+}
+
+// Render returns full terminal content
+func (t *AlacrittyTerm) Render(rows int) string {
+	var result string
+	for i := 0; i < rows; i++ {
+		result += t.GetLine(i) + "\n"
 	}
-	return ret > 0, nil
+	return result
 }
