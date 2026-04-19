@@ -21,7 +21,7 @@ type WindowEmpty struct{ ID uint32 }
 type SwitchWindow struct{ Delta int }
 type GetActiveWindow struct{}
 
-// TermActor messages (using Alacritty FFI)
+// Term messages (using Alacritty FFI)
 type CreateTerm struct {
 	Rows  int
 	Cols  int

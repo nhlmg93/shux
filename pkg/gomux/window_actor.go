@@ -4,7 +4,7 @@ import (
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// WindowActor manages multiple TermActors (panes)
+// WindowActor manages multiple Terms (panes)
 type WindowActor struct {
 	id      uint32
 	terms   map[uint32]*actor.Ref
@@ -76,7 +76,7 @@ func (w *WindowActor) handleAsk(envelope actor.AskEnvelope) {
 
 func (w *WindowActor) createTerm(cmd CreateTerm) {
 	w.termID++
-	ref := SpawnTermActor(w.termID, cmd.Rows, cmd.Cols, cmd.Shell, w.self)
+	ref := Spawn(w.termID, cmd.Rows, cmd.Cols, cmd.Shell, w.self)
 	if ref == nil {
 		return
 	}
@@ -107,7 +107,7 @@ func (w *WindowActor) handleResizeGrid(r ResizeGrid) {
 	// Resize active term
 	if w.active != 0 {
 		if term, ok := w.terms[w.active]; ok {
-			// TermActor handles resize internally
+			// Term handles resize internally
 			_ = term
 		}
 	}

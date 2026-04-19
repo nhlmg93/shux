@@ -12,16 +12,16 @@ import (
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// TermActor replaces PaneActor - each actor IS an Alacritty terminal
-type TermActor struct {
+// Term replaces PaneActor - each actor IS an Alacritty terminal
+type Term struct {
 	id     uint32
 	term   C.GomuxPane  // Rust handle
 	parent *actor.Ref
 	self   *actor.Ref
 }
 
-// NewTermActor creates terminal with shell
-func NewTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) *TermActor {
+// New creates terminal with shell
+func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 	cShell := C.CString(shell)
 	defer C.free(unsafe.Pointer(cShell))
 	
@@ -30,16 +30,16 @@ func NewTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) *T
 		return nil
 	}
 	
-	return &TermActor{
+	return &Term{
 		id:     id,
 		term:   term,
 		parent: parent,
 	}
 }
 
-// SpawnTermActor creates and spawns a TermActor
-func SpawnTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
-	t := NewTermActor(id, rows, cols, shell, parent)
+// Spawn creates and spawns a Term
+func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
+	t := New(id, rows, cols, shell, parent)
 	if t == nil {
 		return nil
 	}
@@ -48,7 +48,7 @@ func SpawnTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) 
 	return ref
 }
 
-func (t *TermActor) Receive(msg any) {
+func (t *Term) Receive(msg any) {
 	switch m := msg.(type) {
 	case WriteToTerm:
 		data := []byte(m.Data)
@@ -67,7 +67,7 @@ func (t *TermActor) Receive(msg any) {
 	}
 }
 
-func (t *TermActor) handleAsk(envelope actor.AskEnvelope) {
+func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 	switch envelope.Msg.(type) {
 	case GetTermContent:
 		// Tick to process any pending PTY data
@@ -97,16 +97,16 @@ func (t *TermActor) handleAsk(envelope actor.AskEnvelope) {
 }
 
 // Tick should be called regularly to process PTY output
-func (t *TermActor) Tick() {
+func (t *Term) Tick() {
 	C.gomux_pane_tick(t.term)
 }
 
 // NeedsRender checks if content changed
-func (t *TermActor) NeedsRender() bool {
+func (t *Term) NeedsRender() bool {
 	return C.gomux_pane_needs_render(t.term) == 1
 }
 
 // MarkRendered resets dirty flag
-func (t *TermActor) MarkRendered() {
+func (t *Term) MarkRendered() {
 	C.gomux_pane_mark_rendered(t.term)
 }
