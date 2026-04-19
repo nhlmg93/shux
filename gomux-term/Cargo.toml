@@ -1,0 +1,13 @@
+[package]
+name = "gomux-term"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "gomux_term"
+crate-type = ["cdylib", "staticlib"]
+
+# For full Alacritty integration, uncomment:
+# [dependencies]
+# alacritty_terminal = { path = "/tmp/alacritty/alacritty_terminal" }
+# libc = "0.2"

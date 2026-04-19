@@ -41,3 +41,8 @@ tmux/
 .env
 .env.local
 *.log
+
+# Rust build artifacts
+gomux-term/target/
+*.rlib
+*.rmeta
