@@ -1,33 +1,26 @@
 package gomux
 
-/*
-#cgo CFLAGS: -I${SRCDIR}/../../gomux-term/build
-#cgo LDFLAGS: ${SRCDIR}/../../gomux-term/build/libgomux_term.a
-#include <stdlib.h>
-#include "gomux_term.h"
-*/
-import "C"
 import (
 	"os/exec"
-	"unsafe"
 
 	"github.com/nhlmg93/gotor/actor"
+	"github.com/tonistiigi/vt100"
 )
 
-// Term wraps simple C terminal emulator + Go PTY
+// Term wraps vt100 Go library + Go PTY
 type Term struct {
 	id     uint32
-	term   C.GomuxTerm  // C handle
-	pty    *PTY          // Go PTY with shell process
+	vt     *vt100.VT100  // Pure Go VT100 terminal
+	pty    *PTY           // Go PTY with shell process
 	parent *actor.Ref
 	self   *actor.Ref
 }
 
-// New creates terminal with shell using Go PTY + C terminal emulator
+// New creates terminal with shell using Go PTY + Go VT100
 func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
-	// Create C terminal
-	cTerm := C.gomux_term_new(C.uint(rows), C.uint(cols))
-	if cTerm == nil {
+	// Create Go VT100 terminal
+	vt := vt100.NewVT100(rows, cols)
+	if vt == nil {
 		return nil
 	}
 	
@@ -35,13 +28,12 @@ func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 	cmd := exec.Command(shell)
 	pty, err := Start(cmd)
 	if err != nil {
-		C.gomux_term_free(cTerm)
 		return nil
 	}
 	
 	return &Term{
 		id:     id,
-		term:   cTerm,
+		vt:     vt,
 		pty:    pty,
 		parent: parent,
 	}
@@ -62,7 +54,7 @@ func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Re
 	return ref
 }
 
-// readLoop reads from PTY and feeds bytes to C terminal
+// readLoop reads from PTY and feeds bytes to VT100
 func (t *Term) readLoop() {
 	buf := make([]byte, 4096)
 	for {
@@ -72,8 +64,8 @@ func (t *Term) readLoop() {
 			return
 		}
 		if n > 0 {
-			// Feed bytes to C terminal
-			C.gomux_term_process(t.term, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(n))
+			// Feed bytes to VT100 parser
+			t.vt.Write(buf[:n])
 			// Notify parent that content changed
 			if t.parent != nil {
 				t.parent.Send(GridUpdated{ID: t.id})
@@ -95,7 +87,6 @@ func (t *Term) Receive(msg any) {
 		t.pty.TTY.Write([]byte(m.Data))
 	case KillTerm:
 		t.pty.Close()
-		C.gomux_term_free(t.term)
 		if t.parent != nil {
 			t.parent.Send(TermExited{ID: t.id})
 		}
@@ -108,21 +99,25 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 	switch envelope.Msg.(type) {
 	case GetTermContent:
 		content := &TermContent{
-			Lines: make([]string, 24), // TODO: get actual size
+			Lines: make([]string, t.vt.Height),
 		}
 		
-		buf := make([]byte, 1024)
-		for row := 0; row < 24; row++ {
-			n := C.gomux_pane_get_line(t.term, C.uint(row), (*C.char)(unsafe.Pointer(&buf[0])), 1024)
-			if n > 0 {
-				content.Lines[row] = string(buf[:n])
+		// Convert VT100 Content ([][]rune) to []string
+		for row := 0; row < t.vt.Height; row++ {
+			line := make([]rune, t.vt.Width)
+			for col := 0; col < t.vt.Width; col++ {
+				if col < len(t.vt.Content[row]) {
+					line[col] = t.vt.Content[row][col]
+				} else {
+					line[col] = ' '
+				}
 			}
+			content.Lines[row] = string(line)
 		}
 		
-		var row, col C.uint
-		C.gomux_pane_get_cursor(t.term, &row, &col)
-		content.CursorRow = int(row)
-		content.CursorCol = int(col)
+		// Get cursor position
+		content.CursorRow = t.vt.Cursor.Y
+		content.CursorCol = t.vt.Cursor.X
 		
 		envelope.Reply <- content
 	default:
@@ -130,12 +125,7 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 	}
 }
 
-// MarkRendered resets dirty flag
-func (t *Term) MarkRendered() {
-	C.gomux_pane_mark_rendered(t.term)
-}
-
 // Resize updates terminal size
 func (t *Term) Resize(rows, cols int) {
-	C.gomux_term_resize(t.term, C.uint(rows), C.uint(cols))
+	t.vt.Resize(rows, cols)
 }

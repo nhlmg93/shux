@@ -21,6 +21,7 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/nhlmg93/gotor v0.0.0-20260418040523-a1d4ff984118 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/term v0.42.0 // indirect
