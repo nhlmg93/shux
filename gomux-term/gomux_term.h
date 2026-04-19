@@ -8,40 +8,42 @@
 extern "C" {
 #endif
 
-// Opaque handle to terminal instance
-typedef void* GomuxTerm;
+// Opaque handle to TermActor (replaces PaneActor)
+typedef void* GomuxPane;
 
-// Create a new terminal with PTY
+// Create new TermActor with PTY and shell
 // Returns handle or NULL on error
-GomuxTerm gomux_term_new(unsigned int rows, unsigned int cols);
+GomuxPane gomux_pane_new(unsigned int rows, unsigned int cols, const char* shell);
 
-// Free a terminal instance
-void gomux_term_free(GomuxTerm term);
+// Free TermActor (kills PTY process)
+void gomux_pane_free(GomuxPane pane);
 
-// Process bytes from PTY (read PTY and update grid)
-// Returns: bytes read (0=EOF, -1=error, >0=bytes processed)
-int gomux_term_process_pty(GomuxTerm term);
+// Process PTY output (read from shell, update grid)
+// Returns: 1 if content changed, 0 if no data, -1 if error
+int gomux_pane_tick(GomuxPane pane);
 
-// Process bytes directly through the terminal emulator
+// Write input to PTY (send keys to shell)
 // Returns: 0 on success, -1 on error
-int gomux_term_process_bytes(GomuxTerm term, const char* data, unsigned int len);
+int gomux_pane_write(GomuxPane pane, const char* data, unsigned int len);
 
-// Write bytes to PTY (send user input)
-// Returns: 0 on success, -1 on error
-int gomux_term_write(GomuxTerm term, const char* data, unsigned int len);
-
-// Get a line from the grid for rendering
+// Get rendered line from grid
 // Copies up to max_len chars into buf, returns actual length
-// buf must be at least max_len bytes
-int gomux_term_get_line(GomuxTerm term, unsigned int row, char* buf, unsigned int max_len);
+int gomux_pane_get_line(GomuxPane pane, unsigned int row, char* buf, unsigned int max_len);
 
 // Get cursor position
 // Returns: 0 on success, -1 on error
-int gomux_term_get_cursor(GomuxTerm term, unsigned int* row, unsigned int* col);
+int gomux_pane_get_cursor(GomuxPane pane, unsigned int* row, unsigned int* col);
 
-// Check if PTY has data available (for polling)
-// Returns: 1 if data available, 0 if timeout, -1 on error
-int gomux_term_poll_pty(GomuxTerm term, int timeout_ms);
+// Check if grid changed since last mark_rendered
+// Returns: 1 if dirty, 0 if clean, -1 if error
+int gomux_pane_needs_render(GomuxPane pane);
+
+// Mark as rendered (reset dirty flag)
+void gomux_pane_mark_rendered(GomuxPane pane);
+
+// Legacy compatibility - same as tick
+int gomux_term_process_pty(void* term);
+int gomux_term_poll_pty(void* term, int timeout_ms);
 
 #ifdef __cplusplus
 }

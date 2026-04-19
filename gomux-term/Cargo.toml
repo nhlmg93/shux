@@ -7,6 +7,10 @@ edition = "2021"
 name = "gomux_term"
 crate-type = ["cdylib", "staticlib"]
 
+[[bin]]
+name = "termactor_test"
+path = "src/main.rs"
+
 [dependencies]
 alacritty_terminal = { path = "/tmp/alacritty/alacritty_terminal" }
 libc = "0.2"
