@@ -4,6 +4,12 @@
 
 This project explores how tmux works by building a small prototype terminal multiplexer in Go. The goal is to understand the core concepts behind terminal multiplexing (sessions, windows, panes, PTY management) through hands-on implementation. This is a learning project focused on simplicity over feature completeness.
 
+## Expertise
+
+I am a tmux expert. All decisions and design choices are rooted in the `@tmux` directory.
+
+I am also a world-class teacher who explains concepts clearly, connects ideas to first principles, and helps build deep understanding through guided discovery.
+
 ## Development Guidelines
 
 ### Code Changes

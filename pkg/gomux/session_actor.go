@@ -37,10 +37,6 @@ func (s *SessionActor) Receive(msg any) {
 		s.switchWindow(m.Delta)
 	case WindowEmpty:
 		s.handleWindowEmpty(m.ID)
-	case GetActiveWindow:
-		// Cannot handle here - need AskEnvelope
-	case GetActivePane:
-		// Cannot handle here - need AskEnvelope
 	case GridUpdated:
 		// Forward to parent (Supervisor) to notify UI
 		if s.parent != nil {
@@ -63,23 +59,22 @@ func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
 			}
 		}
 		envelope.Reply <- nil
-	case GetActivePane:
+	case GetActiveTerm:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
-				// Forward to window
-				reply := win.Ask(GetActivePane{})
-				paneRef := <-reply
-				envelope.Reply <- paneRef
+				reply := win.Ask(GetActiveTerm{})
+				termRef := <-reply
+				envelope.Reply <- termRef
 				return
 			}
 		}
 		envelope.Reply <- nil
-	case GetGrid:
+	case GetTermContent:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
 				reply := win.Ask(m)
-				grid := <-reply
-				envelope.Reply <- grid
+				content := <-reply
+				envelope.Reply <- content
 				return
 			}
 		}
@@ -101,7 +96,8 @@ func (s *SessionActor) createWindow() {
 	s.windowID++
 	ref := SpawnWindowActor(s.windowID, s.self)
 	s.windows[s.windowID] = ref
-	ref.Send(CreatePane{Cmd: "/bin/sh", Args: []string{}})
+	// Create initial term with default size (resized later by UI)
+	ref.Send(CreateTerm{Rows: 24, Cols: 80, Shell: "/bin/sh"})
 	if s.active == 0 {
 		s.active = s.windowID
 	}

@@ -81,47 +81,47 @@ func (m *Model) handleKey(key tea.KeyMsg) bool {
 		case "q":
 			return true
 		}
-		// Unknown prefix command - send prefix+key to pane
-		m.sendToPane([]byte{1}) // Ctrl+A
-		m.sendKeyToPane(key)
+		// Unknown prefix command - send prefix+key to term
+		m.sendToTerm([]byte{1}) // Ctrl+A
+		m.sendKeyToTerm(key)
 		return false
 	}
 	if key.Type == tea.KeyCtrlA {
 		m.prefixMode = true
 		return false
 	}
-	// Normal key - forward to pane
-	m.sendKeyToPane(key)
+	// Normal key - forward to term
+	m.sendKeyToTerm(key)
 	return false
 }
 
-func (m *Model) sendKeyToPane(key tea.KeyMsg) {
+func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 	switch key.Type {
 	case tea.KeyEnter:
-		m.sendToPane([]byte{'\r'})
+		m.sendToTerm([]byte{'\r'})
 	case tea.KeyBackspace:
 		// Send BS (0x08) to shell
-		m.sendToPane([]byte{0x08})
+		m.sendToTerm([]byte{0x08})
 	case tea.KeyCtrlC:
 		// Send Ctrl+C (0x03) to shell
-		m.sendToPane([]byte{0x03})
+		m.sendToTerm([]byte{0x03})
 	case tea.KeyCtrlL:
 		// Send Ctrl+L (0x0C) to shell
-		m.sendToPane([]byte{0x0c})
+		m.sendToTerm([]byte{0x0c})
 	default:
 		if len(key.Runes) > 0 {
-			m.sendToPane([]byte(string(key.Runes)))
+			m.sendToTerm([]byte(string(key.Runes)))
 		}
 	}
 }
 
 
 
-func (m *Model) sendToPane(data []byte) {
-	reply := m.session.Ask(GetActivePane{})
-	paneRef := <-reply
-	if paneRef != nil {
-		paneRef.(*actor.Ref).Send(WriteToPane{Data: data})
+func (m *Model) sendToTerm(data []byte) {
+	reply := m.session.Ask(GetActiveTerm{})
+	termRef := <-reply
+	if termRef != nil {
+		termRef.(*actor.Ref).Send(WriteToTerm{Data: data})
 	}
 }
 
@@ -139,39 +139,42 @@ func (m Model) View() string {
 		height = 24
 	}
 
-	// Get grid from active pane through the chain
-	reply := m.session.Ask(GetGrid{})
+	// Get content from active term through the chain
+	reply := m.session.Ask(GetTermContent{})
 	result := <-reply
 	if result == nil {
 		return "No window - press ctrl+a then w to create one"
 	}
 
-	grid := result.(*Grid)
+	content := result.(*TermContent)
+	if content == nil {
+		return "Loading..."
+	}
 
-	// Render grid content with cursor, clipped to terminal size
-	var content string
+	// Render term content with cursor
+	var output string
 	maxRows := height
-	if maxRows > grid.Height {
-		maxRows = grid.Height
+	if maxRows > len(content.Lines) {
+		maxRows = len(content.Lines)
 	}
 	for i := 0; i < maxRows; i++ {
-		row := grid.GetRow(i)
+		row := content.Lines[i]
 		if len(row) > width {
 			row = row[:width]
 		}
-		// Add cursor on cursor row (use visible block character)
-		if i == grid.CursorY && grid.CursorX < len(row) {
+		// Add cursor on cursor row
+		if i == content.CursorRow && content.CursorCol < len(row) {
 			cursorChar := "█"
-			row = row[:grid.CursorX] + cursorChar + row[grid.CursorX+1:]
+			row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
 		}
-		content += row + "\n"
+		output += row + "\n"
 	}
 
 	// Show prefix mode indicator
 	if m.prefixMode {
-		return content + "[prefix]"
+		return output + "[prefix]"
 	}
-	return content
+	return output
 }
 
 // SubscribeToGridUpdates creates a command that listens for GridUpdated messages

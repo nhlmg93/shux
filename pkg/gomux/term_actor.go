@@ -2,6 +2,7 @@ package gomux
 
 /*
 #cgo LDFLAGS: -L${SRCDIR}/../../gomux-term/target/release -lgomux_term -lpthread -ldl
+#include <stdlib.h>
 #include "../../gomux-term/gomux_term.h"
 */
 import "C"
@@ -34,6 +35,17 @@ func NewTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) *T
 		term:   term,
 		parent: parent,
 	}
+}
+
+// SpawnTermActor creates and spawns a TermActor
+func SpawnTermActor(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
+	t := NewTermActor(id, rows, cols, shell, parent)
+	if t == nil {
+		return nil
+	}
+	ref := actor.Spawn(t, 10)
+	t.self = ref
+	return ref
 }
 
 func (t *TermActor) Receive(msg any) {
@@ -97,23 +109,4 @@ func (t *TermActor) NeedsRender() bool {
 // MarkRendered resets dirty flag
 func (t *TermActor) MarkRendered() {
 	C.gomux_pane_mark_rendered(t.term)
-}
-
-// Messages
-type WriteToTerm struct {
-	Data []byte
-}
-
-type KillTerm struct{}
-
-type TermExited struct {
-	ID uint32
-}
-
-type GetTermContent struct{}
-
-type TermContent struct {
-	Lines     []string
-	CursorRow int
-	CursorCol int
 }
