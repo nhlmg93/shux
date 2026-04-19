@@ -33,3 +33,5 @@ Thumbs.db
 
 # tmux source code (if downloaded for reference)
 tmux/
+
+./gomux
