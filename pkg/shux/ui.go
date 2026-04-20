@@ -276,8 +276,8 @@ func (m Model) View() string {
 				cell := cells[j]
 				char := string(cell.Char)
 				
-				// Draw cursor as █ at the cursor position
-				if !content.CursorHidden && i == content.CursorRow && j == content.CursorCol {
+				// Draw cursor block at cursor position (if visible)
+				if i == content.CursorRow && j == content.CursorCol && !content.CursorHidden {
 					char = "█"
 				}
 				
@@ -299,7 +299,7 @@ func (m Model) View() string {
 	}
 	
 	output := strings.Join(rows, "\n")
-
+	
 	if m.prefixMode {
 		return output + "\n[prefix]"
 	}

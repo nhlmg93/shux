@@ -238,12 +238,14 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 
 		p.renderState.Update(p.term)
 
-		// Get cursor position from terminal (not renderState viewport)
-		if x, err := p.term.CursorX(); err == nil {
-			content.CursorCol = int(x)
-		}
-		if y, err := p.term.CursorY(); err == nil {
-			content.CursorRow = int(y)
+		// Get cursor position from renderState (viewport-relative)
+		if hasValue, _ := p.renderState.CursorViewportHasValue(); hasValue {
+			if x, err := p.renderState.CursorViewportX(); err == nil {
+				content.CursorCol = int(x)
+			}
+			if y, err := p.renderState.CursorViewportY(); err == nil {
+				content.CursorRow = int(y)
+			}
 		}
 
 		for row := 0; row < p.rows; row++ {
