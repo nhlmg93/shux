@@ -251,22 +251,30 @@ func (m Model) View() string {
 
 	width, height := m.width, m.height
 	var output strings.Builder
-	maxRows := height
-	if maxRows > len(content.Lines) {
-		maxRows = len(content.Lines)
-	}
 
-	for i := 0; i < maxRows; i++ {
-		row := content.Lines[i]
-		if len(row) > width {
-			row = row[:width]
-		}
-		if i == content.CursorRow && content.CursorCol < len(row) {
-			cursorChar := "█"
-			row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
+	// Always render full terminal height, using pane content or padding with spaces
+	for i := 0; i < height; i++ {
+		var row string
+		if i < len(content.Lines) {
+			row = content.Lines[i]
+			if len(row) > width {
+				row = row[:width]
+			}
+			// Pad short rows to full width
+			if len(row) < width {
+				row += strings.Repeat(" ", width-len(row))
+			}
+			// Draw cursor
+			if i == content.CursorRow && content.CursorCol < len(row) {
+				cursorChar := "█"
+				row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
+			}
+		} else {
+			// Empty row beyond pane content
+			row = strings.Repeat(" ", width)
 		}
 		output.WriteString(row)
-		if i < maxRows-1 {
+		if i < height-1 {
 			output.WriteString("\n")
 		}
 	}
