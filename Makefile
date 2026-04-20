@@ -22,4 +22,7 @@ test-native: ghostty-vt
 
 test-ci: test-native
 
+bench-persistence: ghostty-vt
+	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go test ./pkg/shux -run '^$$' -bench 'Benchmark(SaveSnapshot|LoadSnapshot|DetachSession|AttachSession)$$' -benchmem -benchtime=3x
+
 test-e2e: test

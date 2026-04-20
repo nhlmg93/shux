@@ -119,7 +119,11 @@ func (w *Window) receive(msg any) {
 func (w *Window) handleAsk(envelope askEnvelope) {
 	switch envelope.msg.(type) {
 	case GetActivePane:
-		envelope.reply <- w.activePane()
+		if pane := w.activePane(); pane != nil {
+			envelope.reply <- pane
+			return
+		}
+		envelope.reply <- nil
 	case GetPaneContent:
 		if pane := w.activePane(); pane != nil {
 			result, _ := askValue(pane, envelope.msg)

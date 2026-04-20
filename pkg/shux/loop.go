@@ -76,5 +76,21 @@ func askValue(ref asker, msg any) (any, bool) {
 		return nil, false
 	}
 	result, ok := <-reply
+	if isNilValue(result) {
+		return nil, ok
+	}
 	return result, ok
+}
+
+func isNilValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }

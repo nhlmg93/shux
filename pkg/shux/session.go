@@ -229,7 +229,11 @@ func (s *Session) receive(msg any) {
 func (s *Session) handleAsk(envelope askEnvelope) {
 	switch envelope.msg.(type) {
 	case GetActiveWindow:
-		envelope.reply <- s.activeWindow()
+		if win := s.activeWindow(); win != nil {
+			envelope.reply <- win
+			return
+		}
+		envelope.reply <- nil
 	case GetActivePane:
 		if win := s.activeWindow(); win != nil {
 			result, _ := askValue(win, GetActivePane{})
