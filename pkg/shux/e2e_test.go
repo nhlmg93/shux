@@ -2,6 +2,7 @@ package shux
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -354,4 +355,60 @@ func TestE2EDSRResponse(t *testing.T) {
 	}
 
 	t.Log("E2E success: DSR query/response cycle completed")
+}
+
+// TestE2EInitialDraw verifies the initial shell prompt appears correctly
+func TestE2EInitialDraw(t *testing.T) {
+	if os.Getenv("SHUX_E2E") != "1" {
+		t.Skip("Set SHUX_E2E=1 to run E2E tests")
+	}
+
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	_ = requirePane(t, sessionRef, super) // Pane created, shell starting
+
+	// Wait for initial content to appear (shell should show prompt)
+	var foundContent bool
+	pollFor(2*time.Second, func() bool {
+		super.waitContentUpdated(100 * time.Millisecond)
+		reply := sessionRef.Ask(GetPaneContent{})
+		result := <-reply
+		if result == nil {
+			return false
+		}
+		content := result.(*PaneContent)
+		
+		// Check for non-empty content that's not just "Loading..."
+		for _, line := range content.Lines {
+			trimmed := strings.TrimSpace(line)
+			// Look for shell prompt indicators: $, #, %, > or any text
+			if len(trimmed) > 0 && 
+			   !strings.Contains(trimmed, "Loading") &&
+			   !strings.Contains(trimmed, "starting shell") {
+				// Found real content
+				foundContent = true
+				t.Logf("Found initial content: %q", trimmed)
+				return true
+			}
+		}
+		return false
+	})
+
+	if !foundContent {
+		// Get final content for debugging
+		reply := sessionRef.Ask(GetPaneContent{})
+		result := <-reply
+		if result != nil {
+			content := result.(*PaneContent)
+			t.Logf("Final content lines:")
+			for i, line := range content.Lines {
+				t.Logf("  [%d]: %q", i, line)
+			}
+		}
+		t.Fatal("Initial draw failed: no shell prompt or content visible within 2 seconds")
+	}
+
+	t.Log("E2E success: Initial shell prompt rendered correctly")
 }
