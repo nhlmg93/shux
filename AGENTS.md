@@ -2,7 +2,7 @@
 
 ## Project Description
 
-**shux** - A terminal multiplexer. You shouldn't have to think about it.
+**shux** — you shouldn't have.
 
 Building shux to replace tmux with a simpler, modern architecture. Focus on:
 - Single-process design (no client/server split)

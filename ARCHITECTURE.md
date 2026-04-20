@@ -1,5 +1,7 @@
 # shux Architecture
 
+> you shouldn't have.
+
 ## Overview
 
 A modern terminal multiplexer designed to replace tmux with a simpler architecture.

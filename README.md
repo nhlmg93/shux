@@ -1,6 +1,8 @@
 # shux
 
-A terminal multiplexer in Go with full terminal emulation via Ghostty.
+> you shouldn't have.
+
+A terminal multiplexer that just works.
 
 ## Features
 

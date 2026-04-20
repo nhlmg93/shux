@@ -1,5 +1,7 @@
 # shux Development Roadmap
 
+> you shouldn't have.
+
 ## Phase 1: Disk-Only Persistence (Current)
 
 **The only phase.** Modern hardware makes disk-only fast enough. No daemon, no fork, no complexity.
