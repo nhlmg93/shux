@@ -180,6 +180,7 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 		}
 		envelope.Reply <- mode
 	case GetPaneContent:
+		Debugf("pane %d: GetPaneContent p.rows=%d p.cols=%d", p.id, p.rows, p.cols)
 		content := &PaneContent{
 			Lines: make([]string, p.rows),
 			Cells: make([][]PaneCell, p.rows),
@@ -215,6 +216,7 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 			content.CursorHidden = true
 		}
 
+		Debugf("pane %d: returning content with %d lines", p.id, len(content.Lines))
 		envelope.Reply <- content
 	default:
 		envelope.Reply <- nil
