@@ -5,10 +5,11 @@ import (
 )
 
 type Window struct {
-	id     uint32
-	panes  map[uint32]*actor.Ref
-	active uint32
-	paneID uint32
+	id        uint32
+	panes     map[uint32]*actor.Ref
+	paneOrder []uint32
+	active    uint32
+	paneID    uint32
 }
 
 func NewWindow(id uint32) *Window {
@@ -20,7 +21,7 @@ func NewWindow(id uint32) *Window {
 
 func SpawnWindow(id uint32, parent *actor.Ref) *actor.Ref {
 	w := NewWindow(id)
-	return actor.SpawnWithParent(w, 10, parent)
+	return actor.SpawnWithParent(w, 32, parent)
 }
 
 func (w *Window) Receive(msg any) {
@@ -32,13 +33,17 @@ func (w *Window) Receive(msg any) {
 	case PaneExited:
 		w.handlePaneExited(m.ID)
 	case PaneContentUpdated:
-		if m.ID == w.active {
+		if m.ID == 0 || m.ID == w.active {
 			if parent := actor.Parent(); parent != nil {
 				parent.Send(m)
 			}
 		}
 	case ResizeMsg:
 		w.resizeAllPanes(m.Rows, m.Cols)
+	case WriteToPane, KeyInput:
+		if pane := w.activePane(); pane != nil {
+			pane.Send(m)
+		}
 	case actor.AskEnvelope:
 		w.handleAsk(m)
 	}
@@ -47,26 +52,24 @@ func (w *Window) Receive(msg any) {
 func (w *Window) handleAsk(envelope actor.AskEnvelope) {
 	switch envelope.Msg.(type) {
 	case GetActivePane:
-		if w.active != 0 {
-			if pane, ok := w.panes[w.active]; ok {
-				envelope.Reply <- pane
-				return
-			}
-		}
-		envelope.Reply <- nil
+		envelope.Reply <- w.activePane()
 	case GetPaneContent:
-		if w.active != 0 {
-			if pane, ok := w.panes[w.active]; ok {
-				reply := pane.Ask(envelope.Msg)
-				content := <-reply
-				envelope.Reply <- content
-				return
-			}
+		if pane := w.activePane(); pane != nil {
+			reply := pane.Ask(envelope.Msg)
+			envelope.Reply <- <-reply
+			return
 		}
 		envelope.Reply <- nil
 	default:
 		envelope.Reply <- nil
 	}
+}
+
+func (w *Window) activePane() *actor.Ref {
+	if w.active == 0 {
+		return nil
+	}
+	return w.panes[w.active]
 }
 
 func (w *Window) createPane(cmd CreatePane) {
@@ -76,6 +79,7 @@ func (w *Window) createPane(cmd CreatePane) {
 		return
 	}
 	w.panes[w.paneID] = ref
+	w.paneOrder = append(w.paneOrder, w.paneID)
 	if w.active == 0 {
 		w.active = w.paneID
 	}
@@ -88,13 +92,16 @@ func (w *Window) killPane(id uint32) {
 }
 
 func (w *Window) switchToPane(index int) {
-	i := 0
-	for id := range w.panes {
-		if i == index {
-			w.active = id
-			return
-		}
-		i++
+	if index < 0 || index >= len(w.paneOrder) {
+		return
+	}
+	newActive := w.paneOrder[index]
+	if newActive == w.active {
+		return
+	}
+	w.active = newActive
+	if parent := actor.Parent(); parent != nil {
+		parent.Send(PaneContentUpdated{})
 	}
 }
 
@@ -106,15 +113,39 @@ func (w *Window) resizeAllPanes(rows, cols int) {
 }
 
 func (w *Window) handlePaneExited(id uint32) {
+	currentIdx := w.activePaneIndex()
 	delete(w.panes, id)
-	if w.active == id {
-		if len(w.panes) > 0 {
-			for id := range w.panes {
-				w.active = id
-				break
-			}
-		} else if parent := actor.Parent(); parent != nil {
+	w.paneOrder = removeOrderedID(w.paneOrder, id)
+
+	if len(w.paneOrder) == 0 {
+		w.active = 0
+		if parent := actor.Parent(); parent != nil {
 			parent.Send(WindowEmpty{ID: w.id})
 		}
+		return
 	}
+
+	if w.active != id {
+		return
+	}
+
+	if currentIdx >= len(w.paneOrder) {
+		currentIdx = len(w.paneOrder) - 1
+	}
+	if currentIdx < 0 {
+		currentIdx = 0
+	}
+	w.active = w.paneOrder[currentIdx]
+	if parent := actor.Parent(); parent != nil {
+		parent.Send(PaneContentUpdated{})
+	}
+}
+
+func (w *Window) activePaneIndex() int {
+	for i, id := range w.paneOrder {
+		if id == w.active {
+			return i
+		}
+	}
+	return -1
 }

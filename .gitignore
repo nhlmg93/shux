@@ -20,6 +20,7 @@ go.work
 
 # Build output
 /gomux
+/shux
 bin/
 dist/
 build/

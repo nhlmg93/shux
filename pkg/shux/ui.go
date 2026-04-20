@@ -1,52 +1,40 @@
 package shux
 
 import (
-	"fmt"
-	"os"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// Package-level update channel for actor→UI communication
-var uiUpdateCh chan struct{}
-
-// SetUpdateChannel sets the channel actors use to notify UI of content changes
-func SetUpdateChannel(ch chan struct{}) {
-	uiUpdateCh = ch
+type Model struct {
+	session     *actor.Ref
+	width       int
+	height      int
+	prefixMode  bool
+	initialized bool
+	content     *PaneContent
 }
 
-type Model struct {
-	session       *actor.Ref
-	width         int
-	height        int
-	content       []string
-	prefixMode    bool
-	cursorRow     int
-	cursorCol     int
-	initialized   bool
-	updateCh      chan struct{} // Receives updates from actor system
+// SetUpdateChannel is kept as a compatibility no-op for older tests.
+func SetUpdateChannel(ch chan struct{}) {
+	_ = ch
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.waitForUpdate()
+	return nil
 }
 
-// waitForUpdate blocks until the actor system notifies us of new content
-func (m Model) waitForUpdate() tea.Cmd {
-	return func() tea.Msg {
-		<-m.updateCh
-		return UpdateMsg{}
-	}
-}
-
-// UpdateMsg signals that pane content has changed and UI should redraw
+// UpdateMsg signals that pane content changed and the UI should refresh.
 type UpdateMsg struct{}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if msg.Width <= 0 || msg.Height <= 0 {
+			Infof("ui: ignoring invalid window size %dx%d", msg.Width, msg.Height)
+			return m, nil
+		}
 		m.width = msg.Width
 		m.height = msg.Height
 		Infof("ui: window size %dx%d", msg.Width, msg.Height)
@@ -58,34 +46,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
 			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
 		}
-		return m, m.waitForUpdate()
+		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.handleKey(msg) {
 			return m, tea.Quit
 		}
-		// After key press, refresh content immediately
-		return m, func() tea.Msg { return UpdateMsg{} }
+		return m, nil
+
+	case tea.PasteMsg:
+		m.session.Send(WriteToPane{Data: []byte(msg.Content)})
+		return m, nil
 
 	case UpdateMsg:
 		reply := m.session.Ask(GetPaneContent{})
 		result := <-reply
-		if result != nil {
-			content := result.(*PaneContent)
-			if content != nil && len(content.Lines) > 0 {
-				m.content = content.Lines
-				m.cursorRow = content.CursorRow
-				m.cursorCol = content.CursorCol
-			}
+		if result == nil {
+			m.content = nil
+			return m, nil
 		}
-		return m, m.waitForUpdate()
+		m.content = result.(*PaneContent)
+		return m, nil
 
 	default:
-		return m, m.waitForUpdate()
+		return m, nil
 	}
 }
 
-func (m *Model) handleKey(key tea.KeyMsg) bool {
+func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 	if m.prefixMode {
 		m.prefixMode = false
 		switch key.String() {
@@ -101,228 +89,197 @@ func (m *Model) handleKey(key tea.KeyMsg) bool {
 			m.session.Send(SwitchWindow{Delta: -1})
 			return false
 		}
-		m.sendToTerm([]byte{0x02})
-		m.sendKeyToTerm(key)
+		m.sendKeyInput(ctrlBInput())
+		m.sendKey(key)
 		return false
 	}
 
-	if key.Type == tea.KeyCtrlB {
+	if key.String() == "ctrl+b" {
 		m.prefixMode = true
 		return false
 	}
 
-	m.sendKeyToTerm(key)
+	m.sendKey(key)
 	return false
 }
 
-func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
-	var data []byte
+func (m *Model) sendKey(key tea.KeyPressMsg) {
+	input, ok := normalizeKeyInput(key)
+	if !ok {
+		return
+	}
+	m.sendKeyInput(input)
+}
 
-	switch key.Type {
-	case tea.KeyEnter:
-		data = []byte{'\r'}
-	case tea.KeyBackspace:
-		data = []byte{0x7F}
-	case tea.KeyTab:
-		data = []byte{0x09}
-	case tea.KeyEsc:
-		data = []byte{0x1B}
-	case tea.KeySpace:
-		data = []byte{' '}
-	case tea.KeyUp:
-		data = []byte{0x1B, '[', 'A'}
-	case tea.KeyDown:
-		data = []byte{0x1B, '[', 'B'}
-	case tea.KeyRight:
-		data = []byte{0x1B, '[', 'C'}
-	case tea.KeyLeft:
-		data = []byte{0x1B, '[', 'D'}
-	case tea.KeyHome:
-		data = []byte{0x1B, '[', 'H'}
-	case tea.KeyEnd:
-		data = []byte{0x1B, '[', 'F'}
-	case tea.KeyPgUp:
-		data = []byte{0x1B, '[', '5', '~'}
-	case tea.KeyPgDown:
-		data = []byte{0x1B, '[', '6', '~'}
-	case tea.KeyDelete:
-		data = []byte{0x1B, '[', '3', '~'}
-	case tea.KeyInsert:
-		data = []byte{0x1B, '[', '2', '~'}
-	case tea.KeyF1:
-		data = []byte{0x1B, 'O', 'P'}
-	case tea.KeyF2:
-		data = []byte{0x1B, 'O', 'Q'}
-	case tea.KeyF3:
-		data = []byte{0x1B, 'O', 'R'}
-	case tea.KeyF4:
-		data = []byte{0x1B, 'O', 'S'}
-	case tea.KeyF5:
-		data = []byte{0x1B, '[', '1', '5', '~'}
-	case tea.KeyF6:
-		data = []byte{0x1B, '[', '1', '7', '~'}
-	case tea.KeyF7:
-		data = []byte{0x1B, '[', '1', '8', '~'}
-	case tea.KeyF8:
-		data = []byte{0x1B, '[', '1', '9', '~'}
-	case tea.KeyF9:
-		data = []byte{0x1B, '[', '2', '0', '~'}
-	case tea.KeyF10:
-		data = []byte{0x1B, '[', '2', '1', '~'}
-	case tea.KeyF11:
-		data = []byte{0x1B, '[', '2', '3', '~'}
-	case tea.KeyF12:
-		data = []byte{0x1B, '[', '2', '4', '~'}
-	case tea.KeyCtrlA:
-		data = []byte{0x01}
-	case tea.KeyCtrlC:
-		data = []byte{0x03}
-	case tea.KeyCtrlD:
-		data = []byte{0x04}
-	case tea.KeyCtrlE:
-		data = []byte{0x05}
-	case tea.KeyCtrlF:
-		data = []byte{0x06}
-	case tea.KeyCtrlG:
-		data = []byte{0x07}
-	case tea.KeyCtrlH:
-		data = []byte{0x08}
-	case tea.KeyCtrlK:
-		data = []byte{0x0B}
-	case tea.KeyCtrlL:
-		data = []byte{0x0C}
-	case tea.KeyCtrlN:
-		data = []byte{0x0E}
-	case tea.KeyCtrlO:
-		data = []byte{0x0F}
-	case tea.KeyCtrlP:
-		data = []byte{0x10}
-	case tea.KeyCtrlQ:
-		data = []byte{0x11}
-	case tea.KeyCtrlR:
-		data = []byte{0x12}
-	case tea.KeyCtrlS:
-		data = []byte{0x13}
-	case tea.KeyCtrlT:
-		data = []byte{0x14}
-	case tea.KeyCtrlU:
-		data = []byte{0x15}
-	case tea.KeyCtrlV:
-		data = []byte{0x16}
-	case tea.KeyCtrlW:
-		data = []byte{0x17}
-	case tea.KeyCtrlX:
-		data = []byte{0x18}
-	case tea.KeyCtrlY:
-		data = []byte{0x19}
-	case tea.KeyCtrlZ:
-		data = []byte{0x1A}
-	default:
-		if key.Alt {
-			data = append([]byte{0x1B}, []byte(string(key.Runes))...)
-		} else if len(key.Runes) > 0 {
-			data = []byte(string(key.Runes))
+func (m *Model) sendKeyInput(input KeyInput) {
+	m.session.Send(input)
+}
+
+func (m Model) View() tea.View {
+	content := m.renderContent()
+	v := tea.NewView(content)
+	v.AltScreen = true
+
+	if m.content != nil {
+		if title := m.content.Title; title != "" {
+			v.WindowTitle = title
+		}
+		if !m.content.CursorHidden && m.content.CursorRow >= 0 && m.content.CursorCol >= 0 && m.content.CursorRow < m.height && m.content.CursorCol < m.width {
+			v.Cursor = tea.NewCursor(m.content.CursorCol, m.content.CursorRow)
 		}
 	}
 
-	if len(data) > 0 {
-		m.sendToTerm(data)
-	}
+	return v
 }
 
-func (m *Model) sendToTerm(data []byte) {
-	reply := m.session.Ask(GetActivePane{})
-	paneRef := <-reply
-	if paneRef != nil {
-		paneRef.(*actor.Ref).Send(WriteToPane{Data: data})
-	}
-}
-
-func (m Model) View() string {
-	if m.session == nil {
-		return "Error: no session"
-	}
-	if m.width == 0 || m.height == 0 {
-		return "Error: window size not received"
-	}
-	if !m.initialized {
-		return "Error: initialization failed"
-	}
-
-	reply := m.session.Ask(GetPaneContent{})
-	result := <-reply
-	if result == nil {
-		return "Error: no active window"
-	}
-
-	content := result.(*PaneContent)
-	if content == nil {
+func (m Model) renderContent() string {
+	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
 
-	// Always render full UI dimensions (m.width x m.height)
-	// Content may differ during resize - stretch/compress to fit
-	width, height := m.width, m.height
-	var output strings.Builder
-
-	for i := 0; i < height; i++ {
-		rowLen := 0
-		if i < len(content.Lines) {
-			row := content.Lines[i]
-			rowLen = len(row)
-			if rowLen > width {
-				rowLen = width
-			}
-			
-			// Write row content up to width
-			if i == content.CursorRow && content.CursorCol < rowLen {
-				// Cursor in this row - write with cursor char
-				output.WriteString(row[:content.CursorCol])
-				output.WriteString("█")
-				if content.CursorCol+1 < rowLen {
-					output.WriteString(row[content.CursorCol+1:rowLen])
-				}
-			} else {
-				output.WriteString(row[:rowLen])
-			}
+	lines := make([]string, m.height)
+	for row := 0; row < m.height; row++ {
+		if m.content != nil && row < len(m.content.Cells) {
+			lines[row] = renderRow(m.content.Cells[row], m.width)
+			continue
 		}
-		
-		// Pad to full width (avoid strings.Repeat allocation)
-		for pad := rowLen; pad < width; pad++ {
-			output.WriteByte(' ')
-		}
-		
-		if i < height-1 {
-			output.WriteString("\n")
-		}
+		lines[row] = strings.Repeat(" ", m.width)
 	}
 
-	if m.prefixMode {
-		return output.String() + "\n[prefix]"
+	if m.prefixMode && len(lines) > 0 {
+		prefix := "[prefix]"
+		if len(prefix) < m.width {
+			prefix += strings.Repeat(" ", m.width-len(prefix))
+		} else if len(prefix) > m.width {
+			prefix = prefix[:m.width]
+		}
+		lines[len(lines)-1] = prefix
 	}
-	return output.String()
+
+	return strings.Join(lines, "\n")
 }
 
-func NewModel(session *actor.Ref, updateCh chan struct{}) Model {
-	return Model{
-		session: session,
-		content: make([]string, 0),
-		updateCh: updateCh,
+func renderRow(cells []PaneCell, width int) string {
+	var b strings.Builder
+	col := 0
+	for i := 0; i < len(cells) && col < width; i++ {
+		cell := cells[i]
+		if cell.Width == 0 {
+			continue
+		}
+		text := cell.Text
+		if text == "" {
+			text = " "
+		}
+		b.WriteString(text)
+		if cell.Width > 0 {
+			col += cell.Width
+		} else {
+			col++
+		}
 	}
+	for ; col < width; col++ {
+		b.WriteByte(' ')
+	}
+	return b.String()
 }
 
-func RunUI(session *actor.Ref, updateCh chan struct{}) {
-	p := tea.NewProgram(NewModel(session, updateCh), tea.WithAltScreen())
-	
-	// Goroutine to wake Bubble Tea when actors notify us
-	go func() {
-		for range updateCh {
-			p.Send(UpdateMsg{})
-		}
-	}()
-	
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error running UI: %v\n", err)
-		os.Exit(1)
+func NewModel(session *actor.Ref) Model {
+	return Model{session: session}
+}
+
+func ctrlBInput() KeyInput {
+	return KeyInput{Code: 'b', Mods: KeyModCtrl}
+}
+
+func normalizeKeyInput(msg tea.KeyPressMsg) (KeyInput, bool) {
+	key := msg.Key()
+	input := KeyInput{
+		Code:        key.Code,
+		Text:        key.Text,
+		ShiftedCode: key.ShiftedCode,
+		BaseCode:    key.BaseCode,
+		Mods:        keyModsFromTea(key.Mod),
+		IsRepeat:    key.IsRepeat,
 	}
+
+	switch key.Code {
+	case tea.KeyUp:
+		input.Code = KeyCodeUp
+	case tea.KeyDown:
+		input.Code = KeyCodeDown
+	case tea.KeyRight:
+		input.Code = KeyCodeRight
+	case tea.KeyLeft:
+		input.Code = KeyCodeLeft
+	case tea.KeyHome:
+		input.Code = KeyCodeHome
+	case tea.KeyEnd:
+		input.Code = KeyCodeEnd
+	case tea.KeyPgUp:
+		input.Code = KeyCodePageUp
+	case tea.KeyPgDown:
+		input.Code = KeyCodePageDown
+	case tea.KeyInsert:
+		input.Code = KeyCodeInsert
+	case tea.KeyDelete:
+		input.Code = KeyCodeDelete
+	case tea.KeyEnter:
+		input.Code = KeyCodeEnter
+	case tea.KeyBackspace:
+		input.Code = KeyCodeBackspace
+	case tea.KeyTab:
+		input.Code = KeyCodeTab
+	case tea.KeyEscape:
+		input.Code = KeyCodeEscape
+	case tea.KeyF1:
+		input.Code = KeyCodeF1
+	case tea.KeyF2:
+		input.Code = KeyCodeF2
+	case tea.KeyF3:
+		input.Code = KeyCodeF3
+	case tea.KeyF4:
+		input.Code = KeyCodeF4
+	case tea.KeyF5:
+		input.Code = KeyCodeF5
+	case tea.KeyF6:
+		input.Code = KeyCodeF6
+	case tea.KeyF7:
+		input.Code = KeyCodeF7
+	case tea.KeyF8:
+		input.Code = KeyCodeF8
+	case tea.KeyF9:
+		input.Code = KeyCodeF9
+	case tea.KeyF10:
+		input.Code = KeyCodeF10
+	case tea.KeyF11:
+		input.Code = KeyCodeF11
+	case tea.KeyF12:
+		input.Code = KeyCodeF12
+	}
+
+	if input.Code == 0 && input.Text == "" {
+		return KeyInput{}, false
+	}
+	return input, true
+}
+
+func keyModsFromTea(mod tea.KeyMod) KeyMods {
+	var result KeyMods
+	if mod&tea.ModShift != 0 {
+		result |= KeyModShift
+	}
+	if mod&tea.ModAlt != 0 {
+		result |= KeyModAlt
+	}
+	if mod&tea.ModCtrl != 0 {
+		result |= KeyModCtrl
+	}
+	if mod&tea.ModMeta != 0 {
+		result |= KeyModMeta
+	}
+	if mod&tea.ModSuper != 0 {
+		result |= KeyModSuper
+	}
+	return result
 }
