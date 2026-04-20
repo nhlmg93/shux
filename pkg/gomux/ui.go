@@ -82,11 +82,11 @@ func (m *Model) handleKey(key tea.KeyMsg) bool {
 			return true
 		}
 		// Unknown prefix command - send prefix+key to term
-		m.sendToTerm([]byte{1}) // Ctrl+A
+		m.sendToTerm([]byte{2}) // Ctrl+B
 		m.sendKeyToTerm(key)
 		return false
 	}
-	if key.Type == tea.KeyCtrlA {
+	if key.Type == tea.KeyCtrlB {
 		m.prefixMode = true
 		return false
 	}
@@ -143,7 +143,7 @@ func (m Model) View() string {
 	reply := m.session.Ask(GetTermContent{})
 	result := <-reply
 	if result == nil {
-		return "No window - press ctrl+a then w to create one"
+		return "No window - press ctrl+b then w to create one"
 	}
 
 	content := result.(*TermContent)
