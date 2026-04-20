@@ -47,6 +47,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		fmt.Fprintf(os.Stderr, "DEBUG: UI received WindowSizeMsg: %dx%d\n", msg.Width, msg.Height)
 		if !m.initialized {
 			// First size message - create initial window with correct size
 			m.initialized = true
@@ -255,10 +256,13 @@ func (m *Model) sendToTerm(data []byte) {
 
 // resizeActiveTerm sends resize message to the active terminal
 func (m *Model) resizeActiveTerm(rows, cols int) {
+	fmt.Fprintf(os.Stderr, "DEBUG: UI resizing active term to %dx%d\n", rows, cols)
 	reply := m.session.Ask(GetActiveTerm{})
 	termRef := <-reply
 	if termRef != nil {
 		termRef.(*actor.Ref).Send(ResizeTerm{Rows: rows, Cols: cols})
+	} else {
+		fmt.Fprintf(os.Stderr, "DEBUG: No active term to resize\n")
 	}
 }
 

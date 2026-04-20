@@ -16,6 +16,8 @@ package gomux
 //   - Mode queries (alt screen, cursor visible)
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/mitchellh/go-libghostty"
@@ -145,6 +147,7 @@ func (t *Term) Receive(msg any) {
 		t.pty.TTY.Write([]byte(m.Data))
 	case ResizeTerm:
 		// Resize terminal and PTY
+		fmt.Fprintf(os.Stderr, "DEBUG: Resizing term from %dx%d to %dx%d\n", t.rows, t.cols, m.Rows, m.Cols)
 		t.Resize(m.Rows, m.Cols)
 		t.pty.Resize(m.Rows, m.Cols)
 	case KillTerm:
