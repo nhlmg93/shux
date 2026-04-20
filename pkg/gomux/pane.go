@@ -59,6 +59,12 @@ func (p *Pane) Init() error {
 		libghostty.WithMaxScrollback(10000),
 		libghostty.WithTitleChanged(func(t *libghostty.Terminal) {}),
 		libghostty.WithBell(func(t *libghostty.Terminal) {}),
+		libghostty.WithWritePty(func(t *libghostty.Terminal, data []byte) {
+			// Terminal sends response data (DSR, etc) - write back to PTY
+			if p.pty != nil && p.pty.TTY != nil {
+				p.pty.TTY.Write(data)
+			}
+		}),
 	)
 	if err != nil {
 		return err
@@ -118,10 +124,7 @@ func (p *Pane) readLoop() {
 				return
 			}
 			if n > 0 {
-				data := buf[:n]
-				// Check for DSR (Device Status Report) queries and respond
-				p.handleDSR(data)
-				p.term.VTWrite(data)
+				p.term.VTWrite(buf[:n])
 				if parent := actor.Parent(); parent != nil {
 					parent.Send(PaneContentUpdated{ID: p.id})
 				}
@@ -145,21 +148,6 @@ func (p *Pane) readLoop() {
 func (p *Pane) notifyExited() {
 	if parent := actor.Parent(); parent != nil {
 		parent.Send(PaneExited{ID: p.id})
-	}
-}
-
-// handleDSR detects Device Status Report queries and sends responses.
-// This is needed for programs like nvim that query terminal capabilities.
-func (p *Pane) handleDSR(data []byte) {
-	// Look for ESC [ 5 n (status report request)
-	// Respond with ESC [ 0 n (terminal is OK)
-	for i := 0; i < len(data)-3; i++ {
-		if data[i] == 0x1b && data[i+1] == '[' {
-			if data[i+2] == '5' && data[i+3] == 'n' {
-				// Send DSR response: terminal is ready
-				p.pty.TTY.Write([]byte{0x1b, '[', '0', 'n'})
-			}
-		}
 	}
 }
 
