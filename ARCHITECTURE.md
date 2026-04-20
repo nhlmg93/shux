@@ -2,23 +2,18 @@
 
 ## Overview
 
-A modern terminal multiplexer designed to replace tmux with a simpler architecture while maintaining full functionality.
+A modern terminal multiplexer designed to replace tmux with a simpler architecture.
 
-**Key principles:**
-- Single-process by default (simple, debuggable)
-- Add daemon/fork complexity only when needed
-- Modern serialization (gob/msgpack) vs custom protocols
-- Cross-platform from day one
+**Core principle:** Disk-only persistence is fast enough on modern hardware.
+
+No daemon. No fork. No client/server split. Just snapshot and restore.
 
 ---
 
-## Development Phases
+## Architecture
 
-### Phase 1: Disk-Only Persistence (Current)
+### Single-Process Design
 
-**Hypothesis:** Modern SSDs are fast enough that snapshot/restore feels instant without needing a daemon.
-
-**Architecture:**
 ```
 ┌─────────────────────────────────────┐
 │        gomux mysession              │
@@ -33,273 +28,198 @@ A modern terminal multiplexer designed to replace tmux with a simpler architectu
 │                                     │
 │  Single process - no fork, no IPC  │
 └─────────────────────────────────────┘
-
-Detach (Ctrl+A D):
-  └─> Serialize state to disk
-  └─> Exit process (everything stops)
-
-Reattach:
-  └─> Load snapshot from disk
-  └─> Re-spawn shells
-  └─> Restore layout
-  └─> Replay scrollback
 ```
 
-**State storage:**
+**Lifecycle:**
+
 ```
-~/.local/share/gomux/mysession/
-├── snapshot.gob          # Session structure (layout, CWDs, env)
-├── scrollback/          # Pane scrollback buffers
-│   ├── pane-1.txt
-│   └── pane-2.txt
-└── last-active          # Timestamp of last detach
-```
+Start:    gomux mysession
+          └─> If snapshot exists: restore
+          └─> If no snapshot: create fresh session
 
-**Performance target:** < 500ms restore on SSD
+Work:     (use terminal normally)
+          ├─> Layout changes? Auto-snapshot every 30s
+          ├─> Scrollback accumulates in memory
+          └─> CWD tracked per pane
 
-**Trade-offs:**
-- ✅ Simple code (no fork, no process management)
-- ✅ Debuggable (one process, one stack trace)
-- ❌ Processes restart on reattach (new PIDs)
-- ❌ No true persistence (compiles/editors restart)
-- ❌ Slower than daemon mode (disk read vs instant)
+Detach:   Ctrl+A D
+          └─> Serialize state to disk
+          └─> Exit process
 
-**Decision point:** If Phase 1 feels fast enough, we stop here. Ship it.
-
----
-
-### Phase 2: Fork-on-Detach (When Phase 1 isn't enough)
-
-**Add forking when we need true persistence of running processes.**
-
-**Architecture:**
-```
-Normal operation (attached):
-┌─────────────────────────────────────┐
-│        gomux mysession              │
-│                                     │
-│  Single process (UI + libghostty)  │
-│                                     │
-│  Same as Phase 1                    │
-└─────────────────────────────────────┘
-
-Detach (Ctrl+A D):
-  ┌─> fork() syscall
-  │    ┌─────────────────────────────┐
-  │    │ Parent (original)         │
-  │    │ - Writes snapshot to disk │
-  │    │ - Exits UI                │
-  │    └─────────────────────────────┘
-  │
-  └─> Child becomes daemon
-       ┌─────────────────────────────┐
-       │ gomux --daemon mysession    │
-       │ - Keeps PTYs open           │
-       │ - Shells keep running       │
-       │ - Periodic snapshots        │
-       │ - Writes PID to file        │
-       └─────────────────────────────┘
-
-Reattach:
-  Check: ~/.local/share/gomux/mysession/daemon.pid
-  
-  ├─ If daemon running:
-  │   └─> Connect to daemon (instant, < 10ms)
-  │   └─> True persistence (same PIDs, same processes)
-  │
-  └─ If daemon dead:
-      └─> Phase 1 restore from disk (fallback)
+Reattach: gomux mysession
+          └─> Load snapshot from disk
+          └─> Re-spawn shells in saved CWDs
+          └─> Restore window layout
+          └─> Replay scrollback
 ```
 
-**Key components:**
-- **PID file:** `~/.local/share/gomux/mysession/daemon.pid`
-- **Control mechanism:** stdin/stdout or Unix socket/named pipe
-- **Handshake:** UI signals daemon, transfers terminal control
+### State Storage
 
-**Trade-offs:**
-- ✅ True persistence (processes keep running)
-- ✅ Instant reattach (no disk read)
-- ❌ More complex (fork, process management, IPC)
-- ❌ Platform differences (Unix fork vs Windows?)
-- ❌ Zombie processes if daemon crashes
-
-**Decision trigger:** Implement only if Phase 1 restore feels too slow (> 1s) or users need process persistence.
-
----
-
-### Phase 3: Network Attach (Future)
-
-**Attach from different machines (SSH).**
-
-**Architecture:**
 ```
-Server:   gomux --server --bind :1234 mysession
-          └─> Listens on TCP or Unix socket
-          └─> Runs in background (could be systemd service)
-
-Client:   gomux --attach host:1234 mysession
-          └─> Connects via simple JSON protocol
-          └─> Renders remote session locally
+~/.local/share/gomux/
+├── mysession/
+│   ├── snapshot.gob          # Session structure
+│   ├── panes/
+│   │   ├── 1/
+│   │   │   ├── scrollback.txt
+│   │   │   └── history       # Shell history (optional)
+│   │   └── 2/
+│   │       └── scrollback.txt
+│   └── last-active          # Timestamp
+└── globalsession/
+    └── ...
 ```
 
-**Complexity added:**
-- Authentication (who can attach?)
-- Encryption (TLS for TCP)
-- Protocol design (JSON over socket)
-- Network failures (reconnection logic)
+### Snapshot Format
 
-**Decision:** Only if users want remote attach. Local-first for v1.
-
----
-
-## Comparison Matrix
-
-| Feature | tmux | gomux Phase 1 | gomux Phase 2 | gomux Phase 3 |
-|---------|------|---------------|---------------|---------------|
-| **Architecture** | Always daemon | Single process | Hybrid (fork on detach) | Client/server |
-| **Reattach speed** | Instant | ~100-500ms | Instant if daemon | Network latency |
-| **True persistence** | ✅ Yes | ❌ No | ✅ Yes | ✅ Yes |
-| **Cross-reboot** | ✅ Yes | ✅ Restore | ✅ Restore | ✅ Restore |
-| **Complexity** | High | Low | Medium | High |
-| **Binary count** | 2 | 1 | 1 | 2 (opt) |
-| **IPC protocol** | Custom binary | None | stdio/socket | JSON/TCP |
-| **Process model** | Daemon always | Single process | Fork on detach | Separate server |
-
----
-
-## Design Decisions
-
-### 1. Fork vs Thread
-
-**Q:** Why fork instead of thread for daemon?
-
-**A:** Fork creates true process separation:
-- Daemon survives parent exit (UI can close)
-- OS-level isolation
-- Can re-parent to init (true daemon)
-- Threads die with process (no persistence)
-
-### 2. Snapshot Format
-
-**Q:** Why gob/msgpack instead of JSON?
-
-**A:** 
-- gob: Fast, native Go, type-safe
-- msgpack: Compact, cross-language
-- JSON: Human-readable but verbose
-- tmux: Custom binary (hard to debug)
-
-**Choice:** gob for Phase 1 (simple, fast), msgpack if we need Phase 3 (cross-language).
-
-### 3. libghostty Serialization
-
-**Q:** Can we save full terminal state or just scrollback?
-
-**A:** To be determined:
-- Ideal: Serialize libghostty Grid state, restore exactly
-- Fallback: Save scrollback + CWD + command, replay on restore
-- Research: Check if libghostty exposes serialization API
-
-### 4. Why not always daemon?
-
-**Q:** Why not just always run as daemon like tmux?
-
-**A:**
-- 90% of time you're attached (waste to have daemon+client)
-- Single process is simpler (no IPC, no protocol)
-- Fork-on-detach is lazy optimization (only pay when needed)
-- Modern SSDs make disk restore "fast enough"
+```go
+type SessionSnapshot struct {
+    Version     int
+    Timestamp   time.Time
+    SessionName string
+    
+    Windows []struct {
+        ID       uint32
+        Name     string
+        Active   bool
+        Layout   LayoutType
+        
+        Panes []struct {
+            ID          uint32
+            Cwd         string
+            Env         map[string]string
+            Scrollback  []string
+        }
+    }
+    
+    GlobalState struct {
+        ActiveWindow uint32
+        PrefixKey    string
+    }
+}
+```
 
 ---
 
-## Implementation Notes
+## Why This Works
 
-### Phase 1 Files
+### Performance Reality
 
-- `pkg/gomux/snapshot.go` - Serialize/deserialize SessionSnapshot
-- `pkg/gomux/resurrect.go` - Restore session from snapshot
-- `pkg/gomux/session.go` - Session lifecycle (attach/detach/save)
+| Operation | Time |
+|-----------|------|
+| Disk read (SSD) | ~0.1 ms |
+| Disk read (HDD) | ~1 ms |
+| Shell spawn | ~50-100 ms |
+| Full restore (4 panes) | ~200-400 ms |
 
-### Phase 2 Files
+**Total reattach time:** Sub-second even on HDD.
 
-- `pkg/gomux/fork.go` - Platform-specific fork (Unix syscall, Windows CreateProcess?)
-- `pkg/gomux/daemon.go` - Daemon mode (minimal, no UI)
-- `pkg/gomux/attach.go` - Connect to running daemon
-- `pkg/gomux/pidfile.go` - PID file management (check, write, cleanup)
+### User Experience
 
-### Cross-Platform Concerns
+**tmux detach/reattach:**
+- Instant (< 10ms)
+- Same processes (true persistence)
+- Complex daemon architecture
 
-**Unix (Linux/macOS):**
-- `fork()` syscall works
-- Unix domain sockets for IPC
-- Signals for control (SIGUSR1, etc.)
+**gomux detach/reattach:**
+- Fast (~200ms)
+- New processes (restart shells)
+- Simple single-process architecture
 
-**Windows:**
-- No `fork()` - use `CreateProcess` with inheritance
-- Named pipes instead of Unix sockets
-- Different process model
+**Trade-off:** 200ms vs 10ms for dramatically simpler code.
 
-**Strategy:** Start Unix-only, add Windows later (most tmux users are on Unix anyway).
+### Why Not Daemon?
 
----
+**Daemon complexity (rejected):**
+```
+1. fork() on detach
+2. Process management (zombies, signals)
+3. IPC protocol (UI to daemon)
+4. PID files, reconnection logic
+5. Platform differences (Unix vs Windows)
+```
 
-## Migration from tmux
-
-**For tmux users switching to gomux:**
-
-| tmux habit | gomux equivalent |
-|------------|------------------|
-| `tmux new -s foo` | `gomux foo` (creates or attaches) |
-| `tmux attach -t foo` | `gomux foo` (same command) |
-| `Ctrl+B D` (detach) | `Ctrl+A D` (detach, Phase 1: save, Phase 2: fork) |
-| `tmux ls` | `gomux list` |
-| `tmux kill-session -t foo` | `gomux kill foo` |
-
-**Key difference:** In Phase 1, detach means processes stop. In Phase 2, they keep running.
-
----
-
-## Open Questions
-
-1. **Command replay:** How accurate can we restore "vim foo.txt"? Store exact command line? Replay keystrokes?
-
-2. **State consistency:** Snapshot mid-command = inconsistent state. Acceptable? ACID transactions? Last-known-good?
-
-3. **Scrollback limits:** Store all scrollback? Truncate? Configurable per-pane?
-
-4. **Compression:** Compress snapshots? gzip? Trade disk space vs CPU.
-
-5. **Encryption:** Encrypt snapshots at rest? Contains shell history, env vars (may have secrets).
+**Disk-only simplicity (accepted):**
+```
+1. gob.Marshal() on detach
+2. gob.Unmarshal() on attach
+3. Re-spawn shells
+4. Done
+```
 
 ---
 
-## Success Metrics
+## Comparison: gomux vs tmux
 
-**Phase 1 success:**
-- Attach < 500ms
-- Detach < 100ms  
-- Works for daily shell use
-- No user complaints about speed
+| Feature | tmux | gomux |
+|---------|------|-------|
+| **Architecture** | Client/server daemon | Single process |
+| **Reattach speed** | Instant (< 10ms) | Fast (~200ms) |
+| **Process persistence** | True (same PIDs) | Restart (new PIDs) |
+| **Code complexity** | High | Low |
+| **Binary count** | 2 (tmux, tmux-server) | 1 |
+| **IPC protocol** | Custom binary | None |
+| **Cross-platform** | Unix only | All platforms |
+| **Debuggability** | Hard (daemon issues) | Easy (one process) |
 
-**Phase 2 trigger:**
-- User complaints about slow restore
-- Feature requests for "keep my vim open"
-- Long-running compile jobs restarting
+---
 
-**Phase 3 trigger:**
-- "Can I attach from my phone?"
-- "I want to share my session with teammate"
-- Remote development workflows
+## Implementation
+
+### Files
+
+- **pkg/gomux/snapshot.go** - Serialize/deserialize SessionSnapshot
+- **pkg/gomux/resurrect.go** - Restore session from snapshot
+- **pkg/gomux/session.go** - Session lifecycle, auto-save timer
+
+### Key Behaviors
+
+1. **Auto-save:** Every 30 seconds when session active
+2. **On detach:** Immediate save before exit
+3. **On attach:** Check for snapshot, restore if exists
+4. **Graceful degradation:** If restore fails, start fresh
+
+### Platform Notes
+
+- **Linux:** Native support
+- **macOS:** Native support  
+- **Windows:** Via WSL2 (Linux environment)
+- **Future:** Could add native Windows if needed
 
 ---
 
 ## Philosophy
 
-**Start simple, add complexity only when measured need.**
+**Hardware is fast. Complexity is expensive. Ship simple.**
 
-Don't build Phase 2 until Phase 1 proves insufficient.
-Don't build Phase 3 until users ask for it.
+Modern SSDs make disk-only feel instant. We trade 200ms for:
+- Debuggable code
+- Single binary
+- Cross-platform
+- No daemon headaches
 
-Hardware is fast. Users are patient. Complexity is expensive.
+If 200ms reattach is too slow, we made a mistake. But we think it's fast enough.
 
-Ship Phase 1 first.
+---
+
+## Migration from tmux
+
+| tmux | gomux |
+|------|-------|
+| `tmux new -s foo` | `gomux foo` |
+| `tmux attach -t foo` | `gomux foo` (same command) |
+| `Ctrl+B D` | `Ctrl+A D` |
+| `tmux ls` | `gomux list` |
+
+**Key difference:** Detach stops processes. Reattach restarts them (fast, but not instant).
+
+---
+
+## Files
+
+- `AGENTS.md` - Development guidelines
+- `ARCHITECTURE.md` - This document
+- `ROADMAP.md` - Development roadmap
+- `pkg/gomux/snapshot.go` - Snapshot implementation
+- `pkg/gomux/resurrect.go` - Session restore
+- `pkg/gomux/session.go` - Session management
