@@ -34,26 +34,24 @@ type PaneContent struct {
 }
 
 type Pane struct {
-	id            uint32
-	term          *libghostty.Terminal
-	renderState   *libghostty.RenderState
-	pty           *PTY
-	rows          int
-	cols          int
-	shell         string
-	windowTitle   string
-	dirty         bool          // Content changed since last GetPaneContent
-	cachedContent *PaneContent  // Cache to avoid rebuilding when not dirty
-	updateTimer   *time.Timer    // Throttle UI updates
-	updatePending bool          // Signal already queued
+	id          uint32
+	term        *libghostty.Terminal
+	renderState *libghostty.RenderState
+	pty         *PTY
+	rows        int
+	cols        int
+	shell       string
+	windowTitle string
+	sm          *paneStateMachine // State machine replaces boolean flags
 }
 
 func NewPane(id uint32, rows, cols int, shell string) *Pane {
 	return &Pane{
-		id:    id,
-		rows:  rows,
-		cols:  cols,
+		id:   id,
+		rows: rows,
+		cols: cols,
 		shell: shell,
+		sm:    newStateMachine(),
 	}
 }
 
@@ -118,13 +116,14 @@ func (p *Pane) Init() error {
 	// Trigger initial update after shell has time to output prompt
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		p.dirty = true
-		if uiUpdateCh != nil {
-			select {
-			case uiUpdateCh <- struct{}{}:
-			default:
+		p.sm.markDirty(func() {
+			if uiUpdateCh != nil {
+				select {
+				case uiUpdateCh <- struct{}{}:
+				default:
+				}
 			}
-		}
+		})
 	}()
 	
 	return nil
@@ -163,19 +162,15 @@ func (p *Pane) readLoop() {
 
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
-				p.dirty = true // Mark content as changed
-
-				// Throttle UI updates - coalesce rapid PTY data
-				if uiUpdateCh != nil && !p.updatePending {
-					p.updatePending = true
-					p.updateTimer = time.AfterFunc(16*time.Millisecond, func() {
-						p.updatePending = false
+				// State machine handles dirty flag and throttled UI notification
+				p.sm.markDirty(func() {
+					if uiUpdateCh != nil {
 						select {
 						case uiUpdateCh <- struct{}{}:
 						default:
 						}
-					})
-				}
+					}
+				})
 			}
 		}
 	}()
@@ -205,10 +200,10 @@ func (p *Pane) Receive(msg any) {
 		p.pty.TTY.Write([]byte(m.Data))
 	case ResizeTerm:
 		Infof("pane %d: resizing from %dx%d to %dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
+		p.sm.transition(StateResizing)
 		p.Resize(m.Rows, m.Cols)
 		p.pty.Resize(m.Rows, m.Cols)
-		p.dirty = true
-		p.cachedContent = nil // Clear cache, dimensions changed
+		p.sm.transition(StateDirty) // Force rebuild after resize
 	case KillPane:
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(PaneExited{ID: p.id})
@@ -230,9 +225,9 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 		}
 		envelope.Reply <- mode
 	case GetPaneContent:
-		// Return cached content if not dirty (no changes since last call)
-		if !p.dirty && p.cachedContent != nil {
-			envelope.Reply <- p.cachedContent
+		// Return cached content if in Ready state
+		if cached, ok := p.sm.getContent(); ok {
+			envelope.Reply <- cached
 			return
 		}
 
@@ -271,9 +266,8 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 			content.CursorHidden = true
 		}
 
-		// Cache this content and mark clean
-		p.cachedContent = content
-		p.dirty = false
+		// Cache this content and transition to Ready state
+		p.sm.markClean(content)
 
 		envelope.Reply <- content
 	default:
