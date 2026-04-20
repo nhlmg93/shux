@@ -255,26 +255,32 @@ func (m Model) View() string {
 	var output strings.Builder
 
 	for i := 0; i < height; i++ {
-		var row string
+		rowLen := 0
 		if i < len(content.Lines) {
-			row = content.Lines[i]
-			if len(row) > width {
-				row = row[:width]
+			row := content.Lines[i]
+			rowLen = len(row)
+			if rowLen > width {
+				rowLen = width
 			}
-			// Pad short rows to full UI width
-			if len(row) < width {
-				row += strings.Repeat(" ", width-len(row))
+			
+			// Write row content up to width
+			if i == content.CursorRow && content.CursorCol < rowLen {
+				// Cursor in this row - write with cursor char
+				output.WriteString(row[:content.CursorCol])
+				output.WriteString("█")
+				if content.CursorCol+1 < rowLen {
+					output.WriteString(row[content.CursorCol+1:rowLen])
+				}
+			} else {
+				output.WriteString(row[:rowLen])
 			}
-			// Draw cursor
-			if i == content.CursorRow && content.CursorCol < len(row) {
-				cursorChar := "█"
-				row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
-			}
-		} else {
-			// Empty row beyond content - fill with spaces
-			row = strings.Repeat(" ", width)
 		}
-		output.WriteString(row)
+		
+		// Pad to full width (avoid strings.Repeat allocation)
+		for pad := rowLen; pad < width; pad++ {
+			output.WriteByte(' ')
+		}
+		
 		if i < height-1 {
 			output.WriteString("\n")
 		}

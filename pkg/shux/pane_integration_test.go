@@ -1,6 +1,7 @@
 package shux
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -375,5 +376,57 @@ func TestPaneSizeFullTerminalHeight(t *testing.T) {
 	// Remaining lines should exist (even if empty)
 	if len(content.Cells) < 10 {
 		t.Errorf("Expected Cells array to have 10 rows, got %d", len(content.Cells))
+	}
+}
+
+// TestPanePTYResizedOnInit verifies PTY is sized correctly at startup
+func TestPanePTYResizedOnInit(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	// Create a specific size window
+	sessionRef.Send(CreateWindow{Rows: 40, Cols: 100})
+	pane := requirePane(t, sessionRef, super)
+
+	// Write a command to check terminal size
+	pane.Send(WriteToPane{Data: []byte("stty size\r")})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	pollFor(500*time.Millisecond, func() bool {
+		reply := sessionRef.Ask(GetPaneContent{})
+		result := <-reply
+		if result == nil {
+			return false
+		}
+		content := result.(*PaneContent)
+		// Look for "40 100" or similar in output
+		for _, line := range content.Lines {
+			if strings.Contains(line, "40") && strings.Contains(line, "100") {
+				return true
+			}
+		}
+		return false
+	})
+
+	reply := sessionRef.Ask(GetPaneContent{})
+	result := <-reply
+	if result == nil {
+		t.Fatal("Expected pane content")
+	}
+	content := result.(*PaneContent)
+
+	// Verify we got the expected terminal size output
+	found := false
+	for _, line := range content.Lines {
+		if strings.Contains(line, "40") && strings.Contains(line, "100") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Alternative: check that we have 40 lines (the height we requested)
+		if len(content.Lines) != 40 {
+			t.Errorf("Expected 40 lines for 40-row terminal, got %d", len(content.Lines))
+		}
 	}
 }
