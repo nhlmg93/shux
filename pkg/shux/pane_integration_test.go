@@ -430,3 +430,43 @@ func TestPanePTYResizedOnInit(t *testing.T) {
 		}
 	}
 }
+
+// TestPaneEventDrivenNoSpam verifies PTY updates don't flood the channel
+func TestPaneEventDrivenNoSpam(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	// Create a buffered channel to catch updates
+	updateCh := make(chan struct{}, 100)
+	SetUpdateChannel(updateCh)
+	defer SetUpdateChannel(nil) // Reset after test
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	pane := requirePane(t, sessionRef, super)
+
+	// Send a small amount of data
+	pane.Send(WriteToPane{Data: []byte("echo hello\r")})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	// Count how many update signals were sent
+	count := 0
+	done := time.After(500 * time.Millisecond)
+loop:
+	for {
+		select {
+		case <-updateCh:
+			count++
+			if count > 50 {
+				t.Fatalf("Too many update signals: %d (possible busy loop)", count)
+			}
+		case <-done:
+			break loop
+		}
+	}
+
+	t.Logf("Received %d update signals for single command (reasonable)", count)
+	// We expect some updates but not hundreds
+	if count == 0 {
+		t.Log("Note: No updates received (may be buffered or async)")
+	}
+}
