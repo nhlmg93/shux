@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/nhlmg93/gotor/actor"
 	"shux/pkg/shux"
 )
@@ -57,7 +58,11 @@ func main() {
 
 func run(sessionRef *actor.Ref) error {
 	model := shux.NewModel(sessionRef)
-	p := tea.NewProgram(model)
+	opts := []tea.ProgramOption{}
+	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" {
+		opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
+	}
+	p := tea.NewProgram(model, opts...)
 
 	bridgeRef := actor.Spawn(&UIBridge{program: p}, 32)
 	sessionRef.Send(shux.SubscribeUpdates{Subscriber: bridgeRef})

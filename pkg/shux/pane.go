@@ -16,7 +16,9 @@ var _ Resizable = (*Pane)(nil)
 type PaneCell struct {
 	Text         string
 	Width        int
+	HasFgColor   bool
 	FgColor      libghostty.ColorRGB
+	HasBgColor   bool
 	BgColor      libghostty.ColorRGB
 	Bold         bool
 	Italic       bool
@@ -408,9 +410,11 @@ func (p *Pane) currentRowCell() PaneCell {
 	}
 
 	if fg, err := p.rowCells.FgColor(); err == nil && fg != nil {
+		cell.HasFgColor = true
 		cell.FgColor = *fg
 	}
 	if bg, err := p.rowCells.BgColor(); err == nil && bg != nil {
+		cell.HasBgColor = true
 		cell.BgColor = *bg
 	}
 	if hasHyperlink, err := raw.HasHyperlink(); err == nil {

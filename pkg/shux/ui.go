@@ -1,9 +1,11 @@
 package shux
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/mitchellh/go-libghostty"
 	"github.com/nhlmg93/gotor/actor"
 )
 
@@ -162,26 +164,96 @@ func (m Model) renderContent() string {
 func renderRow(cells []PaneCell, width int) string {
 	var b strings.Builder
 	col := 0
+	currentStyle := defaultCellStyle()
+
 	for i := 0; i < len(cells) && col < width; i++ {
 		cell := cells[i]
 		if cell.Width == 0 {
 			continue
 		}
+
+		style := styleFromCell(cell)
+		if style != currentStyle {
+			b.WriteString(style.SGR())
+			currentStyle = style
+		}
+
 		text := cell.Text
 		if text == "" {
 			text = " "
 		}
 		b.WriteString(text)
+
 		if cell.Width > 0 {
 			col += cell.Width
 		} else {
 			col++
 		}
 	}
+
+	if currentStyle != defaultCellStyle() {
+		b.WriteString("\x1b[0m")
+	}
 	for ; col < width; col++ {
 		b.WriteByte(' ')
 	}
 	return b.String()
+}
+
+type cellStyle struct {
+	HasFgColor bool
+	FgColor    libghostty.ColorRGB
+	HasBgColor bool
+	BgColor    libghostty.ColorRGB
+	Bold       bool
+	Italic     bool
+	Underline  bool
+	Blink      bool
+	Reverse    bool
+}
+
+func defaultCellStyle() cellStyle {
+	return cellStyle{}
+}
+
+func styleFromCell(cell PaneCell) cellStyle {
+	return cellStyle{
+		HasFgColor: cell.HasFgColor,
+		FgColor:    cell.FgColor,
+		HasBgColor: cell.HasBgColor,
+		BgColor:    cell.BgColor,
+		Bold:       cell.Bold,
+		Italic:     cell.Italic,
+		Underline:  cell.Underline,
+		Blink:      cell.Blink,
+		Reverse:    cell.Reverse,
+	}
+}
+
+func (s cellStyle) SGR() string {
+	codes := []string{"0"}
+	if s.Bold {
+		codes = append(codes, "1")
+	}
+	if s.Italic {
+		codes = append(codes, "3")
+	}
+	if s.Underline {
+		codes = append(codes, "4")
+	}
+	if s.Blink {
+		codes = append(codes, "5")
+	}
+	if s.Reverse {
+		codes = append(codes, "7")
+	}
+	if s.HasFgColor {
+		codes = append(codes, fmt.Sprintf("38;2;%d;%d;%d", s.FgColor.R, s.FgColor.G, s.FgColor.B))
+	}
+	if s.HasBgColor {
+		codes = append(codes, fmt.Sprintf("48;2;%d;%d;%d", s.BgColor.R, s.BgColor.G, s.BgColor.B))
+	}
+	return "\x1b[" + strings.Join(codes, ";") + "m"
 }
 
 func NewModel(session *actor.Ref) Model {
