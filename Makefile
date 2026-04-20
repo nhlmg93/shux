@@ -53,6 +53,6 @@ fmt-check:
 lint:
 	@$(GOLANGCI_LINT) run ./...
 
-check: fmt-check doc gopls lint build
+check: fmt-check doc gopls lint
 
 test-e2e: test

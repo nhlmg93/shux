@@ -36,7 +36,7 @@ jobs:
         uses: ./.github/actions/setup-ghostty-vt
         with:
           ghostty-ref: ${{ env.GHOSTTY_REF }}
-          packages: pkg-config gcc g++ nano vim less
+          packages: pkg-config gcc g++
 
       - name: Install Go tooling
         run: |
@@ -49,6 +49,39 @@ jobs:
 
       - name: Run checks
         run: make check
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up native build environment
+        uses: ./.github/actions/setup-ghostty-vt
+        with:
+          ghostty-ref: ${{ env.GHOSTTY_REF }}
+          packages: pkg-config gcc g++
+
+      - name: Build shux
+        run: make build
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Run tests
         run: make test
