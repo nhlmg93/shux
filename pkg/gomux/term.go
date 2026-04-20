@@ -163,11 +163,21 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 			content.Lines[row] = string(line)
 		}
 
-		// TODO: Get cursor position from Ghostty
-		// Ghostty API doesn't expose cursor directly yet via Go bindings
-		// Could be tracked via effect callbacks
-		content.CursorRow = 0
-		content.CursorCol = 0
+		// Get cursor position from Ghostty RenderState
+		rs, err := libghostty.NewRenderState()
+		if err == nil {
+			defer rs.Close()
+			if err := rs.Update(t.term); err == nil {
+				if hasValue, _ := rs.CursorViewportHasValue(); hasValue {
+					if x, err := rs.CursorViewportX(); err == nil {
+						content.CursorCol = int(x)
+					}
+					if y, err := rs.CursorViewportY(); err == nil {
+						content.CursorRow = int(y)
+					}
+				}
+			}
+		}
 
 		envelope.Reply <- content
 	default:
