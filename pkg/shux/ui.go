@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nhlmg93/gotor/actor"
 )
@@ -264,46 +263,44 @@ func (m Model) View() string {
 	// Always render full UI dimensions (m.width x m.height)
 	// Content may differ during resize - stretch/compress to fit
 	width, height := m.width, m.height
-	var rows []string
+	var output strings.Builder
 
 	for i := 0; i < height; i++ {
-		var rowBuilder strings.Builder
-		
-		if i < len(content.Lines) && i < len(content.Cells) {
-			cells := content.Cells[i]
+		rowLen := 0
+		if i < len(content.Lines) {
+			row := content.Lines[i]
+			rowLen = len(row)
+			if rowLen > width {
+				rowLen = width
+			}
 			
-			for j := 0; j < width && j < len(cells); j++ {
-				cell := cells[j]
-				char := string(cell.Char)
-				
-				// Draw cursor block at cursor position (if visible)
-				if i == content.CursorRow && j == content.CursorCol && !content.CursorHidden {
-					char = "█"
+			// Write row content up to width
+			if i == content.CursorRow && content.CursorCol < rowLen {
+				// Cursor in this row - write with cursor char
+				output.WriteString(row[:content.CursorCol])
+				output.WriteString("█")
+				if content.CursorCol+1 < rowLen {
+					output.WriteString(row[content.CursorCol+1:rowLen])
 				}
-				
-				// For now, skip styling to debug UTF-8 rendering
-				_ = lipgloss.NewStyle() // Keep import
-				rowBuilder.WriteString(char)
+			} else {
+				output.WriteString(row[:rowLen])
 			}
-			
-			// Pad remaining cells in row
-			for j := len(cells); j < width; j++ {
-				rowBuilder.WriteString(" ")
-			}
-		} else {
-			// Empty row
-			rowBuilder.WriteString(strings.Repeat(" ", width))
 		}
 		
-		rows = append(rows, rowBuilder.String())
+		// Pad to full width (avoid strings.Repeat allocation)
+		for pad := rowLen; pad < width; pad++ {
+			output.WriteByte(' ')
+		}
+		
+		if i < height-1 {
+			output.WriteString("\n")
+		}
 	}
-	
-	output := strings.Join(rows, "\n")
-	
+
 	if m.prefixMode {
-		return output + "\n[prefix]"
+		return output.String() + "\n[prefix]"
 	}
-	return output
+	return output.String()
 }
 
 func NewModel(session *actor.Ref, updateCh chan struct{}) Model {

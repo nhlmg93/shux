@@ -118,22 +118,13 @@ func (s *Session) switchWindow(delta int) {
 
 func (s *Session) handleWindowEmpty(id uint32) {
 	delete(s.windows, id)
-	
-	// If this was the active window, pick a new one or notify parent we're empty
 	if s.active == id {
 		if len(s.windows) > 0 {
 			for id := range s.windows {
 				s.active = id
 				break
 			}
-		} else {
-			s.active = 0
-		}
-	}
-	
-	// Notify parent when we have no windows (regardless of which was active)
-	if len(s.windows) == 0 && s.active == 0 {
-		if parent := actor.Parent(); parent != nil {
+		} else if parent := actor.Parent(); parent != nil {
 			parent.Send(SessionEmpty{ID: s.id})
 		}
 	}
