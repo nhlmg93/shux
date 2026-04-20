@@ -4,11 +4,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nhlmg93/gotor/actor"
 )
+
+// Package-level update channel for actor→UI communication
+var uiUpdateCh chan struct{}
+
+// SetUpdateChannel sets the channel actors use to notify UI of content changes
+func SetUpdateChannel(ch chan struct{}) {
+	uiUpdateCh = ch
+}
 
 type Model struct {
 	session       *actor.Ref
@@ -19,25 +26,23 @@ type Model struct {
 	cursorRow     int
 	cursorCol     int
 	initialized   bool
-	updatePending bool // Prevent overlapping update timers
+	updateCh      chan struct{} // Receives updates from actor system
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.listenForUpdates()
+	return m.waitForUpdate()
 }
 
-func (m Model) listenForUpdates() tea.Cmd {
-	if m.updatePending {
-		return nil // Already have an update in flight
-	}
-	m.updatePending = true
+// waitForUpdate blocks until the actor system notifies us of new content
+func (m Model) waitForUpdate() tea.Cmd {
 	return func() tea.Msg {
-		time.Sleep(16 * time.Millisecond) // ~60fps
-		return updateMsg{}
+		<-m.updateCh
+		return UpdateMsg{}
 	}
 }
 
-type updateMsg struct{}
+// UpdateMsg signals that pane content has changed and UI should redraw
+type UpdateMsg struct{}
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -53,18 +58,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
 			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
 		}
-		return m, m.listenForUpdates()
+		return m, m.waitForUpdate()
 
 	case tea.KeyMsg:
 		if m.handleKey(msg) {
 			return m, tea.Quit
 		}
-		// Key press resets update timer for immediate feedback
-		m.updatePending = false
-		return m, m.listenForUpdates()
+		// After key press, refresh content immediately
+		return m, func() tea.Msg { return UpdateMsg{} }
 
-	case updateMsg:
-		m.updatePending = false
+	case UpdateMsg:
 		reply := m.session.Ask(GetPaneContent{})
 		result := <-reply
 		if result != nil {
@@ -75,10 +78,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursorCol = content.CursorCol
 			}
 		}
-		return m, m.listenForUpdates()
+		return m, m.waitForUpdate()
 
 	default:
-		return m, m.listenForUpdates()
+		return m, m.waitForUpdate()
 	}
 }
 
@@ -300,15 +303,24 @@ func (m Model) View() string {
 	return output.String()
 }
 
-func NewModel(session *actor.Ref) Model {
+func NewModel(session *actor.Ref, updateCh chan struct{}) Model {
 	return Model{
 		session: session,
 		content: make([]string, 0),
+		updateCh: updateCh,
 	}
 }
 
-func RunUI(session *actor.Ref) {
-	p := tea.NewProgram(NewModel(session), tea.WithAltScreen())
+func RunUI(session *actor.Ref, updateCh chan struct{}) {
+	p := tea.NewProgram(NewModel(session, updateCh), tea.WithAltScreen())
+	
+	// Goroutine to wake Bubble Tea when actors notify us
+	go func() {
+		for range updateCh {
+			p.Send(UpdateMsg{})
+		}
+	}()
+	
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running UI: %v\n", err)
 		os.Exit(1)

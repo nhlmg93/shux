@@ -24,7 +24,12 @@ func main() {
 	// Check if session already exists
 	if existing := actor.WhereIs("session:" + sessionName); existing != nil {
 		shux.Infof("attaching to existing session: %s", sessionName)
-		run(existing)
+		
+		// Create update channel for actor→UI communication
+		updateCh := make(chan struct{}, 10)
+		shux.SetUpdateChannel(updateCh)
+		
+		run(existing, updateCh)
 		return
 	}
 
@@ -40,16 +45,28 @@ func main() {
 	}
 
 	shux.Infof("created new session: %s", sessionName)
-	run(sessionRef)
+	
+	// Create update channel for actor→UI communication
+	updateCh := make(chan struct{}, 10) // Buffered to prevent blocking
+	shux.SetUpdateChannel(updateCh)
+	
+	run(sessionRef, updateCh)
 
 	// Cleanup
 	actor.Unregister("session:" + sessionName)
 	supervisorRef.Shutdown()
 }
 
-func run(sessionRef *actor.Ref) {
-	model := shux.NewModel(sessionRef)
+func run(sessionRef *actor.Ref, updateCh chan struct{}) {
+	model := shux.NewModel(sessionRef, updateCh)
 	p := tea.NewProgram(model, tea.WithAltScreen())
+	
+	// Goroutine to forward actor updates to Bubble Tea
+	go func() {
+		for range updateCh {
+			p.Send(shux.UpdateMsg{})
+		}
+	}()
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

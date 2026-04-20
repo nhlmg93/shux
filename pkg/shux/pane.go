@@ -132,8 +132,12 @@ func (p *Pane) readLoop() {
 			}
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
-				if parent := actor.Parent(); parent != nil {
-					parent.Send(PaneContentUpdated{ID: p.id})
+				// Notify UI of content change via channel (non-blocking)
+				if uiUpdateCh != nil {
+					select {
+					case uiUpdateCh <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}
