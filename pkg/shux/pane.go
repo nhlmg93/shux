@@ -2,6 +2,7 @@ package shux
 
 import (
 	"os/exec"
+	"time"
 
 	"github.com/mitchellh/go-libghostty"
 	"github.com/nhlmg93/gotor/actor"
@@ -32,14 +33,16 @@ type PaneContent struct {
 }
 
 type Pane struct {
-	id          uint32
-	term        *libghostty.Terminal
-	renderState *libghostty.RenderState
-	pty         *PTY
-	rows        int
-	cols        int
-	shell       string
-	windowTitle string
+	id            uint32
+	term          *libghostty.Terminal
+	renderState   *libghostty.RenderState
+	pty           *PTY
+	rows          int
+	cols          int
+	shell         string
+	windowTitle   string
+	lastUpdate    time.Time      // Throttle content updates
+	pendingUpdate bool           // Flag for pending redraw
 }
 
 func NewPane(id uint32, rows, cols int, shell string) *Pane {

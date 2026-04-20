@@ -11,14 +11,15 @@ import (
 )
 
 type Model struct {
-	session     *actor.Ref
-	width       int
-	height      int
-	content     []string
-	prefixMode  bool
-	cursorRow   int
-	cursorCol   int
-	initialized bool
+	session       *actor.Ref
+	width         int
+	height        int
+	content       []string
+	prefixMode    bool
+	cursorRow     int
+	cursorCol     int
+	initialized   bool
+	updatePending bool // Prevent overlapping update timers
 }
 
 func (m Model) Init() tea.Cmd {
@@ -26,8 +27,12 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) listenForUpdates() tea.Cmd {
+	if m.updatePending {
+		return nil // Already have an update in flight
+	}
+	m.updatePending = true
 	return func() tea.Msg {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(16 * time.Millisecond) // ~60fps
 		return updateMsg{}
 	}
 }
@@ -54,9 +59,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.handleKey(msg) {
 			return m, tea.Quit
 		}
+		// Key press resets update timer for immediate feedback
+		m.updatePending = false
 		return m, m.listenForUpdates()
 
 	case updateMsg:
+		m.updatePending = false
 		reply := m.session.Ask(GetPaneContent{})
 		result := <-reply
 		if result != nil {
