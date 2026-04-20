@@ -47,14 +47,14 @@ func newLogger() (*log.Logger, error) {
 	}
 
 	logDir := filepath.Join(home, ".local", "share", "shux")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return nil, err
 	}
 
 	logPath := filepath.Join(logDir, "shux.log")
 
 	// Open log file (append mode, create if not exists)
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}

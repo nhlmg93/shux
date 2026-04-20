@@ -44,7 +44,7 @@ type PaneSnapshot struct {
 func SaveSnapshot(path string, snapshot *SessionSnapshot) error {
 	start := time.Now()
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("failed to create snapshot directory: %w", err)
 	}
 
@@ -56,18 +56,26 @@ func SaveSnapshot(path string, snapshot *SessionSnapshot) error {
 
 	encoder := gob.NewEncoder(file)
 	if err := encoder.Encode(snapshot); err != nil {
-		file.Close()
-		os.Remove(tmpPath)
+		if closeErr := file.Close(); closeErr != nil {
+			Warnf("snapshot: close temp file after encode failure path=%s err=%v", tmpPath, closeErr)
+		}
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			Warnf("snapshot: remove temp file after encode failure path=%s err=%v", tmpPath, removeErr)
+		}
 		return fmt.Errorf("failed to encode snapshot: %w", err)
 	}
 
 	if err := file.Close(); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			Warnf("snapshot: remove temp file after close failure path=%s err=%v", tmpPath, removeErr)
+		}
 		return fmt.Errorf("failed to close snapshot file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			Warnf("snapshot: remove temp file after rename failure path=%s err=%v", tmpPath, removeErr)
+		}
 		return fmt.Errorf("failed to rename snapshot file: %w", err)
 	}
 
@@ -86,7 +94,11 @@ func LoadSnapshot(path string) (*SessionSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open snapshot file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			Warnf("snapshot: close file path=%s err=%v", path, closeErr)
+		}
+	}()
 
 	snapshot, err := decodeSnapshot(file)
 	if err != nil {

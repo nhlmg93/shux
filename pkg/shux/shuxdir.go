@@ -27,7 +27,7 @@ func SessionSnapshotPath(name string) string {
 // EnsureSessionDir creates the session directory if it doesn't exist.
 func EnsureSessionDir(name string) error {
 	dir := SessionDir(name)
-	return os.MkdirAll(dir, 0750)
+	return os.MkdirAll(dir, 0o750)
 }
 
 // SessionSnapshotExists checks if a snapshot file exists for the given session name.

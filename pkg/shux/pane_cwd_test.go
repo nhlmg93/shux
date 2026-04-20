@@ -1,6 +1,7 @@
 package shux
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,7 +20,11 @@ func TestGetProcessCWD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Fatalf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	// Start a shell process in that directory
 	cmd := exec.Command("/bin/sh", "-c", "sleep 30")
@@ -27,7 +32,11 @@ func TestGetProcessCWD(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Failed to start test process: %v", err)
 	}
-	defer cmd.Process.Kill()
+	defer func() {
+		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			t.Fatalf("Failed to kill test process: %v", err)
+		}
+	}()
 
 	// Give the process time to start
 	time.Sleep(50 * time.Millisecond)

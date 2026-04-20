@@ -98,8 +98,8 @@ func TestBuildSnapshotEmptySession(t *testing.T) {
 
 func TestRestoreSessionFromSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := setTestHome(tmpDir)
-	defer restoreHome(oldHome)
+	oldHome := setTestHome(t, tmpDir)
+	defer restoreHome(t, oldHome)
 
 	super := newTestSupervisor()
 
@@ -149,8 +149,8 @@ func TestRestoreSessionFromSnapshot(t *testing.T) {
 
 func TestRestoreSessionFromSnapshotNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := setTestHome(tmpDir)
-	defer restoreHome(oldHome)
+	oldHome := setTestHome(t, tmpDir)
+	defer restoreHome(t, oldHome)
 
 	super := newTestSupervisor()
 	if _, err := RestoreSessionFromSnapshot("nonexistent", super.handle); err == nil {
@@ -158,20 +158,26 @@ func TestRestoreSessionFromSnapshotNotFound(t *testing.T) {
 	}
 }
 
-func setTestHome(dir string) string {
+func setTestHome(t *testing.T, dir string) string {
+	t.Helper()
 	old := os.Getenv("HOME")
-	os.Setenv("HOME", dir)
+	if err := os.Setenv("HOME", dir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
 	return old
 }
 
-func restoreHome(old string) {
-	os.Setenv("HOME", old)
+func restoreHome(t *testing.T, old string) {
+	t.Helper()
+	if err := os.Setenv("HOME", old); err != nil {
+		t.Fatalf("restore HOME: %v", err)
+	}
 }
 
 func TestSessionDetachSavesNamedSnapshot(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := setTestHome(tmpDir)
-	defer restoreHome(oldHome)
+	oldHome := setTestHome(t, tmpDir)
+	defer restoreHome(t, oldHome)
 
 	super := newTestSupervisor()
 	sessionRef := StartNamedSessionWithShell(1, "work", "/bin/sh", super.handle)
@@ -203,8 +209,8 @@ func TestSessionDetachSavesNamedSnapshot(t *testing.T) {
 
 func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 	tmpDir := t.TempDir()
-	oldHome := setTestHome(tmpDir)
-	defer restoreHome(oldHome)
+	oldHome := setTestHome(t, tmpDir)
+	defer restoreHome(t, oldHome)
 
 	cwd := t.TempDir()
 	super := newTestSupervisor()

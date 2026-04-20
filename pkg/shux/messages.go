@@ -8,13 +8,17 @@ type CreateWindow struct {
 	Cols int
 }
 
-type WindowEmpty struct{ ID uint32 }
-type SwitchWindow struct{ Delta int }
-type GetActiveWindow struct{}
-type SessionEmpty struct{ ID uint32 }
+type (
+	WindowEmpty     struct{ ID uint32 }
+	SwitchWindow    struct{ Delta int }
+	GetActiveWindow struct{}
+	SessionEmpty    struct{ ID uint32 }
+)
 
-type SubscribeUpdates struct{ Subscriber chan any }
-type UnsubscribeUpdates struct{ Subscriber chan any }
+type (
+	SubscribeUpdates   struct{ Subscriber chan any }
+	UnsubscribeUpdates struct{ Subscriber chan any }
+)
 
 // Pane messages (terminal panes within windows).
 type CreatePane struct {
@@ -25,13 +29,15 @@ type CreatePane struct {
 	CWD   string
 }
 
-type KillPane struct{}
-type PaneExited struct{ ID uint32 }
-type SwitchToPane struct{ Index int }
-type WriteToPane struct{ Data []byte }
-type GetActivePane struct{}
-type GetPaneContent struct{}
-type GetPaneMode struct{}
+type (
+	KillPane       struct{}
+	PaneExited     struct{ ID uint32 }
+	SwitchToPane   struct{ Index int }
+	WriteToPane    struct{ Data []byte }
+	GetActivePane  struct{}
+	GetPaneContent struct{}
+	GetPaneMode    struct{}
+)
 
 // KeyCode values are normalized internal key identifiers for non-printable keys.
 const (

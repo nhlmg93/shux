@@ -152,20 +152,13 @@ func (w *Window) gatherSnapshotData() WindowSnapshot {
 			continue
 		}
 
-		result, ok := askValue(paneRef, GetPaneSnapshotData{})
+		result, _ := askValue(paneRef, GetPaneSnapshotData{})
 		paneData, ok := result.(PaneSnapshotData)
 		if !ok {
 			continue
 		}
 
-		snapshot.Panes = append(snapshot.Panes, PaneSnapshot{
-			ID:          paneData.ID,
-			Shell:       paneData.Shell,
-			Rows:        paneData.Rows,
-			Cols:        paneData.Cols,
-			CWD:         paneData.CWD,
-			WindowTitle: paneData.WindowTitle,
-		})
+		snapshot.Panes = append(snapshot.Panes, PaneSnapshot(paneData))
 	}
 
 	return snapshot
@@ -192,12 +185,6 @@ func (w *Window) createPane(cmd CreatePane) {
 	w.paneOrder = append(w.paneOrder, paneID)
 	if w.active == 0 {
 		w.active = paneID
-	}
-}
-
-func (w *Window) killPane(id uint32) {
-	if ref, ok := w.panes[id]; ok {
-		ref.Send(KillPane{})
 	}
 }
 

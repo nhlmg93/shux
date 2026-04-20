@@ -85,19 +85,6 @@ func requirePane(t *testing.T, sessionRef *SessionRef, super *testSupervisor) *P
 	return paneRef.(*PaneRef)
 }
 
-func requirePaneInWindow(t *testing.T, winRef *WindowRef, super *testSupervisor) *PaneRef {
-	t.Helper()
-	var paneRef any
-	if !pollFor(500*time.Millisecond, func() bool {
-		reply := winRef.Ask(GetActivePane{})
-		paneRef = <-reply
-		return paneRef != nil
-	}) {
-		t.Fatal("timeout waiting for pane in window")
-	}
-	return paneRef.(*PaneRef)
-}
-
 func requireWindow(t *testing.T, sessionRef *SessionRef, super *testSupervisor) *WindowRef {
 	t.Helper()
 	var winRef any

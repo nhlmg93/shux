@@ -299,7 +299,7 @@ func (s *Session) buildSnapshot() *SessionSnapshot {
 			continue
 		}
 
-		result, ok := askValue(win, GetWindowSnapshotData{})
+		result, _ := askValue(win, GetWindowSnapshotData{})
 		winData, ok := result.(WindowSnapshot)
 		if !ok {
 			continue

@@ -91,9 +91,11 @@ type Pane struct {
 	stopped       bool
 }
 
-type panePTYData struct{ Data []byte }
-type paneFlushUpdate struct{}
-type paneProcessExited struct{ Err error }
+type (
+	panePTYData       struct{ Data []byte }
+	paneFlushUpdate   struct{}
+	paneProcessExited struct{ Err error }
+)
 
 func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
 	originalRows, originalCols := rows, cols

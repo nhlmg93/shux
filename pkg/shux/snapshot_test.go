@@ -199,8 +199,14 @@ func TestEnsureSessionDir(t *testing.T) {
 
 	// Override DataDir for testing
 	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	if err := os.Setenv("HOME", tmpDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	defer func() {
+		if err := os.Setenv("HOME", oldHome); err != nil {
+			t.Fatalf("restore HOME: %v", err)
+		}
+	}()
 
 	name := "test-session"
 	if err := EnsureSessionDir(name); err != nil {
@@ -217,8 +223,14 @@ func TestSessionSnapshotExists(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	oldHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", oldHome)
+	if err := os.Setenv("HOME", tmpDir); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+	defer func() {
+		if err := os.Setenv("HOME", oldHome); err != nil {
+			t.Fatalf("restore HOME: %v", err)
+		}
+	}()
 
 	name := "test-session"
 

@@ -16,7 +16,11 @@ func TestPTYStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start PTY: %v", err)
 	}
-	defer pty.Close()
+	defer func() {
+		if err := pty.Close(); err != nil {
+			t.Fatalf("Failed to close PTY: %v", err)
+		}
+	}()
 
 	// Read output from PTY
 	reader := bufio.NewReader(pty.TTY)
@@ -36,7 +40,11 @@ func TestPTYStartWithSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start sized PTY: %v", err)
 	}
-	defer pty.Close()
+	defer func() {
+		if err := pty.Close(); err != nil {
+			t.Fatalf("Failed to close PTY: %v", err)
+		}
+	}()
 
 	output, err := io.ReadAll(pty.TTY)
 	if err != nil && !errors.Is(err, syscall.EIO) {

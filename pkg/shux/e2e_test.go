@@ -2,6 +2,7 @@ package shux
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,9 @@ import (
 func TestE2ENanoEdit(t *testing.T) {
 	if os.Getenv("SHUX_E2E") != "1" {
 		t.Skip("Set SHUX_E2E=1 to run E2E tests (requires nano, vim, etc)")
+	}
+	if _, err := exec.LookPath("nano"); err != nil {
+		t.Skip("nano not installed")
 	}
 
 	sessionRef, super, cleanup := setupSession(t)
@@ -168,6 +172,9 @@ func allSpaces(s string) bool {
 func TestE2EVimEdit(t *testing.T) {
 	if os.Getenv("SHUX_E2E") != "1" {
 		t.Skip("Set SHUX_E2E=1 to run E2E tests")
+	}
+	if _, err := exec.LookPath("vim"); err != nil {
+		t.Skip("vim not installed")
 	}
 
 	sessionRef, super, cleanup := setupSession(t)

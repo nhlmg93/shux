@@ -38,7 +38,9 @@ func StartWithSize(cmd *exec.Cmd, rows, cols int) (*PTY, error) {
 	// Ensure PTY is in blocking mode - required for readLoop.
 	// Some environments may have non-blocking by default.
 	if err := syscall.SetNonblock(int(ptmx.Fd()), false); err != nil {
-		ptmx.Close()
+		if closeErr := ptmx.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to set blocking mode: %w (close PTY: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to set blocking mode: %w", err)
 	}
 
