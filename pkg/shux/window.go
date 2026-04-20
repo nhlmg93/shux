@@ -1,4 +1,4 @@
-package gomux
+package shux
 
 import (
 	"github.com/nhlmg93/gotor/actor"

@@ -1,5 +1,5 @@
-// Package gomux provides terminal multiplexing primitives.
-package gomux
+// Package shux provides terminal multiplexing primitives.
+package shux
 
 import (
 	"os"

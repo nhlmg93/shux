@@ -1,4 +1,4 @@
-package gomux
+package shux
 
 import (
 	"os/exec"

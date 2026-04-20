@@ -1,4 +1,4 @@
-# gomux
+# shux
 
 A terminal multiplexer in Go with full terminal emulation via Ghostty.
 
@@ -29,20 +29,20 @@ This installs `libghostty-vt-static` to `/usr/local`.
 
 ```bash
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-go build ./cmd/gomux
+go build ./cmd/shux
 ```
 
 For a fully static binary (no dynamic dependencies):
 
 ```bash
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-go build -ldflags '-linkmode external -extldflags "-static"' ./cmd/gomux
+go build -ldflags '-linkmode external -extldflags "-static"' ./cmd/shux
 ```
 
 ### Run
 
 ```bash
-./gomux
+./shux
 ```
 
 Keys:

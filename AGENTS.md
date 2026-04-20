@@ -2,7 +2,9 @@
 
 ## Project Description
 
-Building a terminal multiplexer (gomux) to replace tmux with a simpler, modern architecture. Focus on:
+**shux** - A terminal multiplexer. You shouldn't have to think about it.
+
+Building shux to replace tmux with a simpler, modern architecture. Focus on:
 - Single-process design (no client/server split)
 - Pure Go with minimal dependencies
 - Full terminal emulation via Ghostty

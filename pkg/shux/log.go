@@ -1,4 +1,4 @@
-package gomux
+package shux
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ const (
 )
 
 var (
-	// Logger is the global gomux logger, writes to ~/.local/share/gomux/gomux.log
+	// Logger is the global shux logger, writes to ~/.local/share/shux/shux.log
 	Logger   *log.Logger
 	logLevel LogLevel = LevelInfo // Default level (set to LevelDebug for development)
 	initOnce sync.Once
@@ -46,12 +46,12 @@ func newLogger() (*log.Logger, error) {
 		return nil, err
 	}
 
-	logDir := filepath.Join(home, ".local", "share", "gomux")
+	logDir := filepath.Join(home, ".local", "share", "shux")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return nil, err
 	}
 
-	logPath := filepath.Join(logDir, "gomux.log")
+	logPath := filepath.Join(logDir, "shux.log")
 
 	// Open log file (append mode, create if not exists)
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -105,7 +105,7 @@ func LogPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".local", "share", "gomux", "gomux.log")
+	return filepath.Join(home, ".local", "share", "shux", "shux.log")
 }
 
 // Logf provides formatted logging with a specific level

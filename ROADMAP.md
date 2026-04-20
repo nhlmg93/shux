@@ -1,4 +1,4 @@
-# gomux Development Roadmap
+# shux Development Roadmap
 
 ## Phase 1: Disk-Only Persistence (Current)
 
@@ -7,7 +7,7 @@
 ### Implementation
 
 ```
-Attach:   gomux mysession
+Attach:   shux mysession
           └─> Load snapshot from disk
           └─> Restore layout
           └─> Re-spawn shells (new PTYs)
@@ -21,7 +21,7 @@ Detach:   Ctrl+A D
           └─> Snapshot current state to disk
           └─> Exit process
 
-Reattach: gomux mysession
+Reattach: shux mysession
           └─> Same as "Attach" above
           └─> If snapshot exists: restore
           └─> If no snapshot: fresh session
@@ -29,19 +29,19 @@ Reattach: gomux mysession
 
 ### Files to Create
 
-1. **pkg/gomux/snapshot.go**
+1. **pkg/shux/snapshot.go**
    - Define SessionSnapshot struct
    - Serialize to gob format
-   - Write to ~/.local/share/gomux/{session}/
+   - Write to ~/.local/share/shux/{session}/
    - Auto-save timer (30 second intervals)
 
-2. **pkg/gomux/resurrect.go**
+2. **pkg/shux/resurrect.go**
    - Restore session from snapshot
    - Re-spawn shells in saved CWDs
    - Restore window layout
    - Replay scrollback from disk
 
-3. **pkg/gomux/session.go**
+3. **pkg/shux/session.go**
    - Session lifecycle management
    - Coordinate snapshot/restore
    - Handle "attach or create" logic
@@ -91,7 +91,7 @@ Reattach: gomux mysession
 make
 
 # Start fresh session
-./gomux mysession
+./shux mysession
 
 # Work in it, create panes, cd around
 
@@ -99,10 +99,10 @@ make
 Ctrl+A D
 
 # Check snapshot exists
-ls ~/.local/share/gomux/mysession/
+ls ~/.local/share/shux/mysession/
 
 # Reattach (measure time)
-time ./gomux mysession
+time ./shux mysession
 
 # Feel: Is it fast enough?
 ```

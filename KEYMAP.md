@@ -1,17 +1,17 @@
-# gomux Key Mapping
+# shux Key Mapping
 
 ## Prefix Key: Ctrl+B
 
-When you press `Ctrl+B`, gomux enters prefix mode. Next key is interpreted as a gomux command.
+When you press `Ctrl+B`, shux enters prefix mode. Next key is interpreted as a shux command.
 
-## gomux Commands (Prefix Mode)
+## shux Commands (Prefix Mode)
 
 | Key | Command |
 |-----|---------|
 | `Ctrl+B` `w` | Create new window |
 | `Ctrl+B` `n` | Next window |
 | `Ctrl+B` `p` | Previous window |
-| `Ctrl+B` `q` | Quit gomux |
+| `Ctrl+B` `q` | Quit shux |
 | `Ctrl+B` `c` | Create new pane (todo) |
 | `Ctrl+B` `d` | Detach (todo: snapshot & exit) |
 | `Ctrl+B` number | Switch to window N (todo) |

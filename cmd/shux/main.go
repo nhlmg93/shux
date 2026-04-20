@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"gomux/pkg/gomux"
+	"shux/pkg/shux"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nhlmg93/gotor/actor"
 )
 
 func main() {
 	// Initialize logging
-	if err := gomux.InitLogger(); err != nil {
+	if err := shux.InitLogger(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to init logger: %v\n", err)
 	}
 
@@ -23,7 +23,7 @@ func main() {
 
 	// Check if session already exists
 	if existing := actor.WhereIs("session:" + sessionName); existing != nil {
-		gomux.Infof("attaching to existing session: %s", sessionName)
+		shux.Infof("attaching to existing session: %s", sessionName)
 		run(existing)
 		return
 	}
@@ -31,7 +31,7 @@ func main() {
 	// Create new session
 	supervisor := &SupervisorActor{}
 	supervisorRef := actor.Spawn(supervisor, 10)
-	sessionRef := gomux.SpawnSession(1, supervisorRef)
+	sessionRef := shux.SpawnSession(1, supervisorRef)
 
 	// Register session globally
 	if err := actor.Register("session:"+sessionName, sessionRef); err != nil {
@@ -39,7 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	gomux.Infof("created new session: %s", sessionName)
+	shux.Infof("created new session: %s", sessionName)
 	run(sessionRef)
 
 	// Cleanup
@@ -48,7 +48,7 @@ func main() {
 }
 
 func run(sessionRef *actor.Ref) {
-	model := gomux.NewModel(sessionRef)
+	model := shux.NewModel(sessionRef)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {

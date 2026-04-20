@@ -1,4 +1,4 @@
-package gomux
+package shux
 
 // Resizable is the common interface for windows and terms (panes)
 // that can be resized to specific dimensions

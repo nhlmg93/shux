@@ -1,4 +1,4 @@
-module gomux
+module shux
 
 go 1.26.1
 

@@ -14,7 +14,7 @@
 ```go
 libghostty.WithTitleChanged(func(t *libghostty.Terminal) {
     // Window title changed via OSC 0/2
-    // Could update gomux window name
+    // Could update shux window name
 })
 
 libghostty.WithBell(func(t *libghostty.Terminal) {
@@ -28,7 +28,7 @@ libghostty.WithWritePty(func(t *libghostty.Terminal, data []byte) {
 })
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Auto-update window titles from shell
 - Visual bell support
 - Handle terminal queries properly
@@ -48,7 +48,7 @@ italic := style.Italic()
 underline := style.Underline()
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Currently we render plain text only
 - Could pass color info to Bubble Tea
 - Would need lipgloss integration for true color rendering
@@ -64,7 +64,7 @@ if hasLink {
 }
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Make URLs clickable in UI
 - Would need mouse support + hit testing
 
@@ -77,7 +77,7 @@ kg, _ := term.KittyGraphics()
 // Iterate images and placements
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Mostly for completeness
 - Would need image rendering in Bubble Tea (complex)
 
@@ -97,7 +97,7 @@ type MouseEvent struct {
 }
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Click to focus pane
 - Click URLs
 - Scroll with mouse wheel
@@ -155,7 +155,7 @@ cursorVisible, _ := term.ModeGet(libghostty.ModeCursorVisible)
 // etc.
 ```
 
-**Use in gomux:**
+**Use in shux:**
 - Know when vim/less is running (alt screen)
 - Adjust UI behavior
 

@@ -1,4 +1,4 @@
-# Build gomux
+# Build shux
 # Requires: mise with zig@0.15.2
 
 ZIG=$(shell mise which zig 2>/dev/null || echo /tmp/fail)
@@ -13,13 +13,13 @@ all:
 		cp -r include/ghostty $(PREFIX)/include/; \
 		echo "prefix=$(PREFIX)\nLibs: -L\$${prefix}/lib -lghostty-vt-static\nCflags: -I\$${prefix}/include" > $(PREFIX)/lib/pkgconfig/libghostty-vt-static.pc; \
 	fi
-	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go build -o gomux ./cmd/gomux && echo "✓ gomux built"
+	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go build -o shux ./cmd/shux && echo "✓ shux built"
 
 clean:
-	@rm -rf ghostty-build gomux
+	@rm -rf ghostty-build shux
 
 test: all
 	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go test -v ./pkg/...
 
 test-e2e:
-	@docker build -f Dockerfile.test -t gomux-test . && docker run --rm gomux-test
+	@docker build -f Dockerfile.test -t shux-test . && docker run --rm shux-test

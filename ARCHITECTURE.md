@@ -1,4 +1,4 @@
-# gomux Architecture
+# shux Architecture
 
 ## Overview
 
@@ -16,7 +16,7 @@ No daemon. No fork. No client/server split. Just snapshot and restore.
 
 ```
 ┌─────────────────────────────────────┐
-│        gomux mysession              │
+│        shux mysession              │
 │                                     │
 │  ┌──────────────┐ ┌─────────────┐  │
 │  │   UI Thread  │ │  PTY/Grid   │  │
@@ -33,7 +33,7 @@ No daemon. No fork. No client/server split. Just snapshot and restore.
 **Lifecycle:**
 
 ```
-Start:    gomux mysession
+Start:    shux mysession
           └─> If snapshot exists: restore
           └─> If no snapshot: create fresh session
 
@@ -46,7 +46,7 @@ Detach:   Ctrl+A D
           └─> Serialize state to disk
           └─> Exit process
 
-Reattach: gomux mysession
+Reattach: shux mysession
           └─> Load snapshot from disk
           └─> Re-spawn shells in saved CWDs
           └─> Restore window layout
@@ -56,7 +56,7 @@ Reattach: gomux mysession
 ### State Storage
 
 ```
-~/.local/share/gomux/
+~/.local/share/shux/
 ├── mysession/
 │   ├── snapshot.gob          # Session structure
 │   ├── panes/
@@ -121,7 +121,7 @@ type SessionSnapshot struct {
 - Same processes (true persistence)
 - Complex daemon architecture
 
-**gomux detach/reattach:**
+**shux detach/reattach:**
 - Fast (~200ms)
 - New processes (restart shells)
 - Simple single-process architecture
@@ -149,9 +149,9 @@ type SessionSnapshot struct {
 
 ---
 
-## Comparison: gomux vs tmux
+## Comparison: shux vs tmux
 
-| Feature | tmux | gomux |
+| Feature | tmux | shux |
 |---------|------|-------|
 | **Architecture** | Client/server daemon | Single process |
 | **Reattach speed** | Instant (< 10ms) | Fast (~200ms) |
@@ -168,9 +168,9 @@ type SessionSnapshot struct {
 
 ### Files
 
-- **pkg/gomux/snapshot.go** - Serialize/deserialize SessionSnapshot
-- **pkg/gomux/resurrect.go** - Restore session from snapshot
-- **pkg/gomux/session.go** - Session lifecycle, auto-save timer
+- **pkg/shux/snapshot.go** - Serialize/deserialize SessionSnapshot
+- **pkg/shux/resurrect.go** - Restore session from snapshot
+- **pkg/shux/session.go** - Session lifecycle, auto-save timer
 
 ### Key Behaviors
 
@@ -204,12 +204,12 @@ If 200ms reattach is too slow, we made a mistake. But we think it's fast enough.
 
 ## Migration from tmux
 
-| tmux | gomux |
+| tmux | shux |
 |------|-------|
-| `tmux new -s foo` | `gomux foo` |
-| `tmux attach -t foo` | `gomux foo` (same command) |
+| `tmux new -s foo` | `shux foo` |
+| `tmux attach -t foo` | `shux foo` (same command) |
 | `Ctrl+B D` | `Ctrl+A D` |
-| `tmux ls` | `gomux list` |
+| `tmux ls` | `shux list` |
 
 **Key difference:** Detach stops processes. Reattach restarts them (fast, but not instant).
 
@@ -220,6 +220,6 @@ If 200ms reattach is too slow, we made a mistake. But we think it's fast enough.
 - `AGENTS.md` - Development guidelines
 - `ARCHITECTURE.md` - This document
 - `ROADMAP.md` - Development roadmap
-- `pkg/gomux/snapshot.go` - Snapshot implementation
-- `pkg/gomux/resurrect.go` - Session restore
-- `pkg/gomux/session.go` - Session management
+- `pkg/shux/snapshot.go` - Snapshot implementation
+- `pkg/shux/resurrect.go` - Session restore
+- `pkg/shux/session.go` - Session management

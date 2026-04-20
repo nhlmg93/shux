@@ -1,4 +1,4 @@
-package gomux
+package shux
 
 import (
 	"os"
@@ -8,12 +8,12 @@ import (
 	"github.com/mitchellh/go-libghostty"
 )
 
-// TestE2ENanoEdit validates full stack: gomux → shell → nano → rendering
+// TestE2ENanoEdit validates full stack: shux → shell → nano → rendering
 // TestE2ENanoEdit validates nano interaction through full stack.
-// Run in Docker with: docker build -f Dockerfile.test -t gomux-test . && docker run gomux-test
+// Run in Docker with: docker build -f Dockerfile.test -t shux-test . && docker run shux-test
 func TestE2ENanoEdit(t *testing.T) {
-	if os.Getenv("GOMUX_E2E") != "1" {
-		t.Skip("Set GOMUX_E2E=1 to run E2E tests (requires nano, vim, etc)")
+	if os.Getenv("SHUX_E2E") != "1" {
+		t.Skip("Set SHUX_E2E=1 to run E2E tests (requires nano, vim, etc)")
 	}
 
 	sessionRef, super, cleanup := setupSession(t)
@@ -23,7 +23,7 @@ func TestE2ENanoEdit(t *testing.T) {
 	pane := requirePane(t, sessionRef, super)
 
 	// Start nano
-	pane.Send(WriteToPane{Data: []byte("nano /tmp/gomux_test.txt\r")})
+	pane.Send(WriteToPane{Data: []byte("nano /tmp/shux_test.txt\r")})
 	
 	// Wait for nano to initialize (shows "GNU nano" or bottom menu)
 	if !pollFor(1*time.Second, func() bool {
@@ -167,8 +167,8 @@ func allSpaces(s string) bool {
 }
 
 func TestE2EVimEdit(t *testing.T) {
-	if os.Getenv("GOMUX_E2E") != "1" {
-		t.Skip("Set GOMUX_E2E=1 to run E2E tests")
+	if os.Getenv("SHUX_E2E") != "1" {
+		t.Skip("Set SHUX_E2E=1 to run E2E tests")
 	}
 
 	sessionRef, super, cleanup := setupSession(t)
@@ -178,7 +178,7 @@ func TestE2EVimEdit(t *testing.T) {
 	pane := requirePane(t, sessionRef, super)
 
 	// Start vim
-	pane.Send(WriteToPane{Data: []byte("vim /tmp/gomux_vim_test.txt\r")})
+	pane.Send(WriteToPane{Data: []byte("vim /tmp/shux_vim_test.txt\r")})
 
 	// Wait for vim to show its initial screen (blank with ~ lines)
 	if !pollFor(1*time.Second, func() bool {
@@ -277,8 +277,8 @@ func TestE2EColorOutput(t *testing.T) {
 }
 
 func TestE2ELessPager(t *testing.T) {
-	if os.Getenv("GOMUX_E2E") != "1" {
-		t.Skip("Set GOMUX_E2E=1 to run E2E tests")
+	if os.Getenv("SHUX_E2E") != "1" {
+		t.Skip("Set SHUX_E2E=1 to run E2E tests")
 	}
 
 	sessionRef, super, cleanup := setupSession(t)
