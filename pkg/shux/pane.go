@@ -130,6 +130,11 @@ func (p *Pane) readLoop() {
 				readDone <- err
 				return
 			}
+			if n == 0 {
+				// Avoid busy loop on EOF or non-blocking read
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
 				// Notify UI of content change via channel (non-blocking)
