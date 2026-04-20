@@ -1,0 +1,32 @@
+# E2E test environment - Alpine Linux
+# Builds shux with embedded libghostty, includes nano/vim for testing
+FROM golang:1.26-alpine
+
+RUN apk add --no-cache git zig gcc g++ musl-dev pkgconfig nano vim less
+
+WORKDIR /shux
+
+# Copy and download deps first (cached layer)
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source
+COPY . .
+
+# Build libghostty and shux
+RUN rm -rf ghostty-build && \
+    mkdir -p ghostty-build/usr/lib/pkgconfig ghostty-build/usr/include && \
+    git clone --depth=1 https://github.com/ghostty-org/ghostty.git ghostty-build/ghostty && \
+    cd ghostty-build/ghostty && \
+    zig build -Doptimize=ReleaseFast -Demit-lib-vt=true && \
+    cp zig-out/lib/libghostty-vt.a ../usr/lib/libghostty-vt-static.a && \
+    cp -r include/ghostty ../usr/include/ && \
+    echo "prefix=/shux/ghostty-build/usr" > ../usr/lib/pkgconfig/libghostty-vt-static.pc && \
+    echo "Libs: -L\${prefix}/lib -lghostty-vt-static" >> ../usr/lib/pkgconfig/libghostty-vt-static.pc && \
+    echo "Cflags: -I\${prefix}/include" >> ../usr/lib/pkgconfig/libghostty-vt-static.pc && \
+    cd /shux && \
+    PKG_CONFIG_PATH=/shux/ghostty-build/usr/lib/pkgconfig go build -o shux ./cmd/shux && \
+    rm -rf ghostty-build/ghostty  # Clean up source to reduce image size
+
+ENV SHUX_E2E=1
+CMD ["go", "test", "./pkg/shux/...", "-v", "-count=1"]
