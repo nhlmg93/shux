@@ -42,26 +42,90 @@ Reattach: gomux mysession
 
 ---
 
-## Phase 2: Hot/Cold Sessions (If Phase 1 is too slow)
+## Phase 2: Fork-on-Detach (True Persistence)
 
-**Add daemon only if Phase 1 feels too slow:**
+**Add forking logic when we need true persistence of running processes.**
+
+### Why fork-on-detach:
+
+Disk-only (Phase 1) can't preserve:
+- Running compiles/tests
+- Unsaved changes in editors
+- Database connections
+- SSH sessions
+- Any process state
+
+Forking keeps the **actual processes** alive while UI detaches.
+
+### Implementation:
 
 ```
-Cold start:  gomux mysession
-             └─> No daemon running
-             └─> Load snapshot from disk (slow)
-             
-Hot attach:  gomux mysession
-             └─> Daemon running
-             └─> Connect instantly (fast)
-             
-Detach:      Ctrl+A D
-             └─> Fork daemon
-             └─> Keep PTYs open
-             └─> Also write snapshot (for safety)
+Normal mode:   gomux mysession
+               └─> Single process (UI + Server threads)
+               └─> No daemon, no fork yet
+
+Detach:        Ctrl+A D
+               └─> fork() creates child process
+               └─> Child: becomes daemon (keeps PTYs, shells running)
+               └─> Parent: writes snapshot, exits UI
+               
+Reattach:      gomux mysession
+               └─> Check: daemon running? → Connect instantly
+               └─> No daemon? → Phase 1 restore from disk
+
+Daemon check:  ~/.local/share/gomux/mysession/daemon.pid
+               (contains PID of forked process)
 ```
 
-**This is the hybrid model from ARCHITECTURE.md.**
+### Key components:
+
+1. **pkg/gomux/daemon.go**
+   - `forkDaemon()` - handles the actual fork syscall
+   - Parent writes PID file, exits
+   - Child reopens stdin/stdout for control (or uses socket)
+   - Child enters daemon mode (no UI, just PTY management)
+
+2. **UI reattach logic**
+   - Check for PID file
+   - Signal daemon: "UI wants to attach"
+   - Handshake: transfer control of terminal
+   - If no response: fall back to Phase 1 restore
+
+3. **Graceful degradation**
+   - Daemon crash? → Phase 1 restore from snapshot
+   - Reboot? → Phase 1 restore (daemon died)
+   - Clean shutdown? → Save final snapshot
+
+### Files to create:
+
+- **pkg/gomux/fork.go** - Platform-specific fork (Unix vs Windows)
+- **pkg/gomux/daemon.go** - Daemon mode (no UI, manages PTYs)
+- **pkg/gomux/attach.go** - Reattach to running daemon
+- **pkg/gomux/pidfile.go** - PID file management
+
+### Trade-offs:
+
+**Complexity added:**
+- Process management (zombie reaping, signals)
+- IPC (how UI talks to daemon)
+- Platform differences (Unix fork vs Windows?)
+
+**Benefits gained:**
+- True persistence (same PIDs, same processes)
+- Instant reattach (< 10ms vs 500ms)
+- No process restart needed
+
+### Decision trigger:
+
+Implement Phase 2 if:
+- Phase 1 restore feels too slow (> 1 second)
+- Users complain about lost running processes
+- Editor/compile state loss is annoying
+
+Skip Phase 2 if:
+- Phase 1 feels fast enough
+- Users mainly run stateless shells
+- Complexity not worth it
 
 ---
 
@@ -74,7 +138,19 @@ Detach:      Ctrl+A D
 
 ---
 
-## Current Focus: Phase 1
+## Phase 3: Network Attach (Future)
+
+**Only if needed:**
+- Attach from different machine (SSH)
+- Would require socket protocol
+- Keep local path optimized
+
+---
+
+## Development Phases
+
+### Phase 1: Disk-Only (Current)
+**Goal:** Test if snapshot/restore is fast enough without daemon complexity.
 
 ### Files to create/modify:
 
@@ -116,7 +192,7 @@ Detach:      Ctrl+A D
 - See how it feels
 
 **If good enough:** Ship it!
-**If too slow/missing features:** Add daemon in Phase 2
+**If too slow/missing features:** Move to Phase 2 (fork-on-detach)
 
 ---
 
