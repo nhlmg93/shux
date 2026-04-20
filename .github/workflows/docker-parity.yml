@@ -1,0 +1,49 @@
+name: docker-parity
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 6 * * 1'
+  push:
+    paths:
+      - Dockerfile.test
+      - Makefile
+      - scripts/build-ghostty-vt.sh
+      - .github/workflows/docker-parity.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_REF: dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cached Docker test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.test
+          load: true
+          tags: shux-test:ci
+          build-args: |
+            GHOSTTY_REF=${{ env.GHOSTTY_REF }}
+          cache-from: type=gha,scope=docker-parity
+          cache-to: type=gha,mode=max,scope=docker-parity
+
+      - name: Run Docker parity suite
+        run: docker run --rm shux-test:ci

@@ -133,13 +133,26 @@ Data flow:
 
 ## Testing
 
-Run the full Docker-backed suite:
+Run the full Docker-backed suite locally:
 
 ```bash
 make test
 ```
 
-The default test target builds the test image, builds Ghostty in Docker, and runs `go test ./...` inside the container.
+That path builds the test image, builds Ghostty in Docker, and runs `go test ./...` inside the container.
+
+For a native non-Docker run, use:
+
+```bash
+make test-native
+```
+
+This builds the pinned Ghostty VT library under `ghostty-build/usr` and runs `go test ./...` directly on the host.
+It expects the same userland test tools as the Docker image, including `nano`, `vim`, and `less`.
+
+GitHub Actions uses a dedicated native workflow on pushes and pull requests so Go dependencies and the Ghostty VT build can be cached across runs.
+
+A separate Docker parity workflow covers the containerized test path on a schedule, on demand, and when Docker test infrastructure changes.
 
 `shux` also includes fuzz targets for pure helpers like snapshot decoding, stat parsing, and row rendering.
 

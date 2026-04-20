@@ -2,32 +2,20 @@
 # Builds shux with embedded libghostty, includes nano/vim for testing
 FROM golang:1.26-alpine
 
-RUN apk add --no-cache git zig gcc g++ musl-dev pkgconfig nano vim less
+ARG GHOSTTY_REF=dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
+
+RUN apk add --no-cache git zig gcc g++ musl-dev pkgconfig nano vim less bash
 
 WORKDIR /shux
 
+# Copy the Ghostty build helper first so normal source changes don't invalidate
+# the expensive Zig layer.
+COPY scripts/build-ghostty-vt.sh /usr/local/bin/build-ghostty-vt.sh
+RUN chmod +x /usr/local/bin/build-ghostty-vt.sh
+
 # Build Ghostty VT once in a source-independent layer so normal code changes
 # don't force a full Zig rebuild every test run.
-RUN rm -rf ghostty-build && \
-    mkdir -p ghostty-build/usr/lib/pkgconfig ghostty-build/usr/include && \
-    git clone --depth=1 https://github.com/ghostty-org/ghostty.git ghostty-build/ghostty && \
-    cd ghostty-build/ghostty && \
-    zig build -Doptimize=ReleaseFast -Demit-lib-vt=true && \
-    cp zig-out/lib/libghostty-vt.a ../usr/lib/libghostty-vt-static.a && \
-    cp -r include/ghostty ../usr/include/ && \
-    printf '%s\n' \
-      'prefix=/shux/ghostty-build/usr' \
-      'exec_prefix=${prefix}' \
-      'libdir=${prefix}/lib' \
-      'includedir=${prefix}/include' \
-      '' \
-      'Name: libghostty-vt-static' \
-      'Description: Ghostty VT static library' \
-      'Version: 0' \
-      'Libs: -L${libdir} -lghostty-vt-static' \
-      'Cflags: -I${includedir}' \
-      > ../usr/lib/pkgconfig/libghostty-vt-static.pc && \
-    rm -rf /shux/ghostty-build/ghostty
+RUN GHOSTTY_REF=${GHOSTTY_REF} /usr/local/bin/build-ghostty-vt.sh /shux/ghostty-build/usr
 
 ENV SHUX_E2E=1
 ENV PKG_CONFIG_PATH=/shux/ghostty-build/usr/lib/pkgconfig

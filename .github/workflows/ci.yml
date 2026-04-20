@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHOSTTY_REF: dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
+  PKG_CONFIG_PATH: ${{ github.workspace }}/ghostty-build/usr/lib/pkgconfig
+  SHUX_E2E: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config gcc g++ nano vim less
+
+      - name: Restore Ghostty VT cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty-build/usr
+          key: ${{ runner.os }}-ghostty-vt-${{ env.GHOSTTY_REF }}-${{ hashFiles('scripts/build-ghostty-vt.sh') }}
+
+      - name: Build Ghostty VT library
+        run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
+
+      - name: Run test suite
+        run: go test ./... -v -count=1
