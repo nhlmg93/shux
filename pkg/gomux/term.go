@@ -16,8 +16,6 @@ package gomux
 //   - Mode queries (alt screen, cursor visible)
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
 
 	"github.com/mitchellh/go-libghostty"
@@ -78,27 +76,8 @@ func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 		return nil
 	}
 
-	// Set up device attributes (DA1/DA2/DA3) responses for neovim/vim
-	// This tells apps what terminal features are supported
-	ghosttyTerm.SetEffectDeviceAttributes(func(t *libghostty.Terminal) (libghostty.DeviceAttributes, bool) {
-		return libghostty.DeviceAttributes{
-			Primary: libghostty.DeviceAttributesPrimary{
-				ConformanceLevel: libghostty.DAConformanceVT420,
-				Features: [64]uint16{
-					libghostty.DAFeatureColumns132,
-					libghostty.DAFeatureANSIColor,
-				},
-				NumFeatures: 2,
-			},
-			Secondary: libghostty.DeviceAttributesSecondary{
-				DeviceType:      libghostty.DADeviceTypeVT420,
-				FirmwareVersion: 0,
-				ROMCartridge:    0,
-			},
-		}, true
-	})
-
 	// Create Go PTY with shell
+	Infof("term %d: creating with size %dx%d, shell %s", id, rows, cols, shell)
 	cmd := exec.Command(shell)
 	pty, err := Start(cmd)
 	if err != nil {
@@ -167,7 +146,7 @@ func (t *Term) Receive(msg any) {
 		t.pty.TTY.Write([]byte(m.Data))
 	case ResizeTerm:
 		// Resize terminal and PTY
-		fmt.Fprintf(os.Stderr, "DEBUG: Resizing term from %dx%d to %dx%d\n", t.rows, t.cols, m.Rows, m.Cols)
+		Infof("term %d: resizing from %dx%d to %dx%d", t.id, t.rows, t.cols, m.Rows, m.Cols)
 		t.Resize(m.Rows, m.Cols)
 		t.pty.Resize(m.Rows, m.Cols)
 	case KillTerm:

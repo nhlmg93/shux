@@ -2,7 +2,6 @@
 package gomux
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 
@@ -34,7 +33,7 @@ func (p *PTY) Close() error {
 
 // Resize updates the PTY size (rows x cols)
 func (p *PTY) Resize(rows, cols int) error {
-	fmt.Fprintf(os.Stderr, "DEBUG: PTY resize to %dx%d\n", rows, cols)
+	Infof("pty: resizing to %dx%d", rows, cols)
 	return pty.Setsize(p.TTY, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 }
 

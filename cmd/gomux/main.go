@@ -10,6 +10,11 @@ import (
 )
 
 func main() {
+	// Initialize logging
+	if err := gomux.InitLogger(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to init logger: %v\n", err)
+	}
+
 	// Create supervisor
 	supervisor := &SupervisorActor{}
 	supervisorRef := actor.Spawn(supervisor, 10)

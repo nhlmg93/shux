@@ -94,6 +94,7 @@ func (s *SessionActor) handleResizeGrid(r ResizeGrid) {
 
 func (s *SessionActor) createWindow(rows, cols int) {
 	s.windowID++
+	Infof("session %d: creating window %d with size %dx%d", s.id, s.windowID, rows, cols)
 	ref := SpawnWindowActor(s.windowID, s.self)
 	s.windows[s.windowID] = ref
 	// Create initial term with actual window size
