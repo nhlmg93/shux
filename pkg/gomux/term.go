@@ -44,68 +44,84 @@ type Term struct {
 	pty         *PTY                    // Go PTY with shell process
 	rows        int
 	cols        int
+	shell       string // shell command
 	windowTitle string // Track terminal title from shell
 }
 
-// New creates a new terminal with the given dimensions and shell
-func New(id uint32, rows, cols int, shell string) *Term {
+// NewTerm creates a new terminal (not yet initialized - call Init() via lifecycle)
+func NewTerm(id uint32, rows, cols int, shell string) *Term {
+	return &Term{
+		id:     id,
+		rows:   rows,
+		cols:   cols,
+		shell:  shell,
+	}
+}
+
+// Init is called when the actor starts (via lifecycle)
+func (t *Term) Init() error {
+	Infof("term %d: initializing", t.id)
+
 	// Create Ghostty terminal with full feature set
 	ghosttyTerm, err := libghostty.NewTerminal(
-		libghostty.WithSize(uint16(cols), uint16(rows)),
+		libghostty.WithSize(uint16(t.cols), uint16(t.rows)),
 		libghostty.WithMaxScrollback(10000),
-		// Handle terminal title changes (shell sets title via OSC)
 		libghostty.WithTitleChanged(func(t *libghostty.Terminal) {
 			// Could emit message to update window title
-			// For now, we just track that it changed
 		}),
-		// Handle bell (visual/audible notification)
 		libghostty.WithBell(func(t *libghostty.Terminal) {
 			// Could flash screen or play sound
 		}),
 	)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// Create cached render state for cursor/styling queries
 	renderState, err := libghostty.NewRenderState()
 	if err != nil {
 		ghosttyTerm.Close()
-		return nil
+		return err
 	}
 
 	// Create Go PTY with shell
-	Infof("term %d: creating with size %dx%d, shell %s", id, rows, cols, shell)
-	cmd := exec.Command(shell)
+	Infof("term %d: starting shell %s", t.id, t.shell)
+	cmd := exec.Command(t.shell)
 	pty, err := Start(cmd)
 	if err != nil {
 		ghosttyTerm.Close()
 		renderState.Close()
-		return nil
+		return err
 	}
 
-	return &Term{
-		id:          id,
-		term:        ghosttyTerm,
-		renderState: renderState,
-		pty:         pty,
-		rows:        rows,
-		cols:        cols,
-	}
-}
-
-// Spawn creates and spawns a Term actor with PTY read loop
-func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
-	t := New(id, rows, cols, shell)
-	if t == nil {
-		return nil
-	}
-	ref := actor.SpawnWithParent(t, 10, parent)
+	t.term = ghosttyTerm
+	t.renderState = renderState
+	t.pty = pty
 
 	// Start PTY read loop in goroutine
 	go t.readLoop()
 
-	return ref
+	return nil
+}
+
+// Terminate is called when the actor stops (via lifecycle)
+func (t *Term) Terminate(reason error) {
+	Infof("term %d: terminating (%v)", t.id, reason)
+	if t.pty != nil {
+		t.pty.Close()
+	}
+	if t.term != nil {
+		t.term.Close()
+	}
+	if t.renderState != nil {
+		t.renderState.Close()
+	}
+}
+
+// Spawn creates and spawns a Term actor with lifecycle management
+func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
+	t := NewTerm(id, rows, cols, shell)
+	return actor.SpawnWithParent(actor.WithLifecycle(t), 10, parent)
 }
 
 // readLoop reads PTY output and feeds it to Ghostty for parsing
@@ -146,13 +162,13 @@ func (t *Term) Receive(msg any) {
 		t.Resize(m.Rows, m.Cols)
 		t.pty.Resize(m.Rows, m.Cols)
 	case KillTerm:
-		t.pty.Close()
-		t.term.Close()
-		if t.renderState != nil {
-			t.renderState.Close()
-		}
+		// Notify parent, then lifecycle will call Terminate() for cleanup
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(TermExited{ID: t.id})
+		}
+		// Stop self - Terminate() will be called automatically
+		if me := actor.Self(); me != nil {
+			me.Stop()
 		}
 	case actor.AskEnvelope:
 		t.handleAsk(m)

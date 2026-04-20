@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/creack/pty v1.1.24
 	github.com/mitchellh/go-libghostty v0.0.0-20260418143201-51ae300f1e63
-	github.com/nhlmg93/gotor v0.0.0-20260420034947-d98631090e61
+	github.com/nhlmg93/gotor v0.0.0-20260420040104-6ebe85737536
 )
 
 require (
