@@ -32,14 +32,16 @@ type PaneContent struct {
 }
 
 type Pane struct {
-	id          uint32
-	term        *libghostty.Terminal
-	renderState *libghostty.RenderState
-	pty         *PTY
-	rows        int
-	cols        int
-	shell       string
-	windowTitle string
+	id            uint32
+	term          *libghostty.Terminal
+	renderState   *libghostty.RenderState
+	pty           *PTY
+	rows          int
+	cols          int
+	shell         string
+	windowTitle   string
+	dirty         bool          // Content changed since last GetPaneContent
+	cachedContent *PaneContent  // Cache to avoid rebuilding when not dirty
 }
 
 func NewPane(id uint32, rows, cols int, shell string) *Pane {
@@ -130,6 +132,7 @@ func (p *Pane) readLoop() {
 
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
+				p.dirty = true // Mark content as changed
 				// Notify UI of content change via channel (non-blocking)
 				if uiUpdateCh != nil {
 					select {
@@ -168,6 +171,8 @@ func (p *Pane) Receive(msg any) {
 		Infof("pane %d: resizing from %dx%d to %dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
 		p.Resize(m.Rows, m.Cols)
 		p.pty.Resize(m.Rows, m.Cols)
+		p.dirty = true
+		p.cachedContent = nil // Clear cache, dimensions changed
 	case KillPane:
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(PaneExited{ID: p.id})
@@ -189,6 +194,12 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 		}
 		envelope.Reply <- mode
 	case GetPaneContent:
+		// Return cached content if not dirty (no changes since last call)
+		if !p.dirty && p.cachedContent != nil {
+			envelope.Reply <- p.cachedContent
+			return
+		}
+
 		content := &PaneContent{
 			Lines: make([]string, p.rows),
 			Cells: make([][]PaneCell, p.rows),
@@ -223,6 +234,10 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 		if cursorVisible, _ := p.term.ModeGet(libghostty.ModeCursorVisible); !cursorVisible {
 			content.CursorHidden = true
 		}
+
+		// Cache this content and mark clean
+		p.cachedContent = content
+		p.dirty = false
 
 		envelope.Reply <- content
 	default:
