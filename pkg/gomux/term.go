@@ -78,6 +78,26 @@ func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 		return nil
 	}
 
+	// Set up device attributes (DA1/DA2/DA3) responses for neovim/vim
+	// This tells apps what terminal features are supported
+	ghosttyTerm.SetEffectDeviceAttributes(func(t *libghostty.Terminal) (libghostty.DeviceAttributes, bool) {
+		return libghostty.DeviceAttributes{
+			Primary: libghostty.DeviceAttributesPrimary{
+				ConformanceLevel: libghostty.DAConformanceVT420,
+				Features: [64]uint16{
+					libghostty.DAFeatureColumns132,
+					libghostty.DAFeatureANSIColor,
+				},
+				NumFeatures: 2,
+			},
+			Secondary: libghostty.DeviceAttributesSecondary{
+				DeviceType:      libghostty.DADeviceTypeVT420,
+				FirmwareVersion: 0,
+				ROMCartridge:    0,
+			},
+		}, true
+	})
+
 	// Create Go PTY with shell
 	cmd := exec.Command(shell)
 	pty, err := Start(cmd)
