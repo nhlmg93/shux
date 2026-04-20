@@ -270,49 +270,24 @@ func (m Model) View() string {
 		var rowBuilder strings.Builder
 		
 		if i < len(content.Lines) && i < len(content.Cells) {
-			line := content.Lines[i]
 			cells := content.Cells[i]
 			
-			for j := 0; j < width && j < len(line) && j < len(cells); j++ {
+			for j := 0; j < width && j < len(cells); j++ {
 				cell := cells[j]
-				char := string(line[j])
+				char := string(cell.Char)
 				
-				// Draw cursor as block
-				if i == content.CursorRow && j == content.CursorCol {
+				// Draw cursor as █ at the cursor position
+				if !content.CursorHidden && i == content.CursorRow && j == content.CursorCol {
 					char = "█"
 				}
 				
-				// Apply styling
-				style := lipgloss.NewStyle()
-				
-				// Foreground color
-				if cell.FgColor.R != 0 || cell.FgColor.G != 0 || cell.FgColor.B != 0 {
-					style = style.Foreground(lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", 
-						cell.FgColor.R, cell.FgColor.G, cell.FgColor.B)))
-				}
-				
-				// Background color
-				if cell.BgColor.R != 0 || cell.BgColor.G != 0 || cell.BgColor.B != 0 {
-					style = style.Background(lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-						cell.BgColor.R, cell.BgColor.G, cell.BgColor.B)))
-				}
-				
-				// Bold/Italic
-				if cell.Bold {
-					style = style.Bold(true)
-				}
-				if cell.Italic {
-					style = style.Italic(true)
-				}
-				if cell.Underline {
-					style = style.Underline(true)
-				}
-				
-				rowBuilder.WriteString(style.Render(char))
+				// For now, skip styling to debug UTF-8 rendering
+				_ = lipgloss.NewStyle() // Keep import
+				rowBuilder.WriteString(char)
 			}
 			
 			// Pad remaining cells in row
-			for j := len(line); j < width; j++ {
+			for j := len(cells); j < width; j++ {
 				rowBuilder.WriteString(" ")
 			}
 		} else {
