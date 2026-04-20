@@ -34,9 +34,12 @@ type WriteToTerm struct{ Data []byte }
 type GetActiveTerm struct{}
 type GetTermContent struct{}
 type TermContent struct {
-	Lines     []string
-	CursorRow int
-	CursorCol int
+	Lines        []string
+	Cells        [][]TermCell  // Full cell styling per position
+	CursorRow    int
+	CursorCol    int
+	InAltScreen  bool          // True when in vim/less/etc (alternate screen)
+	CursorHidden bool          // True when cursor should be hidden
 }
 
 // GridUpdated is sent when a term's content changes
