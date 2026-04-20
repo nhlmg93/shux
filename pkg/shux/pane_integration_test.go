@@ -470,3 +470,53 @@ loop:
 		t.Log("Note: No updates received (may be buffered or async)")
 	}
 }
+
+// TestPaneStressTest spams input to check for CPU/memory issues
+func TestPaneStressTest(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	pane := requirePane(t, sessionRef, super)
+
+	// Spam 1000 characters rapidly
+	data := make([]byte, 1000)
+	for i := range data {
+		data[i] = byte('a' + (i % 26))
+		if i%80 == 79 {
+			data[i] = '\r'
+		}
+	}
+
+	start := time.Now()
+	for i := 0; i < 10; i++ {
+		pane.Send(WriteToPane{Data: data[i*100 : (i+1)*100]})
+	}
+
+	// Wait for processing
+	super.waitContentUpdated(500 * time.Millisecond)
+	pollFor(2*time.Second, func() bool {
+		reply := sessionRef.Ask(GetPaneContent{})
+		result := <-reply
+		if result == nil {
+			return false
+		}
+		content := result.(*PaneContent)
+		// Count total characters
+		total := 0
+		for _, line := range content.Lines {
+			total += len(line)
+		}
+		return total > 500 // Should have processed significant data
+	})
+
+	elapsed := time.Since(start)
+	t.Logf("Stress test completed in %v", elapsed)
+
+	// Verify we can still get content without crash
+	reply := sessionRef.Ask(GetPaneContent{})
+	result := <-reply
+	if result == nil {
+		t.Fatal("Failed to get content after stress test")
+	}
+}
