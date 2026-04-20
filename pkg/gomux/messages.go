@@ -16,8 +16,7 @@ type GetActivePane struct{}
 type GetGrid struct{}
 
 // Window messages
-type CreateWindow struct{}
-type CreateWindowWithSize struct {
+type CreateWindow struct {
 	Rows int
 	Cols int
 }

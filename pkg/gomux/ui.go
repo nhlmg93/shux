@@ -50,7 +50,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.initialized {
 			// First size message - create initial window with correct size
 			m.initialized = true
-			m.session.Send(CreateWindowWithSize{Rows: msg.Height, Cols: msg.Width})
+			m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
 		} else {
 			// Subsequent resize - resize active terminal
 			m.resizeActiveTerm(msg.Height, msg.Width)
@@ -90,7 +90,7 @@ func (m *Model) handleKey(key tea.KeyMsg) bool {
 		case "q":
 			return true
 		case "w":
-			m.session.Send(CreateWindow{})
+			m.session.Send(CreateWindow{Rows: m.height, Cols: m.width})
 			return false
 		case "n":
 			m.session.Send(SwitchWindow{Delta: 1})
@@ -267,23 +267,22 @@ func (m Model) View() string {
 	if m.session == nil {
 		return "Error: no session"
 	}
-	// Default size if not yet received WindowSizeMsg
-	width, height := m.width, m.height
-	if width == 0 {
-		width = 80
+	// Must have received WindowSizeMsg by now
+	if m.width == 0 || m.height == 0 {
+		return "Error: window size not received - terminal initialization failed"
 	}
-	if height == 0 {
-		height = 24
+	width, height := m.width, m.height
+
+	// Must be initialized by now
+	if !m.initialized {
+		return "Error: initialization failed - no window size received"
 	}
 
 	// Get content from active term through the chain
 	reply := m.session.Ask(GetTermContent{})
 	result := <-reply
 	if result == nil {
-		if !m.initialized {
-			return "Starting..."
-		}
-		return "No window - press ctrl+b then w to create one"
+		return "Error: no active window - session may have crashed"
 	}
 
 	content := result.(*TermContent)

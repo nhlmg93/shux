@@ -36,7 +36,7 @@ func TestIntegrationCreateAndSwitchTerms(t *testing.T) {
 	defer supervisorRef.Stop()
 
 	sessionRef := SpawnSessionActor(1, supervisorRef)
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 
 	// Wait for initial window/term to be created
 	time.Sleep(50 * time.Millisecond)
@@ -80,7 +80,7 @@ func TestIntegrationCreateAndSwitchWindows(t *testing.T) {
 	sessionRef := SpawnSessionActor(1, supervisorRef)
 
 	// Create first window
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	time.Sleep(50 * time.Millisecond)
 
 	// Get active window
@@ -91,7 +91,7 @@ func TestIntegrationCreateAndSwitchWindows(t *testing.T) {
 	}
 
 	// Create second window
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	time.Sleep(50 * time.Millisecond)
 
 	// Get active window (should be window 2)
@@ -120,7 +120,7 @@ func TestIntegrationKillLastTerm(t *testing.T) {
 	defer supervisorRef.Stop()
 
 	sessionRef := SpawnSessionActor(1, supervisorRef)
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	time.Sleep(100 * time.Millisecond)
 
 	// Get the term and kill it
@@ -157,7 +157,7 @@ func TestIntegrationWindowNavigationWrap(t *testing.T) {
 
 	// Create three windows
 	for i := 0; i < 3; i++ {
-		sessionRef.Send(CreateWindow{})
+		sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 		time.Sleep(50 * time.Millisecond)
 	}
 
@@ -196,7 +196,7 @@ func TestIntegrationSwitchToInvalidTerm(t *testing.T) {
 	defer supervisorRef.Stop()
 
 	sessionRef := SpawnSessionActor(1, supervisorRef)
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	time.Sleep(50 * time.Millisecond)
 
 	// Get active window and try to switch to non-existent term
@@ -247,7 +247,7 @@ func TestGridUpdatedFlow(t *testing.T) {
 	defer superRef.Stop()
 
 	sessionRef := SpawnSessionActor(1, superRef)
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 
 	// Wait for grid update from term output
 	select {
@@ -281,7 +281,7 @@ func TestIntegrationGetTermContent(t *testing.T) {
 	defer supervisorRef.Stop()
 
 	sessionRef := SpawnSessionActor(1, supervisorRef)
-	sessionRef.Send(CreateWindow{})
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	time.Sleep(50 * time.Millisecond)
 
 	// Get the term ref to write to it
