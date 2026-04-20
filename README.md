@@ -48,10 +48,50 @@ go build -ldflags '-linkmode external -extldflags "-static"' ./cmd/shux
 ```
 
 Keys:
-- `Ctrl+A` then `c` - Create new window
-- `Ctrl+A` then `n` - Next window
-- `Ctrl+A` then `p` - Previous window
-- `Ctrl+A` then `q` - Quit
+- `Ctrl+B` then `w` - Create new window
+- `Ctrl+B` then `n` - Next window
+- `Ctrl+B` then `p` - Previous window
+- `Ctrl+B` then `q` - Quit
+
+### Config
+
+Default config path:
+
+```text
+~/.config/shux/init.lua
+```
+
+Load an alternate config file at startup:
+
+```bash
+./shux --config /path/to/init.lua
+```
+
+Minimal config:
+
+```lua
+local shux = require("shux")
+
+return shux.config({
+  session = {
+    name = "default",
+  },
+  shell = os.getenv("SHELL") or "/bin/sh",
+})
+```
+
+Minimal plugin module:
+
+```lua
+-- ~/.config/shux/lua/plugins/dev.lua
+local M = {}
+
+function M.setup(shux)
+  shux.set_session_name("dev")
+end
+
+return M
+```
 
 ## Architecture
 

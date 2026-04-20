@@ -11,18 +11,28 @@ type Session struct {
 	active      uint32
 	windowID    uint32
 	subscribers map[*actor.Ref]struct{}
+	shell       string
 }
 
 func NewSession(id uint32) *Session {
+	return NewSessionWithShell(id, DefaultShell)
+}
+
+func NewSessionWithShell(id uint32, shell string) *Session {
 	return &Session{
 		id:          id,
 		windows:     make(map[uint32]*actor.Ref),
 		subscribers: make(map[*actor.Ref]struct{}),
+		shell:       normalizeShell(shell),
 	}
 }
 
 func SpawnSession(id uint32, parent *actor.Ref) *actor.Ref {
-	s := NewSession(id)
+	return SpawnSessionWithShell(id, DefaultShell, parent)
+}
+
+func SpawnSessionWithShell(id uint32, shell string, parent *actor.Ref) *actor.Ref {
+	s := NewSessionWithShell(id, shell)
 	return actor.SpawnWithParent(s, 32, parent)
 }
 
@@ -96,7 +106,7 @@ func (s *Session) createWindow(rows, cols int) {
 	ref := SpawnWindow(s.windowID, actor.Self())
 	s.windows[s.windowID] = ref
 	s.windowOrder = append(s.windowOrder, s.windowID)
-	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: "/bin/sh"})
+	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: s.shell})
 	if s.active == 0 {
 		s.active = s.windowID
 	}
