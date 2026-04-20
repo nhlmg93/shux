@@ -1,0 +1,36 @@
+name: setup-ghostty-vt
+description: Set up Zig, install native dependencies, restore the Ghostty VT cache, and build Ghostty VT if needed
+
+inputs:
+  ghostty-ref:
+    description: Ghostty commit to build
+    required: true
+  packages:
+    description: Space-separated apt packages to install
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: 0.15.2
+
+    - name: Install native dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ${{ inputs.packages }}
+
+    - name: Restore Ghostty VT cache
+      uses: actions/cache@v4
+      with:
+        path: ghostty-build/usr
+        key: ${{ runner.os }}-ghostty-vt-${{ inputs.ghostty-ref }}-${{ hashFiles('scripts/build-ghostty-vt.sh') }}
+
+    - name: Build Ghostty VT library
+      shell: bash
+      run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
+      env:
+        GHOSTTY_REF: ${{ inputs.ghostty-ref }}

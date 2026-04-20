@@ -32,6 +32,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up native build environment
+        uses: ./.github/actions/setup-ghostty-vt
+        with:
+          ghostty-ref: ${{ env.GHOSTTY_REF }}
+          packages: pkg-config gcc g++
+
       - name: Run cmd/shux tests
         run: go test ./cmd/shux -v -count=1
 
@@ -50,24 +56,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
+      - name: Set up native build environment
+        uses: ./.github/actions/setup-ghostty-vt
         with:
-          version: 0.15.2
-
-      - name: Install native build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config gcc g++
-
-      - name: Restore Ghostty VT cache
-        uses: actions/cache@v4
-        with:
-          path: ghostty-build/usr
-          key: ${{ runner.os }}-ghostty-vt-${{ env.GHOSTTY_REF }}-${{ hashFiles('scripts/build-ghostty-vt.sh') }}
-
-      - name: Build Ghostty VT library
-        run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
+          ghostty-ref: ${{ env.GHOSTTY_REF }}
+          packages: pkg-config gcc g++
 
       - name: Build shux binary
         run: go build ./cmd/shux
@@ -87,24 +80,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Zig
-        uses: mlugg/setup-zig@v2
+      - name: Set up native test environment
+        uses: ./.github/actions/setup-ghostty-vt
         with:
-          version: 0.15.2
-
-      - name: Install native test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config gcc g++ nano vim less
-
-      - name: Restore Ghostty VT cache
-        uses: actions/cache@v4
-        with:
-          path: ghostty-build/usr
-          key: ${{ runner.os }}-ghostty-vt-${{ env.GHOSTTY_REF }}-${{ hashFiles('scripts/build-ghostty-vt.sh') }}
-
-      - name: Build Ghostty VT library
-        run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
+          ghostty-ref: ${{ env.GHOSTTY_REF }}
+          packages: pkg-config gcc g++ nano vim less
 
       - name: Run pkg/shux tests
         run: go test ./pkg/shux -v -count=1
