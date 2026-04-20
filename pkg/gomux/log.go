@@ -15,12 +15,13 @@ const (
 	LevelError LogLevel = iota
 	LevelWarn
 	LevelInfo
+	LevelDebug
 )
 
 var (
 	// Logger is the global gomux logger, writes to ~/.local/share/gomux/gomux.log
 	Logger   *log.Logger
-	logLevel LogLevel = LevelInfo // Default level
+	logLevel LogLevel = LevelInfo // Default level (set to LevelDebug for development)
 	initOnce sync.Once
 )
 
@@ -85,6 +86,14 @@ func Infof(format string, args ...interface{}) {
 	Logger.Printf("[INFO] "+format, args...)
 }
 
+// Debugf logs a debug message (logged if level >= Debug)
+func Debugf(format string, args ...interface{}) {
+	if Logger == nil || logLevel > LevelDebug {
+		return
+	}
+	Logger.Printf("[DEBUG] "+format, args...)
+}
+
 // Printf is an alias for Infof (for compatibility)
 func Printf(format string, args ...interface{}) {
 	Infof(format, args...)
@@ -108,6 +117,8 @@ func Logf(level LogLevel, format string, args ...interface{}) {
 		Warnf(format, args...)
 	case LevelInfo:
 		Infof(format, args...)
+	case LevelDebug:
+		Debugf(format, args...)
 	default:
 		if Logger != nil {
 			Logger.Printf(format, args...)
