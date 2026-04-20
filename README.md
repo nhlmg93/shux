@@ -84,7 +84,7 @@ Single-process, actor-based design. No daemon, no fork.
 3. libghostty parses VT sequences
 4. `GetPaneContent` → RenderState API → UI redraw
 
-**Persistence:** Disk-only snapshots. No daemon. 200ms reattach.
+
 
 ## Dependencies
 
