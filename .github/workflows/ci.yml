@@ -17,7 +17,63 @@ env:
   SHUX_E2E: "1"
 
 jobs:
-  test:
+  cmd-tests:
+    name: cmd tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run cmd/shux tests
+        run: go test ./cmd/shux -v -count=1
+
+  build-binary:
+    name: build binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config gcc g++
+
+      - name: Restore Ghostty VT cache
+        uses: actions/cache@v4
+        with:
+          path: ghostty-build/usr
+          key: ${{ runner.os }}-ghostty-vt-${{ env.GHOSTTY_REF }}-${{ hashFiles('scripts/build-ghostty-vt.sh') }}
+
+      - name: Build Ghostty VT library
+        run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
+
+      - name: Build shux binary
+        run: go build ./cmd/shux
+
+  pkg-tests:
+    name: pkg tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -50,5 +106,5 @@ jobs:
       - name: Build Ghostty VT library
         run: ./scripts/build-ghostty-vt.sh "$GITHUB_WORKSPACE/ghostty-build/usr"
 
-      - name: Run test suite
-        run: go test ./... -v -count=1
+      - name: Run pkg/shux tests
+        run: go test ./pkg/shux -v -count=1

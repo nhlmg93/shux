@@ -22,7 +22,8 @@ env:
   GHOSTTY_REF: dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
 
 jobs:
-  test:
+  docker-parity:
+    name: docker parity
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
