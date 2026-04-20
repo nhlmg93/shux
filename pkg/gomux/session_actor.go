@@ -32,7 +32,9 @@ func SpawnSessionActor(id uint32, parent *actor.Ref) *actor.Ref {
 func (s *SessionActor) Receive(msg any) {
 	switch m := msg.(type) {
 	case CreateWindow:
-		s.createWindow()
+		s.createWindowWithSize(24, 80) // Default size
+	case CreateWindowWithSize:
+		s.createWindowWithSize(m.Rows, m.Cols)
 	case SwitchWindow:
 		s.switchWindow(m.Delta)
 	case WindowEmpty:
@@ -92,12 +94,12 @@ func (s *SessionActor) handleResizeGrid(r ResizeGrid) {
 	}
 }
 
-func (s *SessionActor) createWindow() {
+func (s *SessionActor) createWindowWithSize(rows, cols int) {
 	s.windowID++
 	ref := SpawnWindowActor(s.windowID, s.self)
 	s.windows[s.windowID] = ref
-	// Create initial term with default size (resized later by UI)
-	ref.Send(CreateTerm{Rows: 24, Cols: 80, Shell: "/bin/sh"})
+	// Create initial term with actual window size
+	ref.Send(CreateTerm{Rows: rows, Cols: cols, Shell: "/bin/sh"})
 	if s.active == 0 {
 		s.active = s.windowID
 	}

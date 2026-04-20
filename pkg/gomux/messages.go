@@ -17,6 +17,10 @@ type GetGrid struct{}
 
 // Window messages
 type CreateWindow struct{}
+type CreateWindowWithSize struct {
+	Rows int
+	Cols int
+}
 type WindowEmpty struct{ ID uint32 }
 type SwitchWindow struct{ Delta int }
 type GetActiveWindow struct{}

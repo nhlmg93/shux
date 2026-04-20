@@ -12,13 +12,14 @@ import (
 
 // Model implements tea.Model for the gomux TUI
 type Model struct {
-	session    *actor.Ref
-	width      int
-	height     int
-	content    []string
-	prefixMode bool
-	cursorRow  int
-	cursorCol  int
+	session     *actor.Ref
+	width       int
+	height      int
+	content     []string
+	prefixMode  bool
+	cursorRow   int
+	cursorCol   int
+	initialized bool // true after first window size received
 }
 
 // Init implements tea.Model
@@ -46,8 +47,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Resize the active terminal
-		m.resizeActiveTerm(msg.Height, msg.Width)
+		if !m.initialized {
+			// First size message - create initial window with correct size
+			m.initialized = true
+			m.session.Send(CreateWindowWithSize{Rows: msg.Height, Cols: msg.Width})
+		} else {
+			// Subsequent resize - resize active terminal
+			m.resizeActiveTerm(msg.Height, msg.Width)
+		}
 		return m, m.listenForUpdates()
 
 	case tea.KeyMsg:
@@ -273,6 +280,9 @@ func (m Model) View() string {
 	reply := m.session.Ask(GetTermContent{})
 	result := <-reply
 	if result == nil {
+		if !m.initialized {
+			return "Starting..."
+		}
 		return "No window - press ctrl+b then w to create one"
 	}
 
