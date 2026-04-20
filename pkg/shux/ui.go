@@ -252,11 +252,6 @@ func (m Model) View() string {
 	// Always render full UI dimensions (m.width x m.height)
 	// Content may differ during resize - stretch/compress to fit
 	width, height := m.width, m.height
-	contentWidth := 0
-	if len(content.Lines) > 0 && len(content.Lines[0]) > 0 {
-		contentWidth = len(content.Lines[0])
-	}
-	Debugf("ui: View() ui=%dx%d content=%dx%d", width, height, len(content.Lines), contentWidth)
 	var output strings.Builder
 
 	for i := 0; i < height; i++ {
