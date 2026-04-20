@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nhlmg93/gotor/actor"
 )
@@ -263,44 +264,71 @@ func (m Model) View() string {
 	// Always render full UI dimensions (m.width x m.height)
 	// Content may differ during resize - stretch/compress to fit
 	width, height := m.width, m.height
-	var output strings.Builder
+	var rows []string
 
 	for i := 0; i < height; i++ {
-		rowLen := 0
-		if i < len(content.Lines) {
-			row := content.Lines[i]
-			rowLen = len(row)
-			if rowLen > width {
-				rowLen = width
+		var rowBuilder strings.Builder
+		
+		if i < len(content.Lines) && i < len(content.Cells) {
+			line := content.Lines[i]
+			cells := content.Cells[i]
+			
+			for j := 0; j < width && j < len(line) && j < len(cells); j++ {
+				cell := cells[j]
+				char := string(line[j])
+				
+				// Draw cursor as block
+				if i == content.CursorRow && j == content.CursorCol {
+					char = "█"
+				}
+				
+				// Apply styling
+				style := lipgloss.NewStyle()
+				
+				// Foreground color
+				if cell.FgColor.R != 0 || cell.FgColor.G != 0 || cell.FgColor.B != 0 {
+					style = style.Foreground(lipgloss.Color(fmt.Sprintf("#%02x%02x%02x", 
+						cell.FgColor.R, cell.FgColor.G, cell.FgColor.B)))
+				}
+				
+				// Background color
+				if cell.BgColor.R != 0 || cell.BgColor.G != 0 || cell.BgColor.B != 0 {
+					style = style.Background(lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+						cell.BgColor.R, cell.BgColor.G, cell.BgColor.B)))
+				}
+				
+				// Bold/Italic
+				if cell.Bold {
+					style = style.Bold(true)
+				}
+				if cell.Italic {
+					style = style.Italic(true)
+				}
+				if cell.Underline {
+					style = style.Underline(true)
+				}
+				
+				rowBuilder.WriteString(style.Render(char))
 			}
 			
-			// Write row content up to width
-			if i == content.CursorRow && content.CursorCol < rowLen {
-				// Cursor in this row - write with cursor char
-				output.WriteString(row[:content.CursorCol])
-				output.WriteString("█")
-				if content.CursorCol+1 < rowLen {
-					output.WriteString(row[content.CursorCol+1:rowLen])
-				}
-			} else {
-				output.WriteString(row[:rowLen])
+			// Pad remaining cells in row
+			for j := len(line); j < width; j++ {
+				rowBuilder.WriteString(" ")
 			}
+		} else {
+			// Empty row
+			rowBuilder.WriteString(strings.Repeat(" ", width))
 		}
 		
-		// Pad to full width (avoid strings.Repeat allocation)
-		for pad := rowLen; pad < width; pad++ {
-			output.WriteByte(' ')
-		}
-		
-		if i < height-1 {
-			output.WriteString("\n")
-		}
+		rows = append(rows, rowBuilder.String())
 	}
+	
+	output := strings.Join(rows, "\n")
 
 	if m.prefixMode {
-		return output.String() + "\n[prefix]"
+		return output + "\n[prefix]"
 	}
-	return output.String()
+	return output
 }
 
 func NewModel(session *actor.Ref, updateCh chan struct{}) Model {
