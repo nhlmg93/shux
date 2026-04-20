@@ -19,7 +19,7 @@ func main() {
 	supervisor := &SupervisorActor{}
 	supervisorRef := actor.Spawn(supervisor, 10)
 
-	// Create session with supervisor as parent
+	// Create session (supervisor will be parent)
 	sessionRef := gomux.SpawnSessionActor(1, supervisorRef)
 
 	// Run Bubble Tea program

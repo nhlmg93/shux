@@ -34,6 +34,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/nhlmg93/gotor v0.0.0-20260418040523-a1d4ff984118 h1:9Bx4yuvrj0SAoS2Tide2w7KTZlsWJ9d0kJPoBzAsZWA=
 github.com/nhlmg93/gotor v0.0.0-20260418040523-a1d4ff984118/go.mod h1:/0THknhee6ww8iyZ0EM7FzsGKzerVGgkERCT+7av398=
+github.com/nhlmg93/gotor v0.0.0-20260420034947-d98631090e61 h1:eX5GyEfInkEJHpIvvkLu2RV54LfSbcpRrJLTHYxNWuQ=
+github.com/nhlmg93/gotor v0.0.0-20260420034947-d98631090e61/go.mod h1:/0THknhee6ww8iyZ0EM7FzsGKzerVGgkERCT+7av398=
 github.com/rivo/uniseg v0.2.0/go.mod h1:J6wj4VEh+S6ZtnVlnTBMWIodfgj8LQOQFoIToxlJtxc=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=

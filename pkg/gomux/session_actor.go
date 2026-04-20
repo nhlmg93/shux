@@ -10,23 +10,18 @@ type SessionActor struct {
 	windows  map[uint32]*actor.Ref
 	active   uint32
 	windowID uint32
-	parent   *actor.Ref
-	self     *actor.Ref
 }
 
-func NewSessionActor(id uint32, parent *actor.Ref) *SessionActor {
+func NewSessionActor(id uint32) *SessionActor {
 	return &SessionActor{
 		id:      id,
 		windows: make(map[uint32]*actor.Ref),
-		parent:  parent,
 	}
 }
 
 func SpawnSessionActor(id uint32, parent *actor.Ref) *actor.Ref {
-	s := NewSessionActor(id, parent)
-	ref := actor.Spawn(s, 10)
-	s.self = ref
-	return ref
+	s := NewSessionActor(id)
+	return actor.SpawnWithParent(s, 10, parent)
 }
 
 func (s *SessionActor) Receive(msg any) {
@@ -39,8 +34,8 @@ func (s *SessionActor) Receive(msg any) {
 		s.handleWindowEmpty(m.ID)
 	case GridUpdated:
 		// Forward to parent (Supervisor) to notify UI
-		if s.parent != nil {
-			s.parent.Send(m)
+		if parent := actor.Parent(); parent != nil {
+			parent.Send(m)
 		}
 	case ResizeMsg:
 		// Forward resize to active window
@@ -97,7 +92,7 @@ func (s *SessionActor) resizeActiveWindow(rows, cols int) {
 func (s *SessionActor) createWindow(rows, cols int) {
 	s.windowID++
 	Infof("session %d: creating window %d with size %dx%d", s.id, s.windowID, rows, cols)
-	ref := SpawnWindowActor(s.windowID, s.self)
+	ref := SpawnWindowActor(s.windowID, actor.Self())
 	s.windows[s.windowID] = ref
 	// Create initial term with actual window size
 	ref.Send(CreateTerm{Rows: rows, Cols: cols, Shell: "/bin/sh"})
@@ -136,8 +131,8 @@ func (s *SessionActor) handleWindowEmpty(id uint32) {
 				s.active = id
 				break
 			}
-		} else if s.parent != nil {
-			s.parent.Send(SessionEmpty{ID: s.id})
+		} else if parent := actor.Parent(); parent != nil {
+			parent.Send(SessionEmpty{ID: s.id})
 		}
 	}
 }

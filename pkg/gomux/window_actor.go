@@ -6,27 +6,22 @@ import (
 
 // WindowActor manages multiple Terms (panes)
 type WindowActor struct {
-	id      uint32
-	terms   map[uint32]*actor.Ref
-	active  uint32
-	termID  uint32
-	parent  *actor.Ref
-	self    *actor.Ref
+	id     uint32
+	terms  map[uint32]*actor.Ref
+	active uint32
+	termID uint32
 }
 
-func NewWindowActor(id uint32, parent *actor.Ref) *WindowActor {
+func NewWindowActor(id uint32) *WindowActor {
 	return &WindowActor{
-		id:     id,
-		terms:  make(map[uint32]*actor.Ref),
-		parent: parent,
+		id:    id,
+		terms: make(map[uint32]*actor.Ref),
 	}
 }
 
 func SpawnWindowActor(id uint32, parent *actor.Ref) *actor.Ref {
-	w := NewWindowActor(id, parent)
-	ref := actor.Spawn(w, 10)
-	w.self = ref
-	return ref
+	w := NewWindowActor(id)
+	return actor.SpawnWithParent(w, 10, parent)
 }
 
 func (w *WindowActor) Receive(msg any) {
@@ -39,8 +34,10 @@ func (w *WindowActor) Receive(msg any) {
 		w.handleTermExited(m.ID)
 	case GridUpdated:
 		// Forward to parent if from active term
-		if m.ID == w.active && w.parent != nil {
-			w.parent.Send(m)
+		if m.ID == w.active {
+			if parent := actor.Parent(); parent != nil {
+				parent.Send(m)
+			}
 		}
 	case ResizeMsg:
 		// Resize all terms in this window
@@ -77,7 +74,7 @@ func (w *WindowActor) handleAsk(envelope actor.AskEnvelope) {
 
 func (w *WindowActor) createTerm(cmd CreateTerm) {
 	w.termID++
-	ref := Spawn(w.termID, cmd.Rows, cmd.Cols, cmd.Shell, w.self)
+	ref := Spawn(w.termID, cmd.Rows, cmd.Cols, cmd.Shell, actor.Self())
 	if ref == nil {
 		return
 	}
@@ -119,8 +116,8 @@ func (w *WindowActor) handleTermExited(id uint32) {
 				w.active = id
 				break
 			}
-		} else if w.parent != nil {
-			w.parent.Send(WindowEmpty{ID: w.id})
+		} else if parent := actor.Parent(); parent != nil {
+			parent.Send(WindowEmpty{ID: w.id})
 		}
 	}
 }

@@ -7,11 +7,7 @@ import (
 )
 
 func TestWindowActorCreate(t *testing.T) {
-	parent := &mockActor{}
-	parentRef := actor.Spawn(parent, 10)
-	defer parentRef.Stop()
-
-	w := NewWindowActor(1, parentRef)
+	w := NewWindowActor(1)
 	if w.id != 1 {
 		t.Errorf("Expected window ID 1, got %d", w.id)
 	}
@@ -21,16 +17,13 @@ func TestWindowActorCreate(t *testing.T) {
 }
 
 func TestWindowActorHandleTermExited(t *testing.T) {
-	parent := &mockActor{}
-	parentRef := actor.Spawn(parent, 10)
-	defer parentRef.Stop()
+	w := NewWindowActor(1)
 
-	w := NewWindowActor(1, parentRef)
-	ref := actor.Spawn(w, 10)
-	w.self = ref
+	// Simulate having a term (use a mock ref)
+	mockRef := actor.Spawn(&mockActor{}, 10)
+	defer mockRef.Stop()
 
-	// Simulate having a term
-	w.terms[1] = ref
+	w.terms[1] = mockRef
 	w.active = 1
 
 	// Handle term exited

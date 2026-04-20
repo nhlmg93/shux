@@ -24,14 +24,14 @@ import (
 
 // TermCell represents a cell with full styling
 type TermCell struct {
-	Char      rune
-	FgColor   libghostty.ColorRGB
-	BgColor   libghostty.ColorRGB
-	Bold      bool
-	Italic    bool
-	Underline bool
-	Blink     bool
-	Reverse   bool
+	Char         rune
+	FgColor      libghostty.ColorRGB
+	BgColor      libghostty.ColorRGB
+	Bold         bool
+	Italic       bool
+	Underline    bool
+	Blink        bool
+	Reverse      bool
 	HasHyperlink bool
 	HyperlinkURL string
 }
@@ -39,18 +39,16 @@ type TermCell struct {
 // Term represents a terminal pane with full emulation and styling
 type Term struct {
 	id          uint32
-	term        *libghostty.Terminal // Ghostty terminal handle
+	term        *libghostty.Terminal  // Ghostty terminal handle
 	renderState *libghostty.RenderState // Cached render state for performance
-	pty         *PTY                     // Go PTY with shell process
-	parent      *actor.Ref
-	self        *actor.Ref
+	pty         *PTY                    // Go PTY with shell process
 	rows        int
 	cols        int
 	windowTitle string // Track terminal title from shell
 }
 
 // New creates a new terminal with the given dimensions and shell
-func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
+func New(id uint32, rows, cols int, shell string) *Term {
 	// Create Ghostty terminal with full feature set
 	ghosttyTerm, err := libghostty.NewTerminal(
 		libghostty.WithSize(uint16(cols), uint16(rows)),
@@ -91,7 +89,6 @@ func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 		term:        ghosttyTerm,
 		renderState: renderState,
 		pty:         pty,
-		parent:      parent,
 		rows:        rows,
 		cols:        cols,
 	}
@@ -99,12 +96,11 @@ func New(id uint32, rows, cols int, shell string, parent *actor.Ref) *Term {
 
 // Spawn creates and spawns a Term actor with PTY read loop
 func Spawn(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
-	t := New(id, rows, cols, shell, parent)
+	t := New(id, rows, cols, shell)
 	if t == nil {
 		return nil
 	}
-	ref := actor.Spawn(t, 10)
-	t.self = ref
+	ref := actor.SpawnWithParent(t, 10, parent)
 
 	// Start PTY read loop in goroutine
 	go t.readLoop()
@@ -125,16 +121,16 @@ func (t *Term) readLoop() {
 			// Feed bytes to Ghostty terminal emulator
 			t.term.VTWrite(buf[:n])
 			// Notify parent that content changed
-			if t.parent != nil {
-				t.parent.Send(GridUpdated{ID: t.id})
+			if parent := actor.Parent(); parent != nil {
+				parent.Send(GridUpdated{ID: t.id})
 			}
 		}
 	}
 }
 
 func (t *Term) notifyExited() {
-	if t.parent != nil {
-		t.parent.Send(TermExited{ID: t.id})
+	if parent := actor.Parent(); parent != nil {
+		parent.Send(TermExited{ID: t.id})
 	}
 }
 
@@ -155,8 +151,8 @@ func (t *Term) Receive(msg any) {
 		if t.renderState != nil {
 			t.renderState.Close()
 		}
-		if t.parent != nil {
-			t.parent.Send(TermExited{ID: t.id})
+		if parent := actor.Parent(); parent != nil {
+			parent.Send(TermExited{ID: t.id})
 		}
 	case actor.AskEnvelope:
 		t.handleAsk(m)

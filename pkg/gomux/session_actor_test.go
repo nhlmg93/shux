@@ -7,11 +7,7 @@ import (
 )
 
 func TestSessionActorCreate(t *testing.T) {
-	parent := &mockActor{}
-	parentRef := actor.Spawn(parent, 10)
-	defer parentRef.Stop()
-
-	s := NewSessionActor(1, parentRef)
+	s := NewSessionActor(1)
 	if s.id != 1 {
 		t.Errorf("Expected session ID 1, got %d", s.id)
 	}
@@ -21,16 +17,13 @@ func TestSessionActorCreate(t *testing.T) {
 }
 
 func TestSessionActorHandleWindowEmpty(t *testing.T) {
-	parent := &mockActor{}
-	parentRef := actor.Spawn(parent, 10)
-	defer parentRef.Stop()
+	s := NewSessionActor(1)
 
-	s := NewSessionActor(1, parentRef)
-	ref := actor.Spawn(s, 10)
-	s.self = ref
+	// Simulate having a window (use a mock ref)
+	mockRef := actor.Spawn(&mockActor{}, 10)
+	defer mockRef.Stop()
 
-	// Simulate having a window
-	s.windows[1] = ref
+	s.windows[1] = mockRef
 	s.active = 1
 
 	// Handle window empty
@@ -43,7 +36,7 @@ func TestSessionActorHandleWindowEmpty(t *testing.T) {
 }
 
 func TestSessionActorSwitchWindow(t *testing.T) {
-	s := NewSessionActor(1, nil)
+	s := NewSessionActor(1)
 
 	// Simulate having multiple windows
 	s.windows[1] = nil
