@@ -2,8 +2,10 @@
 package shux
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 
 	"github.com/creack/pty"
 )
@@ -20,6 +22,14 @@ func Start(cmd *exec.Cmd) (*PTY, error) {
 	if err != nil {
 		return nil, err
 	}
+	
+	// Ensure PTY is in blocking mode - required for readLoop
+	// Some environments may have non-blocking by default
+	if err := syscall.SetNonblock(int(ptmx.Fd()), false); err != nil {
+		ptmx.Close()
+		return nil, fmt.Errorf("failed to set blocking mode: %w", err)
+	}
+	
 	return &PTY{TTY: ptmx, Cmd: cmd}, nil
 }
 

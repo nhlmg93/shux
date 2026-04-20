@@ -2,7 +2,6 @@ package shux
 
 import (
 	"os/exec"
-	"time"
 
 	"github.com/mitchellh/go-libghostty"
 	"github.com/nhlmg93/gotor/actor"
@@ -33,16 +32,14 @@ type PaneContent struct {
 }
 
 type Pane struct {
-	id            uint32
-	term          *libghostty.Terminal
-	renderState   *libghostty.RenderState
-	pty           *PTY
-	rows          int
-	cols          int
-	shell         string
-	windowTitle   string
-	lastUpdate    time.Time      // Throttle content updates
-	pendingUpdate bool           // Flag for pending redraw
+	id          uint32
+	term        *libghostty.Terminal
+	renderState *libghostty.RenderState
+	pty         *PTY
+	rows        int
+	cols        int
+	shell       string
+	windowTitle string
 }
 
 func NewPane(id uint32, rows, cols int, shell string) *Pane {
@@ -130,11 +127,7 @@ func (p *Pane) readLoop() {
 				readDone <- err
 				return
 			}
-			if n == 0 {
-				// Avoid busy loop on EOF or non-blocking read
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
+
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
 				// Notify UI of content change via channel (non-blocking)
