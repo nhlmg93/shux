@@ -1,6 +1,7 @@
 package shux
 
 import (
+	"os"
 	"os/exec"
 	"time"
 
@@ -82,8 +83,21 @@ func (p *Pane) Init() error {
 	}
 
 	Infof("pane %d: starting shell %s", p.id, p.shell)
-	// Start shell - let it detect interactive from PTY
+	// Start shell - inherit env but ensure TERM is set
 	cmd := exec.Command(p.shell)
+	env := os.Environ()
+	// Ensure TERM is set (some shells wait for this before showing prompt)
+	termSet := false
+	for _, e := range env {
+		if len(e) > 5 && e[:5] == "TERM=" {
+			termSet = true
+			break
+		}
+	}
+	if !termSet {
+		env = append(env, "TERM=xterm-256color")
+	}
+	cmd.Env = env
 	pty, err := Start(cmd)
 	if err != nil {
 		ghosttyTerm.Close()
