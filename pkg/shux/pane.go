@@ -82,8 +82,8 @@ func (p *Pane) Init() error {
 	}
 
 	Infof("pane %d: starting shell %s", p.id, p.shell)
-	// Start shell in interactive mode to show prompt immediately
-	cmd := exec.Command(p.shell, "-i")
+	// Start shell - let it detect interactive from PTY
+	cmd := exec.Command(p.shell)
 	pty, err := Start(cmd)
 	if err != nil {
 		ghosttyTerm.Close()
@@ -100,6 +100,19 @@ func (p *Pane) Init() error {
 	pty.Resize(p.rows, p.cols)
 
 	go p.readLoop()
+	
+	// Trigger initial update after shell has time to output prompt
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		p.dirty = true
+		if uiUpdateCh != nil {
+			select {
+			case uiUpdateCh <- struct{}{}:
+			default:
+			}
+		}
+	}()
+	
 	return nil
 }
 
