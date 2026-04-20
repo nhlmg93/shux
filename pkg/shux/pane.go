@@ -2,6 +2,7 @@ package shux
 
 import (
 	"os/exec"
+	"time"
 
 	"github.com/mitchellh/go-libghostty"
 	"github.com/nhlmg93/gotor/actor"
@@ -42,6 +43,8 @@ type Pane struct {
 	windowTitle   string
 	dirty         bool          // Content changed since last GetPaneContent
 	cachedContent *PaneContent  // Cache to avoid rebuilding when not dirty
+	updateTimer   *time.Timer    // Throttle UI updates
+	updatePending bool          // Signal already queued
 }
 
 func NewPane(id uint32, rows, cols int, shell string) *Pane {
@@ -133,12 +136,17 @@ func (p *Pane) readLoop() {
 			if n > 0 {
 				p.term.VTWrite(buf[:n])
 				p.dirty = true // Mark content as changed
-				// Notify UI of content change via channel (non-blocking)
-				if uiUpdateCh != nil {
-					select {
-					case uiUpdateCh <- struct{}{}:
-					default:
-					}
+
+				// Throttle UI updates - coalesce rapid PTY data
+				if uiUpdateCh != nil && !p.updatePending {
+					p.updatePending = true
+					p.updateTimer = time.AfterFunc(16*time.Millisecond, func() {
+						p.updatePending = false
+						select {
+						case uiUpdateCh <- struct{}{}:
+						default:
+						}
+					})
 				}
 			}
 		}
