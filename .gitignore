@@ -46,3 +46,4 @@ tmux/
 gomux-term/target/
 *.rlib
 *.rmeta
+ghostty-build/
