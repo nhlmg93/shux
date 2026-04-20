@@ -25,7 +25,7 @@ func TestE2ENanoEdit(t *testing.T) {
 
 	// Start nano
 	pane.Send(WriteToPane{Data: []byte("nano /tmp/shux_test.txt\r")})
-	
+
 	// Wait for nano to initialize (shows "GNU nano" or bottom menu)
 	if !pollFor(1*time.Second, func() bool {
 		super.waitContentUpdated(100 * time.Millisecond)
@@ -48,7 +48,7 @@ func TestE2ENanoEdit(t *testing.T) {
 	// Type some text
 	testText := "HELLO_GOMUX"
 	pane.Send(WriteToPane{Data: []byte(testText)})
-	
+
 	// Wait for text to appear
 	var textFound bool
 	if !pollFor(500*time.Millisecond, func() bool {
@@ -94,7 +94,7 @@ func TestE2EShellCommand(t *testing.T) {
 	// Run echo command
 	uniqueStr := "GOMUX_TEST_42"
 	pane.Send(WriteToPane{Data: []byte("echo " + uniqueStr + "\r")})
-	
+
 	// Wait for output
 	var outputFound bool
 	if !pollFor(500*time.Millisecond, func() bool {
@@ -131,7 +131,7 @@ func TestE2EKeySequence(t *testing.T) {
 
 	// Send clear command
 	pane.Send(WriteToPane{Data: []byte("clear\r")})
-	
+
 	// Wait for clear to take effect (content should be mostly empty)
 	pollFor(300*time.Millisecond, func() bool {
 		super.waitContentUpdated(100 * time.Millisecond)
@@ -152,7 +152,7 @@ func TestE2EKeySequence(t *testing.T) {
 			emptyLines++
 		}
 	}
-	
+
 	if emptyLines > len(content.Lines)/2 {
 		t.Log("E2E success: clear command processed through full stack")
 	}
@@ -264,7 +264,7 @@ func TestE2EColorOutput(t *testing.T) {
 	styledCells := 0
 	for _, row := range content.Cells {
 		for _, cell := range row {
-			if cell.Bold || cell.Italic || cell.FgColor != (libghostty.ColorRGB{}) {
+			if cell.Bold || cell.Italic || cell.HasFgColor || cell.HasBgColor || cell.FgColor != (libghostty.ColorRGB{}) {
 				styledCells++
 			}
 		}
@@ -379,14 +379,14 @@ func TestE2EInitialDraw(t *testing.T) {
 			return false
 		}
 		content := result.(*PaneContent)
-		
+
 		// Check for non-empty content that's not just "Loading..."
 		for _, line := range content.Lines {
 			trimmed := strings.TrimSpace(line)
 			// Look for shell prompt indicators: $, #, %, > or any text
-			if len(trimmed) > 0 && 
-			   !strings.Contains(trimmed, "Loading") &&
-			   !strings.Contains(trimmed, "starting shell") {
+			if len(trimmed) > 0 &&
+				!strings.Contains(trimmed, "Loading") &&
+				!strings.Contains(trimmed, "starting shell") {
 				// Found real content
 				foundContent = true
 				t.Logf("Found initial content: %q", trimmed)
