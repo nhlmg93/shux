@@ -257,7 +257,7 @@ func (m Model) View() string {
 
 	content := result.(*PaneContent)
 	if content == nil {
-		return "Loading..."
+		return ""
 	}
 
 	// Always render full UI dimensions (m.width x m.height)

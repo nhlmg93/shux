@@ -82,7 +82,8 @@ func (p *Pane) Init() error {
 	}
 
 	Infof("pane %d: starting shell %s", p.id, p.shell)
-	cmd := exec.Command(p.shell)
+	// Start shell in interactive mode to show prompt immediately
+	cmd := exec.Command(p.shell, "-i")
 	pty, err := Start(cmd)
 	if err != nil {
 		ghosttyTerm.Close()
