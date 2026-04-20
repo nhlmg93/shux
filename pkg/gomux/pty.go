@@ -31,6 +31,11 @@ func (p *PTY) Close() error {
 	return nil
 }
 
+// Resize updates the PTY size (rows x cols)
+func (p *PTY) Resize(rows, cols int) error {
+	return pty.Setsize(p.TTY, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+}
+
 // Wait waits for the process to exit
 func (p *PTY) Wait() error {
 	return p.Cmd.Wait()

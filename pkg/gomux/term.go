@@ -143,6 +143,10 @@ func (t *Term) Receive(msg any) {
 	case WriteToTerm:
 		// Write user input directly to PTY
 		t.pty.TTY.Write([]byte(m.Data))
+	case ResizeTerm:
+		// Resize terminal and PTY
+		t.Resize(m.Rows, m.Cols)
+		t.pty.Resize(m.Rows, m.Cols)
 	case KillTerm:
 		t.pty.Close()
 		t.term.Close()

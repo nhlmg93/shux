@@ -52,3 +52,9 @@ type ResizeGrid struct {
 	Width  int
 	Height int
 }
+
+// ResizeTerm requests terminal resize with rows/cols
+type ResizeTerm struct {
+	Rows int
+	Cols int
+}

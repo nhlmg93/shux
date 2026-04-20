@@ -46,6 +46,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Resize the active terminal
+		m.resizeActiveTerm(msg.Height, msg.Width)
 		return m, m.listenForUpdates()
 
 	case tea.KeyMsg:
@@ -241,6 +243,15 @@ func (m *Model) sendToTerm(data []byte) {
 	termRef := <-reply
 	if termRef != nil {
 		termRef.(*actor.Ref).Send(WriteToTerm{Data: data})
+	}
+}
+
+// resizeActiveTerm sends resize message to the active terminal
+func (m *Model) resizeActiveTerm(rows, cols int) {
+	reply := m.session.Ask(GetActiveTerm{})
+	termRef := <-reply
+	if termRef != nil {
+		termRef.(*actor.Ref).Send(ResizeTerm{Rows: rows, Cols: cols})
 	}
 }
 
