@@ -247,9 +247,7 @@ func TestPaneContentIsolation(t *testing.T) {
 		}
 	}
 	if !found {
-		// Note: Shell may redraw and clear screen when switching back
-		// This is a known limitation of terminal multiplexers
-		t.Log("Note: Pane 1 content not visible after switch (shell may have redrawn)")
+		t.Error("Pane 1 should still have its data after switching back")
 	}
 }
 
