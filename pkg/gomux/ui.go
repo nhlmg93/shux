@@ -10,7 +10,6 @@ import (
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// Model implements tea.Model for the gomux TUI
 type Model struct {
 	session     *actor.Ref
 	width       int
@@ -19,29 +18,22 @@ type Model struct {
 	prefixMode  bool
 	cursorRow   int
 	cursorCol   int
-	initialized bool // true after first window size received
+	initialized bool
 }
 
-// Init implements tea.Model
 func (m Model) Init() tea.Cmd {
 	return m.listenForUpdates()
 }
 
-// listenForUpdates returns a command that listens for actor updates
 func (m Model) listenForUpdates() tea.Cmd {
 	return func() tea.Msg {
-		// This is a placeholder - in a real implementation,
-		// we'd set up a channel to receive updates from the actor system
-		// For now, just poll periodically
 		time.Sleep(100 * time.Millisecond)
 		return updateMsg{}
 	}
 }
 
-// updateMsg is sent when the UI should refresh
 type updateMsg struct{}
 
-// Update implements tea.Model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -49,12 +41,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		Infof("ui: window size %dx%d", msg.Width, msg.Height)
 		if !m.initialized {
-			// First size message - create initial window with correct size
 			m.initialized = true
 			Infof("ui: creating initial window %dx%d", msg.Height, msg.Width)
 			m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
 		} else {
-			// Subsequent resize - resize active window (which resizes all its terms)
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
 			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
 		}
@@ -67,11 +57,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.listenForUpdates()
 
 	case updateMsg:
-		// Refresh content from session
-		reply := m.session.Ask(GetTermContent{})
+		reply := m.session.Ask(GetPaneContent{})
 		result := <-reply
 		if result != nil {
-			content := result.(*TermContent)
+			content := result.(*PaneContent)
 			if content != nil && len(content.Lines) > 0 {
 				m.content = content.Lines
 				m.cursorRow = content.CursorRow
@@ -85,7 +74,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// handleKey processes key input. Returns true if should quit.
 func (m *Model) handleKey(key tea.KeyMsg) bool {
 	if m.prefixMode {
 		m.prefixMode = false
@@ -102,41 +90,34 @@ func (m *Model) handleKey(key tea.KeyMsg) bool {
 			m.session.Send(SwitchWindow{Delta: -1})
 			return false
 		}
-		// Unknown prefix command - send prefix+key to term
-		m.sendToTerm([]byte{0x02}) // Ctrl+B
+		m.sendToTerm([]byte{0x02})
 		m.sendKeyToTerm(key)
 		return false
 	}
 
-	// Check for prefix key (Ctrl+B)
 	if key.Type == tea.KeyCtrlB {
 		m.prefixMode = true
 		return false
 	}
 
-	// Normal key - forward to term
 	m.sendKeyToTerm(key)
 	return false
 }
 
-// sendKeyToTerm converts key to appropriate byte sequence and sends to terminal
 func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 	var data []byte
 
 	switch key.Type {
-	// Special keys
 	case tea.KeyEnter:
 		data = []byte{'\r'}
 	case tea.KeyBackspace:
-		data = []byte{0x7F} // DEL (most modern terminals)
+		data = []byte{0x7F}
 	case tea.KeyTab:
 		data = []byte{0x09}
 	case tea.KeyEsc:
 		data = []byte{0x1B}
 	case tea.KeySpace:
 		data = []byte{' '}
-
-	// Arrow keys - CSI sequences
 	case tea.KeyUp:
 		data = []byte{0x1B, '[', 'A'}
 	case tea.KeyDown:
@@ -145,8 +126,6 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 		data = []byte{0x1B, '[', 'C'}
 	case tea.KeyLeft:
 		data = []byte{0x1B, '[', 'D'}
-
-	// Navigation keys
 	case tea.KeyHome:
 		data = []byte{0x1B, '[', 'H'}
 	case tea.KeyEnd:
@@ -159,8 +138,6 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 		data = []byte{0x1B, '[', '3', '~'}
 	case tea.KeyInsert:
 		data = []byte{0x1B, '[', '2', '~'}
-
-	// Function keys
 	case tea.KeyF1:
 		data = []byte{0x1B, 'O', 'P'}
 	case tea.KeyF2:
@@ -185,9 +162,6 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 		data = []byte{0x1B, '[', '2', '3', '~'}
 	case tea.KeyF12:
 		data = []byte{0x1B, '[', '2', '4', '~'}
-
-	// Ctrl+Letter (ASCII control codes 1-26, except Ctrl+B which is prefix)
-	// Note: Ctrl+I (Tab), Ctrl+J (LF), Ctrl+M (CR) already handled above
 	case tea.KeyCtrlA:
 		data = []byte{0x01}
 	case tea.KeyCtrlC:
@@ -201,7 +175,7 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 	case tea.KeyCtrlG:
 		data = []byte{0x07}
 	case tea.KeyCtrlH:
-		data = []byte{0x08} // Same as Backspace in some terminals
+		data = []byte{0x08}
 	case tea.KeyCtrlK:
 		data = []byte{0x0B}
 	case tea.KeyCtrlL:
@@ -232,11 +206,8 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 		data = []byte{0x19}
 	case tea.KeyCtrlZ:
 		data = []byte{0x1A}
-
-	// Regular printable characters and Alt combinations
 	default:
 		if key.Alt {
-			// Alt+key sends ESC followed by the key
 			data = append([]byte{0x1B}, []byte(string(key.Runes))...)
 		} else if len(key.Runes) > 0 {
 			data = []byte(string(key.Runes))
@@ -249,42 +220,36 @@ func (m *Model) sendKeyToTerm(key tea.KeyMsg) {
 }
 
 func (m *Model) sendToTerm(data []byte) {
-	reply := m.session.Ask(GetActiveTerm{})
-	termRef := <-reply
-	if termRef != nil {
-		termRef.(*actor.Ref).Send(WriteToTerm{Data: data})
+	reply := m.session.Ask(GetActivePane{})
+	paneRef := <-reply
+	if paneRef != nil {
+		paneRef.(*actor.Ref).Send(WriteToPane{Data: data})
 	}
 }
 
-// View implements tea.Model
 func (m Model) View() string {
 	if m.session == nil {
 		return "Error: no session"
 	}
-	// Must have received WindowSizeMsg by now
 	if m.width == 0 || m.height == 0 {
-		return "Error: window size not received - terminal initialization failed"
+		return "Error: window size not received"
 	}
-	width, height := m.width, m.height
-
-	// Must be initialized by now
 	if !m.initialized {
-		return "Error: initialization failed - no window size received"
+		return "Error: initialization failed"
 	}
 
-	// Get content from active term through the chain
-	reply := m.session.Ask(GetTermContent{})
+	reply := m.session.Ask(GetPaneContent{})
 	result := <-reply
 	if result == nil {
-		return "Error: no active window - session may have crashed"
+		return "Error: no active window"
 	}
 
-	content := result.(*TermContent)
+	content := result.(*PaneContent)
 	if content == nil {
 		return "Loading..."
 	}
 
-	// Render term content with cursor
+	width, height := m.width, m.height
 	var output strings.Builder
 	maxRows := height
 	if maxRows > len(content.Lines) {
@@ -296,7 +261,6 @@ func (m Model) View() string {
 		if len(row) > width {
 			row = row[:width]
 		}
-		// Add cursor on cursor row (use visible block character)
 		if i == content.CursorRow && content.CursorCol < len(row) {
 			cursorChar := "█"
 			row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
@@ -307,14 +271,12 @@ func (m Model) View() string {
 		}
 	}
 
-	// Show prefix mode indicator
 	if m.prefixMode {
 		return output.String() + "\n[prefix]"
 	}
 	return output.String()
 }
 
-// NewModel creates a new UI model with the given session
 func NewModel(session *actor.Ref) Model {
 	return Model{
 		session: session,
@@ -322,7 +284,6 @@ func NewModel(session *actor.Ref) Model {
 	}
 }
 
-// Run starts the Bubble Tea UI
 func RunUI(session *actor.Ref) {
 	p := tea.NewProgram(NewModel(session), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

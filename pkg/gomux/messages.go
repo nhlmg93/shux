@@ -2,20 +2,7 @@ package gomux
 
 // Message types for actor communication
 
-// Legacy pane messages (kept for compatibility, will be removed)
-type CreatePane struct {
-	Cmd  string
-	Args []string
-}
-type KillPane struct{}
-type PaneExited struct{ ID uint32 }
-type SwitchToPane struct{ Index int }
-type PaneOutput struct{ ID uint32; Data []byte }
-type WriteToPane struct{ Data []byte }
-type GetActivePane struct{}
-type GetGrid struct{}
-
-// Window messages
+// Session messages
 type CreateWindow struct {
 	Rows int
 	Cols int
@@ -23,36 +10,42 @@ type CreateWindow struct {
 type WindowEmpty struct{ ID uint32 }
 type SwitchWindow struct{ Delta int }
 type GetActiveWindow struct{}
+type SessionEmpty struct{ ID uint32 }
 
-// Term messages (using Alacritty FFI)
-type CreateTerm struct {
+// Pane messages (terminal panes within windows)
+type CreatePane struct {
 	Rows  int
 	Cols  int
 	Shell string
 }
-type KillTerm struct{}
-type TermExited struct{ ID uint32 }
-type SwitchToTerm struct{ Index int }
-type WriteToTerm struct{ Data []byte }
-type GetActiveTerm struct{}
-type GetTermContent struct{}
-type TermContent struct {
-	Lines        []string
-	Cells        [][]TermCell  // Full cell styling per position
-	CursorRow    int
-	CursorCol    int
-	InAltScreen  bool          // True when in vim/less/etc (alternate screen)
-	CursorHidden bool          // True when cursor should be hidden
+type KillPane struct{}
+type PaneExited struct{ ID uint32 }
+type SwitchToPane struct{ Index int }
+type WriteToPane struct{ Data []byte }
+type GetActivePane struct{}
+type GetPaneContent struct{}
+type GetPaneMode struct{}
+
+// PaneMode contains state information about a pane
+type PaneMode struct {
+	InAltScreen  bool
+	CursorHidden bool
 }
 
-// GridUpdated is sent when a term's content changes
-type GridUpdated struct {
+// PaneContentUpdated is sent when a pane's content changes
+type PaneContentUpdated struct {
 	ID uint32
 }
 
-// ResizeTerm is the specific resize message for Term actors
-// (uses rows/cols like ResizeMsg but kept for explicit term handling)
+// ResizeTerm is the specific resize message for Pane actors
+// (uses rows/cols like ResizeMsg but kept for explicit pane handling)
 type ResizeTerm struct {
+	Rows int
+	Cols int
+}
+
+// ResizeMsg is the common resize message for any Resizable actor
+type ResizeMsg struct {
 	Rows int
 	Cols int
 }

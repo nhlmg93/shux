@@ -31,7 +31,7 @@ func main() {
 	// Create new session
 	supervisor := &SupervisorActor{}
 	supervisorRef := actor.Spawn(supervisor, 10)
-	sessionRef := gomux.SpawnSessionActor(1, supervisorRef)
+	sessionRef := gomux.SpawnSession(1, supervisorRef)
 
 	// Register session globally
 	if err := actor.Register("session:"+sessionName, sessionRef); err != nil {

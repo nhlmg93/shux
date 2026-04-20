@@ -7,8 +7,4 @@ type Resizable interface {
 	Resize(rows, cols int)
 }
 
-// ResizeMsg is the common resize message for any Resizable actor
-type ResizeMsg struct {
-	Rows int
-	Cols int
-}
+

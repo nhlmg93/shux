@@ -20,3 +20,6 @@ clean:
 
 test: all
 	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go test -v ./pkg/...
+
+test-e2e:
+	@docker build -f Dockerfile.test -t gomux-test . && docker run --rm gomux-test

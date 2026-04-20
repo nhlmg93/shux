@@ -4,27 +4,26 @@ import (
 	"github.com/nhlmg93/gotor/actor"
 )
 
-// SessionActor manages multiple windows
-type SessionActor struct {
+type Session struct {
 	id       uint32
 	windows  map[uint32]*actor.Ref
 	active   uint32
 	windowID uint32
 }
 
-func NewSessionActor(id uint32) *SessionActor {
-	return &SessionActor{
+func NewSession(id uint32) *Session {
+	return &Session{
 		id:      id,
 		windows: make(map[uint32]*actor.Ref),
 	}
 }
 
-func SpawnSessionActor(id uint32, parent *actor.Ref) *actor.Ref {
-	s := NewSessionActor(id)
+func SpawnSession(id uint32, parent *actor.Ref) *actor.Ref {
+	s := NewSession(id)
 	return actor.SpawnWithParent(s, 10, parent)
 }
 
-func (s *SessionActor) Receive(msg any) {
+func (s *Session) Receive(msg any) {
 	switch m := msg.(type) {
 	case CreateWindow:
 		s.createWindow(m.Rows, m.Cols)
@@ -32,21 +31,19 @@ func (s *SessionActor) Receive(msg any) {
 		s.switchWindow(m.Delta)
 	case WindowEmpty:
 		s.handleWindowEmpty(m.ID)
-	case GridUpdated:
-		// Forward to parent (Supervisor) to notify UI
+	case PaneContentUpdated:
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(m)
 		}
 	case ResizeMsg:
-		// Forward resize to active window
 		s.resizeActiveWindow(m.Rows, m.Cols)
 	case actor.AskEnvelope:
 		s.handleAsk(m)
 	}
 }
 
-func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
-	switch m := envelope.Msg.(type) {
+func (s *Session) handleAsk(envelope actor.AskEnvelope) {
+	switch envelope.Msg.(type) {
 	case GetActiveWindow:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
@@ -55,20 +52,20 @@ func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
 			}
 		}
 		envelope.Reply <- nil
-	case GetActiveTerm:
+	case GetActivePane:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
-				reply := win.Ask(GetActiveTerm{})
-				termRef := <-reply
-				envelope.Reply <- termRef
+				reply := win.Ask(GetActivePane{})
+				paneRef := <-reply
+				envelope.Reply <- paneRef
 				return
 			}
 		}
 		envelope.Reply <- nil
-	case GetTermContent:
+	case GetPaneContent:
 		if s.active != 0 {
 			if win, ok := s.windows[s.active]; ok {
-				reply := win.Ask(m)
+				reply := win.Ask(envelope.Msg)
 				content := <-reply
 				envelope.Reply <- content
 				return
@@ -80,7 +77,7 @@ func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
 	}
 }
 
-func (s *SessionActor) resizeActiveWindow(rows, cols int) {
+func (s *Session) resizeActiveWindow(rows, cols int) {
 	Infof("session %d: resizing active window to %dx%d", s.id, rows, cols)
 	if s.active != 0 {
 		if win, ok := s.windows[s.active]; ok {
@@ -89,28 +86,25 @@ func (s *SessionActor) resizeActiveWindow(rows, cols int) {
 	}
 }
 
-func (s *SessionActor) createWindow(rows, cols int) {
+func (s *Session) createWindow(rows, cols int) {
 	s.windowID++
 	Infof("session %d: creating window %d with size %dx%d", s.id, s.windowID, rows, cols)
-	ref := SpawnWindowActor(s.windowID, actor.Self())
+	ref := SpawnWindow(s.windowID, actor.Self())
 	s.windows[s.windowID] = ref
-	// Create initial term with actual window size
-	ref.Send(CreateTerm{Rows: rows, Cols: cols, Shell: "/bin/sh"})
+	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: "/bin/sh"})
 	if s.active == 0 {
 		s.active = s.windowID
 	}
 }
 
-func (s *SessionActor) switchWindow(delta int) {
+func (s *Session) switchWindow(delta int) {
 	if len(s.windows) == 0 {
 		return
 	}
-	// Get ordered list of window IDs
 	ids := make([]uint32, 0, len(s.windows))
 	for id := range s.windows {
 		ids = append(ids, id)
 	}
-	// Find current index
 	currentIdx := 0
 	for i, id := range ids {
 		if id == s.active {
@@ -118,12 +112,11 @@ func (s *SessionActor) switchWindow(delta int) {
 			break
 		}
 	}
-	// Calculate new index with wrap
 	newIdx := (currentIdx + delta + len(ids)) % len(ids)
 	s.active = ids[newIdx]
 }
 
-func (s *SessionActor) handleWindowEmpty(id uint32) {
+func (s *Session) handleWindowEmpty(id uint32) {
 	delete(s.windows, id)
 	if s.active == id {
 		if len(s.windows) > 0 {
@@ -137,7 +130,4 @@ func (s *SessionActor) handleWindowEmpty(id uint32) {
 	}
 }
 
-// SessionEmpty is sent when the last window is closed
-type SessionEmpty struct {
-	ID uint32
-}
+

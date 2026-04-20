@@ -1,0 +1,12 @@
+# Ignore large directories not needed for build
+tmux/
+ghostty-build/
+.git/
+*.md
+Dockerfile*
+
+# Ignore built binaries but keep source
+gomux
+
+# Test outputs
+*.log
