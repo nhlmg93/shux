@@ -36,7 +36,7 @@ ghostty-build/usr/lib/libghostty-vt-static.a: $(GHOSTTY_DIR)
 	@echo "Libs: -L\$${prefix}/lib -lghostty-vt-static" >> ghostty-build/usr/lib/pkgconfig/libghostty-vt-static.pc
 	@echo "Cflags: -I\$${prefix}/include" >> ghostty-build/usr/lib/pkgconfig/libghostty-vt-static.pc
 
-gomux: ghostty-build/usr/lib/libghostty-vt-static.a
+gomux: ghostty-build/usr/lib/libghostty-vt-static.a $(shell find . -name '*.go' -not -path './ghostty-build/*')
 	@PKG_CONFIG_PATH=$(INSTALL_PREFIX)/lib/pkgconfig go build -o gomux ./cmd/gomux
 	@echo "✓ gomux built"
 
