@@ -305,3 +305,29 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestPaneScrollback(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 5, Cols: 40}) // Small window
+	pane := requirePane(t, sessionRef, super)
+
+	// Write more lines than height
+	for i := 0; i < 10; i++ {
+		pane.Send(WriteToPane{Data: []byte("line" + string(rune('0'+i)) + "\r\n")})
+	}
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	reply := sessionRef.Ask(GetPaneContent{})
+	result := <-reply
+	if result == nil {
+		t.Fatal("Expected content")
+	}
+	content := result.(*PaneContent)
+
+	// Should have exactly 5 visible lines
+	if len(content.Lines) != 5 {
+		t.Errorf("Expected 5 visible lines (height), got %d", len(content.Lines))
+	}
+}

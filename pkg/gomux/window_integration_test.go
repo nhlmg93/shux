@@ -198,3 +198,66 @@ func TestWindowResizePropagation(t *testing.T) {
 		t.Fatal("Result should be a *PaneContent")
 	}
 }
+
+func TestWindowBroadcastResize(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	// Create 3 panes in window
+	for i := 0; i < 2; i++ {
+		win.Send(CreatePane{Rows: 24, Cols: 80, Shell: "/bin/sh"})
+		pollFor(100*time.Millisecond, func() bool {
+			reply := win.Ask(GetActivePane{})
+			result := <-reply
+			return result != nil
+		})
+	}
+
+	// Get initial content from all panes
+	var initialSizes []int
+	for i := 0; i < 3; i++ {
+		win.Send(SwitchToPane{Index: i})
+		pollFor(50*time.Millisecond, func() bool {
+			reply := sessionRef.Ask(GetPaneContent{})
+			result := <-reply
+			if result == nil {
+				return false
+			}
+			content := result.(*PaneContent)
+			initialSizes = append(initialSizes, len(content.Lines))
+			return len(content.Lines) > 0
+		})
+	}
+
+	// Resize session (broadcasts to window, then to all panes)
+	sessionRef.Send(ResizeMsg{Rows: 30, Cols: 100})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	// Verify all panes have new size
+	allResized := true
+	for i := 0; i < 3; i++ {
+		win.Send(SwitchToPane{Index: i})
+		pollFor(50*time.Millisecond, func() bool {
+			reply := sessionRef.Ask(GetPaneContent{})
+			result := <-reply
+			if result == nil {
+				return false
+			}
+			content := result.(*PaneContent)
+			return len(content.Lines) == 30
+		})
+		
+		reply := sessionRef.Ask(GetPaneContent{})
+		result := <-reply
+		if result == nil || len(result.(*PaneContent).Lines) != 30 {
+			allResized = false
+		}
+	}
+
+	if !allResized {
+		t.Error("Expected all panes to be resized")
+	}
+}
