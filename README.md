@@ -53,14 +53,12 @@ Useful commands:
 make
 make test
 make test-native
-make bench-persistence
 ```
 
 Notes:
 
 - `make test` is the full Docker-backed path
 - `make test-native` runs on the host and expects tools like `nano`, `vim`, and `less`
-- `make bench-persistence` runs snapshot and attach/detach benchmarks for the disk-backed session path
 - CI uses a cached native workflow for normal pushes and pull requests, plus a separate Docker parity workflow
 - fuzz targets exist for pure helpers like snapshot decoding, stat parsing, and row rendering
 
