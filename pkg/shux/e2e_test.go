@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mitchellh/go-libghostty"
 )
 
 // TestE2ENanoEdit validates full stack: shux → shell → nano → rendering
@@ -247,114 +245,30 @@ func TestE2EColorOutput(t *testing.T) {
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	pane := requirePane(t, sessionRef, super)
 
-	// Run ls with color (forces color with TERM)
-	pane.Send(WriteToPane{Data: []byte("TERM=xterm-256color ls --color=auto /\r")})
+	pane.Send(WriteToPane{Data: []byte("printf '\\033[38;2;255;0;0mRED\\033[0m\\n'\r")})
 
-	// Wait for output with styled cells
-	super.waitContentUpdated(300 * time.Millisecond)
-
-	reply := sessionRef.Ask(GetPaneContent{})
-	result := <-reply
-	if result == nil {
-		t.Fatal("Expected content")
-	}
-	content := result.(*PaneContent)
-
-	// Check that Cells array has styling info populated
-	styledCells := 0
-	for _, row := range content.Cells {
-		for _, cell := range row {
-			if cell.Bold || cell.Italic || cell.HasFgColor || cell.HasBgColor || cell.FgColor != (libghostty.ColorRGB{}) {
-				styledCells++
-			}
-		}
-	}
-
-	if styledCells > 0 {
-		t.Logf("E2E success: Found %d styled cells from color ls output", styledCells)
-	} else {
-		t.Log("Note: ls colors may not be visible (depends on terminal emulation)")
-	}
-}
-
-func TestE2ELessPager(t *testing.T) {
-	if os.Getenv("SHUX_E2E") != "1" {
-		t.Skip("Set SHUX_E2E=1 to run E2E tests")
-	}
-
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Pipe something to less
-	pane.Send(WriteToPane{Data: []byte("echo 'line1\nline2\nline3\nline4\nline5' | less\r")})
-
-	// Wait for less to show content
-	var lessReady bool
-	if !pollFor(500*time.Millisecond, func() bool {
+	var content *PaneContent
+	var styledRED int
+	if !pollFor(1*time.Second, func() bool {
 		super.waitContentUpdated(100 * time.Millisecond)
 		reply := sessionRef.Ask(GetPaneContent{})
 		result := <-reply
 		if result == nil {
 			return false
 		}
-		content := result.(*PaneContent)
-		for _, line := range content.Lines {
-			if contains(line, "line1") || contains(line, "line5") {
-				lessReady = true
-				return true
+		content = result.(*PaneContent)
+		styledRED = 0
+		for _, row := range content.Cells {
+			for _, cell := range row {
+				if (cell.Text == "R" || cell.Text == "E" || cell.Text == "D") && cell.HasFgColor {
+					styledRED++
+				}
 			}
 		}
-		return false
+		return styledRED >= 3
 	}) {
-		t.Log("Note: less output may be in alt-screen and not captured")
+		t.Fatalf("expected colored RED cells, got %d styled cells", styledRED)
 	}
-
-	if lessReady {
-		// Scroll down with 'j' (short delay for less to process)
-		pane.Send(WriteToPane{Data: []byte("j")})
-		pollFor(50*time.Millisecond, func() bool { return true })
-		t.Log("E2E success: less opened and scrolled")
-	}
-
-	// Quit less with 'q'
-	pane.Send(WriteToPane{Data: []byte("q")})
-}
-
-// TestE2EDSRResponse verifies terminal responds to DSR queries
-func TestE2EDSRResponse(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Send DSR query: ESC [ 5 n (status report request)
-	pane.Send(WriteToPane{Data: []byte{0x1b, '[', '5', 'n'}})
-
-	// Wait for content update - the response will come through PTY
-	if !super.waitContentUpdated(500 * time.Millisecond) {
-		t.Log("Note: DSR response timing out, checking anyway")
-	}
-
-	// The DSR response (ESC [ 0 n) should have been written back to PTY
-	// and processed by the terminal. We can't directly see it in content,
-	// but the fact that no error occurred and terminal is responsive
-	// indicates the callback worked.
-	reply := sessionRef.Ask(GetPaneContent{})
-	result := <-reply
-	if result == nil {
-		t.Fatal("Expected pane content after DSR exchange")
-	}
-
-	content := result.(*PaneContent)
-	if content == nil {
-		t.Fatal("Result should be a *PaneContent")
-	}
-
-	t.Log("E2E success: DSR query/response cycle completed")
 }
 
 // TestE2EInitialDraw verifies the initial shell prompt appears correctly

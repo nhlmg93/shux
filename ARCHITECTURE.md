@@ -2,226 +2,378 @@
 
 > you shouldn't have.
 
-## Overview
+## Goal
 
-A modern terminal multiplexer designed to replace tmux with a simpler architecture.
+Implement basic attach/detach using shux's single-process, disk-only persistence architecture:
 
-**Core principle:** Disk-only persistence is fast enough on modern hardware.
+- `shux <session>` = attach-or-create
+- detach = snapshot session to disk, then exit process
+- reattach = load snapshot, rebuild layout, respawn shells in saved CWDs
 
-No daemon. No fork. No client/server split. Just snapshot and restore.
-
----
-
-## Architecture
-
-### Single-Process Design
-
-```
-┌─────────────────────────────────────┐
-│        shux mysession              │
-│                                     │
-│  ┌──────────────┐ ┌─────────────┐  │
-│  │   UI Thread  │ │  PTY/Grid   │  │
-│  │ (Bubble Tea) │ │  (libghostty)│ │
-│  │              │ │             │  │
-│  │ Renders      │ │ Manages     │  │
-│  │ user input   │ │ shells      │  │
-│  └──────────────┘ └─────────────┘  │
-│                                     │
-│  Single process - no fork, no IPC  │
-└─────────────────────────────────────┘
-```
-
-**Lifecycle:**
-
-```
-Start:    shux mysession
-          └─> If snapshot exists: restore
-          └─> If no snapshot: create fresh session
-
-Work:     (use terminal normally)
-          ├─> Layout changes? Auto-snapshot every 30s
-          ├─> Scrollback accumulates in memory
-          └─> CWD tracked per pane
-
-Detach:   Ctrl+A D
-          └─> Serialize state to disk
-          └─> Exit process
-
-Reattach: shux mysession
-          └─> Load snapshot from disk
-          └─> Re-spawn shells in saved CWDs
-          └─> Restore window layout
-          └─> Replay scrollback
-```
-
-### State Storage
-
-```
-~/.local/share/shux/
-├── mysession/
-│   ├── snapshot.gob          # Session structure
-│   ├── panes/
-│   │   ├── 1/
-│   │   │   ├── scrollback.txt
-│   │   │   └── history       # Shell history (optional)
-│   │   └── 2/
-│   │       └── scrollback.txt
-│   └── last-active          # Timestamp
-└── globalsession/
-    └── ...
-```
-
-### Snapshot Format
-
-```go
-type SessionSnapshot struct {
-    Version     int
-    Timestamp   time.Time
-    SessionName string
-    
-    Windows []struct {
-        ID       uint32
-        Name     string
-        Active   bool
-        Layout   LayoutType
-        
-        Panes []struct {
-            ID          uint32
-            Cwd         string
-            Env         map[string]string
-            Scrollback  []string
-        }
-    }
-    
-    GlobalState struct {
-        ActiveWindow uint32
-        PrefixKey    string
-    }
-}
-```
+No daemon. No server/client split. No true process persistence.
 
 ---
 
-## Why This Works
+## Core Idea
 
-### Performance Reality
+shux persists workspace state, not live processes.
 
-| Operation | Time |
-|-----------|------|
-| Disk read (SSD) | ~0.1 ms |
-| Disk read (HDD) | ~1 ms |
-| Shell spawn | ~50-100 ms |
-| Full restore (4 panes) | ~200-400 ms |
+Detach means:
+- save session state to disk
+- exit the process
 
-**Total reattach time:** Sub-second even on HDD.
+Reattach means:
+- load snapshot from disk
+- recreate the actor tree
+- respawn shells
+- restore layout and active selections
 
-### User Experience
+This is the architecture.
 
-**tmux detach/reattach:**
-- Instant (< 10ms)
-- Same processes (true persistence)
-- Complex daemon architecture
+---
 
-**shux detach/reattach:**
-- Fast (~200ms)
-- New processes (restart shells)
-- Simple single-process architecture
+## MVP Scope
 
-**Trade-off:** 200ms vs 10ms for dramatically simpler code.
+The first working version should restore:
 
-### Why Not Daemon?
+- window count and order
+- pane count and order
+- active window
+- active pane
+- pane rows and cols
+- shell executable
+- pane CWD
 
-**Daemon complexity (rejected):**
+Optional after that:
+
+- scrollback replay
+- richer pane metadata
+
+---
+
+## Phase 1: Persistence primitives
+
+### Add filesystem helpers
+
+Create `pkg/shux/shuxdir.go`:
+
+- `DataDir()`
+- `SessionDir(name string)`
+- `SessionSnapshotPath(name string)`
+
+Use a layout like:
+
+```text
+~/.local/share/shux/<session>/snapshot.gob
 ```
-1. fork() on detach
-2. Process management (zombies, signals)
-3. IPC protocol (UI to daemon)
-4. PID files, reconnection logic
-5. Platform differences (Unix vs Windows)
-```
 
-**Disk-only simplicity (accepted):**
-```
-1. gob.Marshal() on detach
-2. gob.Unmarshal() on attach
-3. Re-spawn shells
-4. Done
-```
+### Add snapshot types and serialization
 
----
+Create `pkg/shux/snapshot.go` with minimal types:
 
-## Comparison: shux vs tmux
+- `SessionSnapshot`
+- `WindowSnapshot`
+- `PaneSnapshot`
 
-| Feature | tmux | shux |
-|---------|------|-------|
-| **Architecture** | Client/server daemon | Single process |
-| **Reattach speed** | Instant (< 10ms) | Fast (~200ms) |
-| **Process persistence** | True (same PIDs) | Restart (new PIDs) |
-| **Code complexity** | High | Low |
-| **Binary count** | 2 (tmux, tmux-server) | 1 |
-| **IPC protocol** | Custom binary | None |
-| **Cross-platform** | Unix only | All platforms |
-| **Debuggability** | Hard (daemon issues) | Easy (one process) |
+Basic fields:
+
+- session name
+- version
+- timestamp
+- window order
+- active window
+- pane order
+- active pane
+- pane rows / cols
+- pane shell
+- pane cwd
+
+Functions:
+
+- `SaveSnapshot(path string, snapshot *SessionSnapshot) error`
+- `LoadSnapshot(path string) (*SessionSnapshot, error)`
+- `DeleteSnapshot(path string) error`
 
 ---
 
-## Implementation
+## Phase 2: Capture state from actors
 
-### Files
+### Session state
 
-- **pkg/shux/snapshot.go** - Serialize/deserialize SessionSnapshot
-- **pkg/shux/resurrect.go** - Restore session from snapshot
-- **pkg/shux/session.go** - Session lifecycle, auto-save timer
+Extend `pkg/shux/session.go` so it can expose or collect:
 
-### Key Behaviors
+- ordered windows
+- active window
+- session-level shell/default shell if needed
 
-1. **Auto-save:** Every 30 seconds when session active
-2. **On detach:** Immediate save before exit
-3. **On attach:** Check for snapshot, restore if exists
-4. **Graceful degradation:** If restore fails, start fresh
+### Window state
 
-### Platform Notes
+Extend `pkg/shux/window.go` so it can expose or collect:
 
-- **Linux:** Native support
-- **macOS:** Native support  
-- **Windows:** Via WSL2 (Linux environment)
-- **Future:** Could add native Windows if needed
+- ordered panes
+- active pane
 
----
+### Pane state
 
-## Philosophy
+Extend `pkg/shux/pane.go` so it can expose or collect:
 
-**Hardware is fast. Complexity is expensive. Ship simple.**
+- current shell
+- rows / cols
+- current cwd
+- optional content / scrollback snapshot later
 
-Modern SSDs make disk-only feel instant. We trade 200ms for:
-- Debuggable code
-- Single binary
-- Cross-platform
-- No daemon headaches
+This likely needs new ask-style messages in `pkg/shux/messages.go`, for example:
 
-If 200ms reattach is too slow, we made a mistake. But we think it's fast enough.
+- `GetSessionSnapshotData`
+- `GetWindowSnapshotData`
+- `GetPaneSnapshotData`
+
+Or a single top-level session ask that recursively gathers everything.
 
 ---
 
-## Migration from tmux
+## Phase 3: Track pane CWD
 
-| tmux | shux |
-|------|-------|
-| `tmux new -s foo` | `shux foo` |
-| `tmux attach -t foo` | `shux foo` (same command) |
-| `Ctrl+B D` | `Ctrl+A D` |
-| `tmux ls` | `shux list` |
+### Add pane CWD tracking
 
-**Key difference:** Detach stops processes. Reattach restarts them (fast, but not instant).
+Create `pkg/shux/pane_cwd.go`.
+
+For MVP, Linux-first is acceptable:
+
+- inspect the child shell PID cwd via `/proc/<pid>/cwd`
+
+In `Pane`:
+
+- store latest known cwd
+- refresh it when useful
+  - after shell starts
+  - periodically, or
+  - immediately before snapshot collection
+
+If a platform cannot support this yet, degrade cleanly.
 
 ---
 
-## Files
+## Phase 4: Restore path
 
-- `AGENTS.md` - Development guidelines
-- `ARCHITECTURE.md` - This document
-- `ROADMAP.md` - Development roadmap
-- `pkg/shux/snapshot.go` - Snapshot implementation
-- `pkg/shux/resurrect.go` - Session restore
-- `pkg/shux/session.go` - Session management
+### Add restore logic
+
+Create `pkg/shux/resurrect.go`:
+
+- `RestoreSessionFromSnapshot(...)`
+
+Responsibilities:
+
+- load snapshot
+- create a fresh session actor tree
+- recreate windows in saved order
+- recreate panes in saved order
+- respawn shells with saved shell and cwd
+- restore active window and pane selection
+
+This is not reattaching to old PTYs or processes.
+It is rebuilding the workspace from saved context.
+
+---
+
+## Phase 5: Startup attach-or-create flow
+
+### Change CLI startup
+
+Modify `cmd/shux/main.go`.
+
+New startup order:
+
+1. resolve session name
+2. check snapshot path on disk
+3. if snapshot exists:
+   - restore from disk
+   - run restored session
+4. else if in-process actor exists:
+   - attach to it
+5. else:
+   - create fresh session
+
+This preserves current in-process attach behavior while adding disk-backed attach.
+
+---
+
+## Phase 6: Detach flow
+
+### Add detach message
+
+In `pkg/shux/messages.go`, add something like:
+
+- `DetachSession`
+
+### Handle detach in session actor
+
+Modify `pkg/shux/session.go`.
+
+On detach:
+
+1. gather snapshot data from windows and panes
+2. write snapshot to disk
+3. notify UI / parent if needed
+4. stop the session tree and exit cleanly
+
+This matches shux's intended behavior:
+
+- detach saves
+- process exits
+- shells die with the process
+- later attach respawns fresh shells from the snapshot
+
+No disowning. No background process. No daemon behavior.
+
+---
+
+## Phase 7: UI keybinding
+
+### Add detach key
+
+Modify `pkg/shux/ui.go`.
+
+In prefix mode, support detach:
+
+- `Ctrl+B` then `d`
+
+On detach key:
+
+- send `DetachSession`
+- quit the Bubble Tea program once save succeeds, or once shutdown begins
+
+---
+
+## Phase 8: Restore fidelity
+
+### First restore target
+
+The first complete version should restore:
+
+- window count and order
+- pane count and order
+- active window and pane
+- shell executable
+- cwd
+- pane size
+
+### Defer if needed
+
+If full terminal buffer persistence is awkward at first, defer it.
+
+Layout + shell + cwd is more important than perfect scrollback in the first working version.
+
+---
+
+## Files to add
+
+- `pkg/shux/shuxdir.go`
+- `pkg/shux/snapshot.go`
+- `pkg/shux/resurrect.go`
+- `pkg/shux/pane_cwd.go`
+
+## Files to modify
+
+- `cmd/shux/main.go`
+- `pkg/shux/messages.go`
+- `pkg/shux/session.go`
+- `pkg/shux/window.go`
+- `pkg/shux/pane.go`
+- `pkg/shux/ui.go`
+
+---
+
+## Tests to add
+
+### Unit tests
+
+Create `pkg/shux/snapshot_test.go`:
+
+- snapshot round-trip
+- version/path handling
+
+Create `pkg/shux/resurrect_test.go`:
+
+- restore session structure from snapshot
+- window and pane ordering preserved
+- active window and pane restored
+
+### Integration tests
+
+Add tests for:
+
+- session detach saves snapshot
+- attach with snapshot restores expected structure
+- pane cwd survives detach/reattach
+- missing or corrupt snapshot falls back to fresh session
+
+### End-to-end test
+
+Basic flow:
+
+1. launch fresh session
+2. create extra window and pane
+3. `cd` in pane
+4. detach
+5. relaunch same session
+6. verify restored layout and cwd
+
+---
+
+## Key risks and open questions
+
+### CWD tracking
+
+Need a reliable way to know the shell's current working directory.
+Linux `/proc` is the easiest MVP path.
+
+### Scrollback persistence
+
+Need to decide whether to:
+
+- serialize enough terminal state directly, or
+- reconstruct from saved text later
+
+For MVP, layout + cwd matters more than perfect buffer replay.
+
+### Restore UX
+
+Restore must feel fast enough that respawned shells are acceptable.
+That is the core product bet.
+
+### Snapshot schema evolution
+
+Snapshots need a `Version` field from day one.
+
+---
+
+## Recommended MVP cut
+
+Build the smallest complete loop first:
+
+1. snapshot path helpers
+2. gob snapshot structs
+3. pane cwd capture
+4. detach key saves snapshot and exits
+5. startup attach-or-create from snapshot
+6. restore windows, panes, shells, and cwds
+7. tests for snapshot round-trip and restore
+
+After that, add scrollback replay if needed.
+
+---
+
+## Decision
+
+This is the architecture:
+
+- single process
+- disk-only persistence
+- attach-or-create on startup
+- detach saves and exits
+- reattach restores from snapshot
+
+No daemon.
+No client/server split.
+No phase 2 architecture change.

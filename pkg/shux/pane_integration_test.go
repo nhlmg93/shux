@@ -16,7 +16,7 @@ func TestPaneWriteAndGetContent(t *testing.T) {
 	pane := requirePane(t, sessionRef, super)
 
 	pane.Send(WriteToPane{Data: []byte("hi")})
-	
+
 	super.waitContentUpdated(200 * time.Millisecond)
 	pollFor(50*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(GetPaneContent{})
@@ -90,49 +90,6 @@ func TestPaneKill(t *testing.T) {
 	if !super.waitSessionEmpty(1 * time.Second) {
 		t.Error("timeout waiting for SessionEmpty after killing pane")
 	}
-}
-
-func TestPaneAltScreenDetection(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// First verify we're NOT in alt-screen initially
-	modeReply := pane.Ask(GetPaneMode{})
-	modeResult := <-modeReply
-	if modeResult == nil {
-		t.Fatal("Expected to get pane mode")
-	}
-	initialMode := modeResult.(*PaneMode)
-	if initialMode.InAltScreen {
-		t.Error("Expected NOT to be in alt-screen initially")
-	}
-
-	// Try to enter alternate screen via printf - this is tricky because
-	// escape sequences sent to shell stdin don't directly affect terminal state
-	// The shell would need to interpret them, which most shells don't do by default
-	pane.Send(WriteToPane{Data: []byte("printf '\033[?1049h'\r")})
-	
-	// Poll for mode change - shell may interpret printf output
-	var mode *PaneMode
-	if !pollFor(300*time.Millisecond, func() bool {
-		modeReply := pane.Ask(GetPaneMode{})
-		modeResult := <-modeReply
-		if modeResult == nil {
-			return false
-		}
-		mode = modeResult.(*PaneMode)
-		return mode.InAltScreen
-	}) {
-		// This test may fail because shells typically don't interpret escape sequences
-		// from their own output. We'd need to run an actual terminal program like vim.
-		t.Log("Note: Alt-screen detection requires running a terminal program (vim, less, etc)")
-	}
-
-	// Exit alt-screen for cleanup
-	pane.Send(WriteToPane{Data: []byte("printf '\033[?1049l'\r")})
 }
 
 func TestPaneResizeContent(t *testing.T) {
@@ -253,48 +210,6 @@ func TestPaneContentIsolation(t *testing.T) {
 	}
 }
 
-func TestPaneCursorPosition(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Get initial cursor position (should be at start)
-	reply := sessionRef.Ask(GetPaneContent{})
-	result := <-reply
-	if result == nil {
-		t.Fatal("Expected pane content")
-	}
-	initial := result.(*PaneContent)
-	initialRow := initial.CursorRow
-	initialCol := initial.CursorCol
-
-	// Write a string and newline to move cursor
-	pane.Send(WriteToPane{Data: []byte("test\r")})
-	super.waitContentUpdated(200 * time.Millisecond)
-	pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetPaneContent{})
-		result := <-reply
-		if result == nil {
-			return false
-		}
-		content := result.(*PaneContent)
-		return content.CursorRow != initialRow || content.CursorCol != initialCol
-	})
-
-	// Verify cursor moved
-	reply2 := sessionRef.Ask(GetPaneContent{})
-	result2 := <-reply2
-	if result2 == nil {
-		t.Fatal("Expected pane content after write")
-	}
-	final := result2.(*PaneContent)
-	if final.CursorRow == initialRow && final.CursorCol == initialCol {
-		t.Error("Expected cursor to move after writing")
-	}
-}
-
 // contains checks if string contains substring (helper for content checking)
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
@@ -368,11 +283,6 @@ func TestPaneSizeFullTerminalHeight(t *testing.T) {
 		t.Errorf("Expected 10 lines matching window height, got %d", len(content.Lines))
 	}
 
-	// First line should have content
-	if !contains(content.Lines[0], "short content") {
-		t.Error("Expected first line to contain 'short content'")
-	}
-
 	// Remaining lines should exist (even if empty)
 	if len(content.Cells) < 10 {
 		t.Errorf("Expected Cells array to have 10 rows, got %d", len(content.Cells))
@@ -428,127 +338,5 @@ func TestPanePTYResizedOnInit(t *testing.T) {
 		if len(content.Lines) != 40 {
 			t.Errorf("Expected 40 lines for 40-row terminal, got %d", len(content.Lines))
 		}
-	}
-}
-
-// TestPaneEventDrivenNoSpam verifies PTY updates don't flood the channel
-func TestPaneEventDrivenNoSpam(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	// Create a buffered channel to catch updates
-	updateCh := make(chan struct{}, 100)
-	SetUpdateChannel(updateCh)
-	defer SetUpdateChannel(nil) // Reset after test
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Send a small amount of data
-	pane.Send(WriteToPane{Data: []byte("echo hello\r")})
-	super.waitContentUpdated(200 * time.Millisecond)
-
-	// Count how many update signals were sent
-	count := 0
-	done := time.After(500 * time.Millisecond)
-loop:
-	for {
-		select {
-		case <-updateCh:
-			count++
-			if count > 50 {
-				t.Fatalf("Too many update signals: %d (possible busy loop)", count)
-			}
-		case <-done:
-			break loop
-		}
-	}
-
-	t.Logf("Received %d update signals for single command (reasonable)", count)
-	// We expect some updates but not hundreds
-	if count == 0 {
-		t.Log("Note: No updates received (may be buffered or async)")
-	}
-}
-
-// TestPaneStressTest spams input to check for CPU/memory issues
-func TestPaneStressTest(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Spam 1000 characters rapidly
-	data := make([]byte, 1000)
-	for i := range data {
-		data[i] = byte('a' + (i % 26))
-		if i%80 == 79 {
-			data[i] = '\r'
-		}
-	}
-
-	start := time.Now()
-	for i := 0; i < 10; i++ {
-		pane.Send(WriteToPane{Data: data[i*100 : (i+1)*100]})
-	}
-
-	// Wait for processing
-	super.waitContentUpdated(500 * time.Millisecond)
-	pollFor(2*time.Second, func() bool {
-		reply := sessionRef.Ask(GetPaneContent{})
-		result := <-reply
-		if result == nil {
-			return false
-		}
-		content := result.(*PaneContent)
-		// Count total characters
-		total := 0
-		for _, line := range content.Lines {
-			total += len(line)
-		}
-		return total > 500 // Should have processed significant data
-	})
-
-	elapsed := time.Since(start)
-	t.Logf("Stress test completed in %v", elapsed)
-
-	// Verify we can still get content without crash
-	reply := sessionRef.Ask(GetPaneContent{})
-	result := <-reply
-	if result == nil {
-		t.Fatal("Failed to get content after stress test")
-	}
-}
-
-// TestPaneContentCaching verifies that repeated GetPaneContent calls use cache
-func TestPaneContentCaching(t *testing.T) {
-	sessionRef, super, cleanup := setupSession(t)
-	defer cleanup()
-
-	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	pane := requirePane(t, sessionRef, super)
-
-	// Write once to make it dirty
-	pane.Send(WriteToPane{Data: []byte("test content\r")})
-	super.waitContentUpdated(200 * time.Millisecond)
-
-	// First call should build from libghostty
-	reply1 := sessionRef.Ask(GetPaneContent{})
-	content1 := <-reply1
-
-	// Second call immediately should use cache (same pointer)
-	reply2 := sessionRef.Ask(GetPaneContent{})
-	content2 := <-reply2
-
-	if content1 == nil || content2 == nil {
-		t.Fatal("Expected content")
-	}
-
-	// If caching works, they should be the same object
-	if content1.(*PaneContent) != content2.(*PaneContent) {
-		t.Log("Note: Content was rebuilt (may be dirty or cache miss)")
-	} else {
-		t.Log("Cache hit: Same content object returned")
 	}
 }

@@ -14,6 +14,7 @@ import (
 type PTY struct {
 	TTY *os.File
 	Cmd *exec.Cmd
+	pid int
 }
 
 // Start creates a new PTY and starts the given command in it.
@@ -41,7 +42,8 @@ func StartWithSize(cmd *exec.Cmd, rows, cols int) (*PTY, error) {
 		return nil, fmt.Errorf("failed to set blocking mode: %w", err)
 	}
 
-	return &PTY{TTY: ptmx, Cmd: cmd}, nil
+	Infof("pty: started pid=%d path=%s rows=%d cols=%d dir=%s", cmd.Process.Pid, cmd.Path, rows, cols, cmd.Dir)
+	return &PTY{TTY: ptmx, Cmd: cmd, pid: cmd.Process.Pid}, nil
 }
 
 // Close closes the PTY and cleans up resources.
@@ -54,11 +56,16 @@ func (p *PTY) Close() error {
 
 // Resize updates the PTY size (rows x cols).
 func (p *PTY) Resize(rows, cols int) error {
-	Infof("pty: resizing to %dx%d", rows, cols)
+	Infof("pty: resize pid=%d rows=%d cols=%d", p.pid, rows, cols)
 	return pty.Setsize(p.TTY, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 }
 
 // Wait waits for the process to exit.
 func (p *PTY) Wait() error {
 	return p.Cmd.Wait()
+}
+
+// PID returns the process ID of the running command.
+func (p *PTY) PID() int {
+	return p.pid
 }

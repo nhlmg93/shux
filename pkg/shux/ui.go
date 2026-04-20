@@ -40,8 +40,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		Infof("ui: window size %dx%d", msg.Width, msg.Height)
 		if !m.initialized {
 			m.initialized = true
-			Infof("ui: creating initial window %dx%d", msg.Height, msg.Width)
-			m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
+			reply := m.session.Ask(GetActiveWindow{})
+			existing := <-reply
+			if existing == nil {
+				Infof("ui: creating initial window %dx%d", msg.Height, msg.Width)
+				m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
+			} else {
+				Infof("ui: resizing existing session to %dx%d", msg.Height, msg.Width)
+				m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
+			}
 		} else {
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
 			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
@@ -88,6 +95,15 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 		case "p":
 			m.session.Send(SwitchWindow{Delta: -1})
 			return false
+		case "d":
+			Infof("ui: detach requested")
+			reply := m.session.Ask(DetachSession{})
+			if err, _ := (<-reply).(error); err != nil {
+				Warnf("ui: detach failed: %v", err)
+				return false
+			}
+			Infof("ui: detach completed")
+			return true
 		}
 		m.sendKeyInput(ctrlBInput())
 		m.sendKey(key)

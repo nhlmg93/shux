@@ -11,15 +11,25 @@ all:
 		mkdir -p $(PREFIX)/lib/pkgconfig $(PREFIX)/include; \
 		cp zig-out/lib/libghostty-vt.a $(PREFIX)/lib/libghostty-vt-static.a; \
 		cp -r include/ghostty $(PREFIX)/include/; \
-		echo "prefix=$(PREFIX)\nLibs: -L\$${prefix}/lib -lghostty-vt-static\nCflags: -I\$${prefix}/include" > $(PREFIX)/lib/pkgconfig/libghostty-vt-static.pc; \
+		printf '%s\n' \
+		  'prefix=$(PREFIX)' \
+		  'exec_prefix=$${prefix}' \
+		  'libdir=$${prefix}/lib' \
+		  'includedir=$${prefix}/include' \
+		  '' \
+		  'Name: libghostty-vt-static' \
+		  'Description: Ghostty VT static library' \
+		  'Version: 0' \
+		  'Libs: -L$${libdir} -lghostty-vt-static' \
+		  'Cflags: -I$${includedir}' \
+		  > $(PREFIX)/lib/pkgconfig/libghostty-vt-static.pc; \
 	fi
 	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go build -o shux ./cmd/shux && echo "✓ shux built"
 
 clean:
 	@rm -rf ghostty-build shux
 
-test: all
-	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig go test -v ./pkg/...
-
-test-e2e:
+test:
 	@docker build -f Dockerfile.test -t shux-test . && docker run --rm shux-test
+
+test-e2e: test

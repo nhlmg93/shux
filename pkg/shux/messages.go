@@ -20,9 +20,11 @@ type UnsubscribeUpdates struct{ Subscriber *actor.Ref }
 
 // Pane messages (terminal panes within windows).
 type CreatePane struct {
+	ID    uint32
 	Rows  int
 	Cols  int
 	Shell string
+	CWD   string
 }
 
 type KillPane struct{}
@@ -88,6 +90,42 @@ type PaneMode struct {
 	InAltScreen  bool
 	CursorHidden bool
 }
+
+// Snapshot data gathering asks.
+type GetSessionSnapshotData struct{}
+
+// SessionSnapshotData is returned by session in response to GetSessionSnapshotData.
+// Contains session-level info; windows are gathered via separate asks.
+type SessionSnapshotData struct {
+	ID           uint32
+	Shell        string
+	ActiveWindow uint32
+	WindowOrder  []uint32
+}
+
+type GetWindowSnapshotData struct{}
+
+// WindowSnapshotData is returned by window in response to GetWindowSnapshotData.
+type WindowSnapshotData struct {
+	ID         uint32
+	ActivePane uint32
+	PaneOrder  []uint32
+}
+
+type GetPaneSnapshotData struct{}
+
+// PaneSnapshotData is returned by pane in response to GetPaneSnapshotData.
+type PaneSnapshotData struct {
+	ID          uint32
+	Shell       string
+	Rows        int
+	Cols        int
+	CWD         string
+	WindowTitle string
+}
+
+// DetachSession triggers session save and shutdown.
+type DetachSession struct{}
 
 // PaneContentUpdated is sent when active pane content or metadata changes.
 type PaneContentUpdated struct {

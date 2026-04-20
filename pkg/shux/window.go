@@ -60,9 +60,46 @@ func (w *Window) handleAsk(envelope actor.AskEnvelope) {
 			return
 		}
 		envelope.Reply <- nil
+	case GetWindowSnapshotData:
+		data := w.gatherSnapshotData()
+		envelope.Reply <- data
 	default:
 		envelope.Reply <- nil
 	}
+}
+
+// gatherSnapshotData collects snapshot data from all panes in this window.
+func (w *Window) gatherSnapshotData() WindowSnapshot {
+	snapshot := WindowSnapshot{
+		ID:         w.id,
+		ActivePane: w.active,
+		PaneOrder:  append([]uint32(nil), w.paneOrder...),
+		Panes:      make([]PaneSnapshot, 0, len(w.paneOrder)),
+	}
+
+	for _, paneID := range w.paneOrder {
+		paneRef, ok := w.panes[paneID]
+		if !ok {
+			continue
+		}
+
+		reply := paneRef.Ask(GetPaneSnapshotData{})
+		paneData, ok := (<-reply).(PaneSnapshotData)
+		if !ok {
+			continue
+		}
+
+		snapshot.Panes = append(snapshot.Panes, PaneSnapshot{
+			ID:          paneData.ID,
+			Shell:       paneData.Shell,
+			Rows:        paneData.Rows,
+			Cols:        paneData.Cols,
+			CWD:         paneData.CWD,
+			WindowTitle: paneData.WindowTitle,
+		})
+	}
+
+	return snapshot
 }
 
 func (w *Window) activePane() *actor.Ref {
@@ -73,15 +110,22 @@ func (w *Window) activePane() *actor.Ref {
 }
 
 func (w *Window) createPane(cmd CreatePane) {
-	w.paneID++
-	ref := SpawnPane(w.paneID, cmd.Rows, cmd.Cols, cmd.Shell, actor.Self())
+	paneID := cmd.ID
+	if paneID == 0 {
+		w.paneID++
+		paneID = w.paneID
+	} else if paneID > w.paneID {
+		w.paneID = paneID
+	}
+
+	ref := SpawnPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, actor.Self())
 	if ref == nil {
 		return
 	}
-	w.panes[w.paneID] = ref
-	w.paneOrder = append(w.paneOrder, w.paneID)
+	w.panes[paneID] = ref
+	w.paneOrder = append(w.paneOrder, paneID)
 	if w.active == 0 {
-		w.active = w.paneID
+		w.active = paneID
 	}
 }
 

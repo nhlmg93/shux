@@ -1,26 +1,36 @@
 package shux
 
 import (
+	"fmt"
+
 	"github.com/nhlmg93/gotor/actor"
 )
 
 type Session struct {
 	id          uint32
+	name        string
 	windows     map[uint32]*actor.Ref
 	windowOrder []uint32
 	active      uint32
 	windowID    uint32
 	subscribers map[*actor.Ref]struct{}
 	shell       string
+	snapshot    *SessionSnapshot // For restore-based creation
 }
 
 func NewSession(id uint32) *Session {
-	return NewSessionWithShell(id, DefaultShell)
+	return NewNamedSessionWithShell(id, DefaultSessionName, DefaultShell)
 }
 
 func NewSessionWithShell(id uint32, shell string) *Session {
+	return NewNamedSessionWithShell(id, DefaultSessionName, shell)
+}
+
+func NewNamedSessionWithShell(id uint32, name, shell string) *Session {
+	name = normalizeSessionName(name)
 	return &Session{
 		id:          id,
+		name:        name,
 		windows:     make(map[uint32]*actor.Ref),
 		subscribers: make(map[*actor.Ref]struct{}),
 		shell:       normalizeShell(shell),
@@ -28,12 +38,100 @@ func NewSessionWithShell(id uint32, shell string) *Session {
 }
 
 func SpawnSession(id uint32, parent *actor.Ref) *actor.Ref {
-	return SpawnSessionWithShell(id, DefaultShell, parent)
+	return SpawnNamedSessionWithShell(id, DefaultSessionName, DefaultShell, parent)
 }
 
 func SpawnSessionWithShell(id uint32, shell string, parent *actor.Ref) *actor.Ref {
-	s := NewSessionWithShell(id, shell)
+	return SpawnNamedSessionWithShell(id, DefaultSessionName, shell, parent)
+}
+
+func SpawnNamedSessionWithShell(id uint32, name, shell string, parent *actor.Ref) *actor.Ref {
+	s := NewNamedSessionWithShell(id, name, shell)
 	return actor.SpawnWithParent(s, 32, parent)
+}
+
+// SpawnSessionFromSnapshot creates a session restored from a snapshot.
+func SpawnSessionFromSnapshot(snapshot *SessionSnapshot, parent *actor.Ref) *actor.Ref {
+	name := normalizeSessionName(snapshot.SessionName)
+	s := &Session{
+		id:          snapshot.ID,
+		name:        name,
+		windows:     make(map[uint32]*actor.Ref),
+		subscribers: make(map[*actor.Ref]struct{}),
+		shell:       normalizeShell(snapshot.Shell),
+		snapshot:    snapshot,
+	}
+	return actor.SpawnWithParent(actor.WithLifecycle(s), 32, parent)
+}
+
+func (s *Session) Init() error {
+	Infof("session: init id=%d name=%s shell=%s restore=%t", s.id, s.name, s.shell, s.snapshot != nil)
+	if s.snapshot != nil {
+		s.restoreFromSnapshot()
+		s.snapshot = nil
+	}
+	return nil
+}
+
+func (s *Session) Terminate(reason error) {
+	Infof("session: terminate id=%d name=%s reason=%v", s.id, s.name, reason)
+}
+
+func (s *Session) restoreFromSnapshot() {
+	Infof("restore: session=%s id=%d windows=%d activeWindow=%d", s.name, s.id, len(s.snapshot.Windows), s.snapshot.ActiveWindow)
+
+	windowsByID := make(map[uint32]WindowSnapshot, len(s.snapshot.Windows))
+	var maxWindowID uint32
+	for _, winSnap := range s.snapshot.Windows {
+		windowsByID[winSnap.ID] = winSnap
+		if winSnap.ID > maxWindowID {
+			maxWindowID = winSnap.ID
+		}
+	}
+
+	for _, winID := range s.snapshot.WindowOrder {
+		winSnap, ok := windowsByID[winID]
+		if !ok {
+			continue
+		}
+
+		Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
+		window := NewWindow(winSnap.ID)
+		windowRef := actor.SpawnWithParent(window, 32, actor.Self())
+		s.windows[winSnap.ID] = windowRef
+		s.windowOrder = append(s.windowOrder, winSnap.ID)
+
+		panesByID := make(map[uint32]PaneSnapshot, len(winSnap.Panes))
+		for _, paneSnap := range winSnap.Panes {
+			panesByID[paneSnap.ID] = paneSnap
+		}
+		for _, paneID := range winSnap.PaneOrder {
+			paneSnap, ok := panesByID[paneID]
+			if !ok {
+				continue
+			}
+			Infof("restore: session=%s window=%d pane=%d shell=%s cwd=%s rows=%d cols=%d", s.name, winSnap.ID, paneSnap.ID, paneSnap.Shell, paneSnap.CWD, paneSnap.Rows, paneSnap.Cols)
+			windowRef.Send(CreatePane{
+				ID:    paneSnap.ID,
+				Rows:  paneSnap.Rows,
+				Cols:  paneSnap.Cols,
+				Shell: paneSnap.Shell,
+				CWD:   paneSnap.CWD,
+			})
+		}
+		if activeIdx := indexOfOrderedID(winSnap.PaneOrder, winSnap.ActivePane); activeIdx > 0 {
+			windowRef.Send(SwitchToPane{Index: activeIdx})
+		}
+	}
+
+	s.windowID = maxWindowID
+	if s.snapshot.ActiveWindow != 0 {
+		s.active = s.snapshot.ActiveWindow
+	} else if len(s.windowOrder) > 0 {
+		s.active = s.windowOrder[0]
+	}
+
+	Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
 }
 
 func (s *Session) Receive(msg any) {
@@ -58,6 +156,10 @@ func (s *Session) Receive(msg any) {
 		}
 	case WriteToPane, KeyInput:
 		s.forwardToActivePane(m)
+	case DetachSession:
+		if err := s.handleDetach(); err != nil {
+			Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
+		}
 	case actor.AskEnvelope:
 		s.handleAsk(m)
 	}
@@ -81,9 +183,72 @@ func (s *Session) handleAsk(envelope actor.AskEnvelope) {
 			return
 		}
 		envelope.Reply <- nil
+	case GetSessionSnapshotData:
+		data := SessionSnapshotData{
+			ID:           s.id,
+			Shell:        s.shell,
+			ActiveWindow: s.active,
+			WindowOrder:  append([]uint32(nil), s.windowOrder...),
+		}
+		envelope.Reply <- data
+	case DetachSession:
+		envelope.Reply <- s.handleDetach()
 	default:
 		envelope.Reply <- nil
 	}
+}
+
+func (s *Session) handleDetach() error {
+	Infof("detach: session=%s id=%d requested windows=%d", s.name, s.id, len(s.windowOrder))
+	snapshot := s.buildSnapshot()
+	path := SessionSnapshotPath(s.name)
+	Infof("detach: session=%s id=%d snapshot-built windows=%d activeWindow=%d path=%s", s.name, s.id, len(snapshot.Windows), snapshot.ActiveWindow, path)
+	if err := SaveSnapshot(path, snapshot); err != nil {
+		return fmt.Errorf("save snapshot %q: %w", path, err)
+	}
+
+	for _, win := range s.windows {
+		win.Stop()
+	}
+
+	if parent := actor.Parent(); parent != nil {
+		parent.Send(SessionEmpty{ID: s.id})
+	}
+	if me := actor.Self(); me != nil {
+		Infof("detach: session=%s id=%d stopping actor tree", s.name, s.id)
+		me.Stop()
+	}
+	return nil
+}
+
+func (s *Session) buildSnapshot() *SessionSnapshot {
+	snapshot := &SessionSnapshot{
+		Version:      SnapshotVersion,
+		SessionName:  s.name,
+		ID:           s.id,
+		Shell:        s.shell,
+		ActiveWindow: s.active,
+		WindowOrder:  append([]uint32(nil), s.windowOrder...),
+		Windows:      make([]WindowSnapshot, 0, len(s.windowOrder)),
+	}
+
+	// Gather data from each window (windows collect their own pane data)
+	for _, winID := range s.windowOrder {
+		win := s.windows[winID]
+		if win == nil {
+			continue
+		}
+
+		winReply := win.Ask(GetWindowSnapshotData{})
+		winData, ok := (<-winReply).(WindowSnapshot)
+		if !ok {
+			continue
+		}
+
+		snapshot.Windows = append(snapshot.Windows, winData)
+	}
+
+	return snapshot
 }
 
 func (s *Session) activeWindow() *actor.Ref {
@@ -94,7 +259,7 @@ func (s *Session) activeWindow() *actor.Ref {
 }
 
 func (s *Session) resizeActiveWindow(rows, cols int) {
-	Infof("session %d: resizing active window to %dx%d", s.id, rows, cols)
+	Infof("session: id=%d name=%s resize-active-window rows=%d cols=%d", s.id, s.name, rows, cols)
 	if win := s.activeWindow(); win != nil {
 		win.Send(ResizeMsg{Rows: rows, Cols: cols})
 	}
@@ -102,7 +267,7 @@ func (s *Session) resizeActiveWindow(rows, cols int) {
 
 func (s *Session) createWindow(rows, cols int) {
 	s.windowID++
-	Infof("session %d: creating window %d with size %dx%d", s.id, s.windowID, rows, cols)
+	Infof("session: id=%d name=%s create-window window=%d rows=%d cols=%d shell=%s", s.id, s.name, s.windowID, rows, cols, s.shell)
 	ref := SpawnWindow(s.windowID, actor.Self())
 	s.windows[s.windowID] = ref
 	s.windowOrder = append(s.windowOrder, s.windowID)
@@ -130,7 +295,9 @@ func (s *Session) switchWindow(delta int) {
 	if newActive == s.active {
 		return
 	}
+	oldActive := s.active
 	s.active = newActive
+	Infof("session: id=%d name=%s switch-window from=%d to=%d delta=%d", s.id, s.name, oldActive, newActive, delta)
 	s.forwardUpdate(PaneContentUpdated{})
 }
 
@@ -198,4 +365,13 @@ func removeOrderedID(ids []uint32, target uint32) []uint32 {
 		}
 	}
 	return ids
+}
+
+func indexOfOrderedID(ids []uint32, target uint32) int {
+	for i, id := range ids {
+		if id == target {
+			return i
+		}
+	}
+	return -1
 }

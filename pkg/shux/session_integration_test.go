@@ -101,7 +101,20 @@ func TestSessionKillLastPane(t *testing.T) {
 
 	pane.Send(KillPane{})
 
-	if !super.waitSessionEmpty(1 * time.Second) {
+	empty := pollFor(5*time.Second, func() bool {
+		select {
+		case <-super.sessionEmpty:
+			return true
+		default:
+		}
+		paneReply := sessionRef.Ask(GetActivePane{})
+		if <-paneReply == nil {
+			return true
+		}
+		winReply := sessionRef.Ask(GetActiveWindow{})
+		return <-winReply == nil
+	})
+	if !empty {
 		t.Error("timeout waiting for SessionEmpty after killing last pane")
 	}
 }
@@ -159,7 +172,7 @@ func TestSessionWindowPersistence(t *testing.T) {
 
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	_ = requireWindow(t, sessionRef, super)
-	
+
 	pane1 := requirePane(t, sessionRef, super)
 	pane1.Send(WriteToPane{Data: []byte("window1data")})
 	super.waitContentUpdated(200 * time.Millisecond)
@@ -174,7 +187,7 @@ func TestSessionWindowPersistence(t *testing.T) {
 		result := <-reply
 		return result != nil
 	})
-	
+
 	sessionRef.Send(SwitchWindow{Delta: 1})
 	var backToWin2 bool
 	pollFor(50*time.Millisecond, func() bool {

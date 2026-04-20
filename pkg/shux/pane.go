@@ -50,6 +50,7 @@ type Pane struct {
 	rows          int
 	cols          int
 	shell         string
+	cwd           string
 	windowTitle   string
 	bellCount     uint64
 	dirty         bool
@@ -63,17 +64,18 @@ type panePTYData struct{ Data []byte }
 type paneFlushUpdate struct{}
 type paneProcessExited struct{ Err error }
 
-func NewPane(id uint32, rows, cols int, shell string) *Pane {
+func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
 	return &Pane{
 		id:    id,
 		rows:  rows,
 		cols:  cols,
 		shell: shell,
+		cwd:   cwd,
 	}
 }
 
 func (p *Pane) Init() error {
-	Infof("pane %d: initializing", p.id)
+	Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
 	p.self = actor.Self()
 
 	ghosttyTerm, err := libghostty.NewTerminal(
@@ -129,7 +131,7 @@ func (p *Pane) Init() error {
 		return err
 	}
 
-	Infof("pane %d: starting shell %s", p.id, p.shell)
+	Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
 	cmd := exec.Command(p.shell)
 	env := os.Environ()
 	termSet := false
@@ -143,6 +145,9 @@ func (p *Pane) Init() error {
 		env = append(env, "TERM=xterm-256color")
 	}
 	cmd.Env = env
+	if p.cwd != "" {
+		cmd.Dir = ResolveCWD(p.cwd)
+	}
 
 	pty, err := StartWithSize(cmd, p.rows, p.cols)
 	if err != nil {
@@ -154,6 +159,7 @@ func (p *Pane) Init() error {
 		return err
 	}
 
+	Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
 	p.term = ghosttyTerm
 	p.renderState = renderState
 	p.rowIterator = rowIterator
@@ -168,7 +174,7 @@ func (p *Pane) Init() error {
 }
 
 func (p *Pane) Terminate(reason error) {
-	Infof("pane %d: terminating (%v)", p.id, reason)
+	Infof("pane: id=%d terminate pid=%d reason=%v", p.id, p.pid(), reason)
 	if p.updateTimer != nil {
 		p.updateTimer.Stop()
 	}
@@ -192,8 +198,8 @@ func (p *Pane) Terminate(reason error) {
 	}
 }
 
-func SpawnPane(id uint32, rows, cols int, shell string, parent *actor.Ref) *actor.Ref {
-	p := NewPane(id, rows, cols, shell)
+func SpawnPane(id uint32, rows, cols int, shell, cwd string, parent *actor.Ref) *actor.Ref {
+	p := NewPane(id, rows, cols, shell, cwd)
 	return actor.SpawnWithParent(actor.WithLifecycle(p), 256, parent)
 }
 
@@ -245,7 +251,7 @@ func (p *Pane) Receive(msg any) {
 		if p.stopped {
 			return
 		}
-		Infof("pane %d: process exited: %v", p.id, m.Err)
+		Infof("pane: id=%d process-exited pid=%d err=%v", p.id, p.pid(), m.Err)
 		p.stopped = true
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(PaneExited{ID: p.id})
@@ -258,7 +264,7 @@ func (p *Pane) Receive(msg any) {
 	case KeyInput:
 		p.handleKeyInput(m)
 	case ResizeTerm:
-		Infof("pane %d: resizing from %dx%d to %dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
+		Infof("pane: id=%d resize from=%dx%d to=%dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
 		p.Resize(m.Rows, m.Cols)
 		if p.pty != nil {
 			_ = p.pty.Resize(m.Rows, m.Cols)
@@ -268,6 +274,7 @@ func (p *Pane) Receive(msg any) {
 		if p.stopped {
 			return
 		}
+		Infof("pane: id=%d kill requested pid=%d", p.id, p.pid())
 		p.stopped = true
 		if parent := actor.Parent(); parent != nil {
 			parent.Send(PaneExited{ID: p.id})
@@ -298,6 +305,16 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 		p.cachedContent = content
 		p.dirty = false
 		envelope.Reply <- content
+	case GetPaneSnapshotData:
+		data := PaneSnapshotData{
+			ID:          p.id,
+			Shell:       p.shell,
+			Rows:        p.rows,
+			Cols:        p.cols,
+			CWD:         p.getCWD(),
+			WindowTitle: p.windowTitle,
+		}
+		envelope.Reply <- data
 	default:
 		envelope.Reply <- nil
 	}
@@ -349,4 +366,31 @@ func (p *Pane) IsCursorVisible() bool {
 	}
 	visible, _ := p.term.ModeGet(libghostty.ModeCursorVisible)
 	return visible
+}
+
+func (p *Pane) pid() int {
+	if p.pty == nil {
+		return 0
+	}
+	return p.pty.PID()
+}
+
+// getCWD returns the current working directory of the pane's shell process.
+// Returns empty string if unable to determine.
+func (p *Pane) getCWD() string {
+	if p.pty == nil {
+		return ""
+	}
+
+	pid := p.pty.PID()
+	if pid == 0 {
+		return ""
+	}
+
+	cwd, err := GetProcessCWD(pid)
+	if err != nil {
+		return ""
+	}
+
+	return ResolveCWD(cwd)
 }
