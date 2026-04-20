@@ -34,3 +34,13 @@ I am a tmux expert. All decisions are rooted in deep understanding of terminal m
 2. **Actor Model** - goroutines + channels for clean concurrency
 3. **Full Terminal Emulation** - Ghostty provides complete VT support
 4. **Modern Stack** - Go + Bubble Tea, no legacy dependencies
+
+## Reference Materials (Do Not Auto-Read)
+
+**ARCHITECTURE.md** and **ROADMAP.md** contain long-term planning and design documentation.
+
+**Do not reference, quote, or use these files unless explicitly directed by the user.**
+
+They exist for human reference and long-term planning. During active development, only use the context provided directly in conversation.
+
+If user wants to discuss architecture or roadmap, they will say so explicitly (e.g., "look at ARCHITECTURE.md" or "what's in the roadmap?").
