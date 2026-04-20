@@ -138,7 +138,7 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 			for col := 0; col < t.cols; col++ {
 				ref, err := t.term.GridRef(libghostty.Point{
 					Tag: libghostty.PointTagActive,
-					X:   uint32(col),
+					X:   uint16(col),
 					Y:   uint32(row),
 				})
 				if err != nil {
@@ -177,7 +177,7 @@ func (t *Term) handleAsk(envelope actor.AskEnvelope) {
 
 // Resize updates terminal dimensions
 func (t *Term) Resize(rows, cols int) {
-	t.term.SetSize(uint16(cols), uint16(rows))
+	t.term.Resize(uint16(cols), uint16(rows), 0, 0)
 	t.rows = rows
 	t.cols = cols
 }
