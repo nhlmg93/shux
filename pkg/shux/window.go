@@ -1,12 +1,42 @@
 package shux
 
-import (
-	"github.com/nhlmg93/gotor/actor"
-)
+import "fmt"
+
+type WindowRef struct {
+	*loopRef
+}
+
+func (r *WindowRef) Send(msg any) bool {
+	if r == nil {
+		return false
+	}
+	return r.send(msg)
+}
+
+func (r *WindowRef) Ask(msg any) chan any {
+	if r == nil {
+		return nil
+	}
+	return r.ask(msg)
+}
+
+func (r *WindowRef) Stop() {
+	if r != nil {
+		r.stopLoop()
+	}
+}
+
+func (r *WindowRef) Shutdown() {
+	if r != nil {
+		r.shutdown()
+	}
+}
 
 type Window struct {
+	ref       *WindowRef
+	parent    *SessionRef
 	id        uint32
-	panes     map[uint32]*actor.Ref
+	panes     map[uint32]*PaneRef
 	paneOrder []uint32
 	active    uint32
 	paneID    uint32
@@ -15,16 +45,53 @@ type Window struct {
 func NewWindow(id uint32) *Window {
 	return &Window{
 		id:    id,
-		panes: make(map[uint32]*actor.Ref),
+		panes: make(map[uint32]*PaneRef),
 	}
 }
 
-func SpawnWindow(id uint32, parent *actor.Ref) *actor.Ref {
+func StartWindow(id uint32, parent *SessionRef) *WindowRef {
 	w := NewWindow(id)
-	return actor.SpawnWithParent(w, 32, parent)
+	w.parent = parent
+	ref := &WindowRef{loopRef: newLoopRef(32)}
+	w.ref = ref
+	go w.run()
+	return ref
 }
 
-func (w *Window) Receive(msg any) {
+func (w *Window) run() {
+	var reason error
+	defer func() {
+		if r := recover(); r != nil {
+			reason = fmt.Errorf("panic: %v", r)
+		}
+		w.terminate(reason)
+		close(w.ref.done)
+	}()
+
+	for {
+		select {
+		case <-w.ref.stop:
+			return
+		case msg := <-w.ref.inbox:
+			w.receive(msg)
+		}
+	}
+}
+
+func (w *Window) terminate(reason error) {
+	for _, pane := range w.panes {
+		if pane != nil {
+			pane.Shutdown()
+		}
+	}
+	if reason != nil {
+		Errorf("window: crash id=%d reason=%v", w.id, reason)
+		return
+	}
+	Infof("window: terminate id=%d", w.id)
+}
+
+func (w *Window) receive(msg any) {
 	switch m := msg.(type) {
 	case CreatePane:
 		w.createPane(m)
@@ -34,8 +101,8 @@ func (w *Window) Receive(msg any) {
 		w.handlePaneExited(m.ID)
 	case PaneContentUpdated:
 		if m.ID == 0 || m.ID == w.active {
-			if parent := actor.Parent(); parent != nil {
-				parent.Send(m)
+			if w.parent != nil {
+				w.parent.Send(m)
 			}
 		}
 	case ResizeMsg:
@@ -44,31 +111,29 @@ func (w *Window) Receive(msg any) {
 		if pane := w.activePane(); pane != nil {
 			pane.Send(m)
 		}
-	case actor.AskEnvelope:
+	case askEnvelope:
 		w.handleAsk(m)
 	}
 }
 
-func (w *Window) handleAsk(envelope actor.AskEnvelope) {
-	switch envelope.Msg.(type) {
+func (w *Window) handleAsk(envelope askEnvelope) {
+	switch envelope.msg.(type) {
 	case GetActivePane:
-		envelope.Reply <- w.activePane()
+		envelope.reply <- w.activePane()
 	case GetPaneContent:
 		if pane := w.activePane(); pane != nil {
-			reply := pane.Ask(envelope.Msg)
-			envelope.Reply <- <-reply
+			result, _ := askValue(pane, envelope.msg)
+			envelope.reply <- result
 			return
 		}
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	case GetWindowSnapshotData:
-		data := w.gatherSnapshotData()
-		envelope.Reply <- data
+		envelope.reply <- w.gatherSnapshotData()
 	default:
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	}
 }
 
-// gatherSnapshotData collects snapshot data from all panes in this window.
 func (w *Window) gatherSnapshotData() WindowSnapshot {
 	snapshot := WindowSnapshot{
 		ID:         w.id,
@@ -83,8 +148,8 @@ func (w *Window) gatherSnapshotData() WindowSnapshot {
 			continue
 		}
 
-		reply := paneRef.Ask(GetPaneSnapshotData{})
-		paneData, ok := (<-reply).(PaneSnapshotData)
+		result, ok := askValue(paneRef, GetPaneSnapshotData{})
+		paneData, ok := result.(PaneSnapshotData)
 		if !ok {
 			continue
 		}
@@ -102,7 +167,7 @@ func (w *Window) gatherSnapshotData() WindowSnapshot {
 	return snapshot
 }
 
-func (w *Window) activePane() *actor.Ref {
+func (w *Window) activePane() *PaneRef {
 	if w.active == 0 {
 		return nil
 	}
@@ -118,10 +183,7 @@ func (w *Window) createPane(cmd CreatePane) {
 		w.paneID = paneID
 	}
 
-	ref := SpawnPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, actor.Self())
-	if ref == nil {
-		return
-	}
+	ref := StartPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, w.ref)
 	w.panes[paneID] = ref
 	w.paneOrder = append(w.paneOrder, paneID)
 	if w.active == 0 {
@@ -144,8 +206,8 @@ func (w *Window) switchToPane(index int) {
 		return
 	}
 	w.active = newActive
-	if parent := actor.Parent(); parent != nil {
-		parent.Send(PaneContentUpdated{})
+	if w.parent != nil {
+		w.parent.Send(PaneContentUpdated{})
 	}
 }
 
@@ -163,8 +225,8 @@ func (w *Window) handlePaneExited(id uint32) {
 
 	if len(w.paneOrder) == 0 {
 		w.active = 0
-		if parent := actor.Parent(); parent != nil {
-			parent.Send(WindowEmpty{ID: w.id})
+		if w.parent != nil {
+			w.parent.Send(WindowEmpty{ID: w.id})
 		}
 		return
 	}
@@ -180,8 +242,8 @@ func (w *Window) handlePaneExited(id uint32) {
 		currentIdx = 0
 	}
 	w.active = w.paneOrder[currentIdx]
-	if parent := actor.Parent(); parent != nil {
-		parent.Send(PaneContentUpdated{})
+	if w.parent != nil {
+		w.parent.Send(PaneContentUpdated{})
 	}
 }
 

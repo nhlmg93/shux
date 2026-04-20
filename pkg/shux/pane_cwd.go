@@ -48,7 +48,7 @@ func GetProcessStartTime(pid int) (uint64, error) {
 // parseStatFields parses /proc/<pid>/stat fields, handling the command name in parentheses.
 func parseStatFields(data string) []string {
 	// Find the first '(' and the last ')'
-	start := 0
+	start := -1
 	for i, c := range data {
 		if c == '(' {
 			start = i
@@ -56,7 +56,7 @@ func parseStatFields(data string) []string {
 		}
 	}
 
-	end := len(data)
+	end := -1
 	for i := len(data) - 1; i >= 0; i-- {
 		if data[i] == ')' {
 			end = i
@@ -64,8 +64,8 @@ func parseStatFields(data string) []string {
 		}
 	}
 
-	if start >= end {
-		// No parentheses found, just split
+	if start < 0 || end < 0 || start >= end {
+		// No valid command parentheses found, just split.
 		return splitFields(data)
 	}
 
@@ -80,7 +80,7 @@ func parseStatFields(data string) []string {
 }
 
 func splitFields(s string) []string {
-	var fields []string
+	fields := make([]string, 0)
 	var current string
 	inSpace := true
 

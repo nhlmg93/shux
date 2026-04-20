@@ -3,11 +3,9 @@ package shux
 import (
 	"testing"
 	"time"
-
-	"github.com/nhlmg93/gotor/actor"
 )
 
-// testSupervisor captures events via channels for synchronization
+// testSupervisor captures events via channels for synchronization.
 type testSupervisor struct {
 	sessionEmpty   chan uint32
 	contentUpdated chan uint32
@@ -20,12 +18,18 @@ func newTestSupervisor() *testSupervisor {
 	}
 }
 
-func (s *testSupervisor) Receive(msg any) {
+func (s *testSupervisor) handle(msg any) {
 	switch m := msg.(type) {
 	case SessionEmpty:
-		select { case s.sessionEmpty <- m.ID: default: }
+		select {
+		case s.sessionEmpty <- m.ID:
+		default:
+		}
 	case PaneContentUpdated:
-		select { case s.contentUpdated <- m.ID: default: }
+		select {
+		case s.contentUpdated <- m.ID:
+		default:
+		}
 	}
 }
 
@@ -47,20 +51,16 @@ func (s *testSupervisor) waitContentUpdated(timeout time.Duration) bool {
 	}
 }
 
-// setupSession creates a test session with supervisor, returns session ref and cleanup
-func setupSession(t *testing.T) (*actor.Ref, *testSupervisor, func()) {
+func setupSession(t *testing.T) (*SessionRef, *testSupervisor, func()) {
+	t.Helper()
 	super := newTestSupervisor()
-	superRef := actor.Spawn(super, 10)
-	sessionRef := SpawnSession(1, superRef)
-
+	sessionRef := StartSession(1, super.handle)
 	cleanup := func() {
-		superRef.Stop()
+		sessionRef.Shutdown()
 	}
-
 	return sessionRef, super, cleanup
 }
 
-// pollFor waits for a condition with timeout (for initial setup)
 func pollFor(timeout time.Duration, condition func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -72,10 +72,8 @@ func pollFor(timeout time.Duration, condition func() bool) bool {
 	return false
 }
 
-// requirePane polls for and returns an active pane reference
-func requirePane(t *testing.T, sessionRef *actor.Ref, super *testSupervisor) *actor.Ref {
+func requirePane(t *testing.T, sessionRef *SessionRef, super *testSupervisor) *PaneRef {
 	t.Helper()
-	// Poll until pane exists (actor spawned, not waiting for content)
 	var paneRef any
 	if !pollFor(500*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(GetActivePane{})
@@ -84,11 +82,10 @@ func requirePane(t *testing.T, sessionRef *actor.Ref, super *testSupervisor) *ac
 	}) {
 		t.Fatal("timeout waiting for pane creation")
 	}
-	return paneRef.(*actor.Ref)
+	return paneRef.(*PaneRef)
 }
 
-// requirePaneInWindow polls for a pane in a specific window
-func requirePaneInWindow(t *testing.T, winRef *actor.Ref, super *testSupervisor) *actor.Ref {
+func requirePaneInWindow(t *testing.T, winRef *WindowRef, super *testSupervisor) *PaneRef {
 	t.Helper()
 	var paneRef any
 	if !pollFor(500*time.Millisecond, func() bool {
@@ -98,13 +95,11 @@ func requirePaneInWindow(t *testing.T, winRef *actor.Ref, super *testSupervisor)
 	}) {
 		t.Fatal("timeout waiting for pane in window")
 	}
-	return paneRef.(*actor.Ref)
+	return paneRef.(*PaneRef)
 }
 
-// requireWindow polls for and returns an active window reference  
-func requireWindow(t *testing.T, sessionRef *actor.Ref, super *testSupervisor) *actor.Ref {
+func requireWindow(t *testing.T, sessionRef *SessionRef, super *testSupervisor) *WindowRef {
 	t.Helper()
-	// Poll until window exists
 	var winRef any
 	if !pollFor(500*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(GetActiveWindow{})
@@ -113,5 +108,5 @@ func requireWindow(t *testing.T, sessionRef *actor.Ref, super *testSupervisor) *
 	}) {
 		t.Fatal("timeout waiting for window creation")
 	}
-	return winRef.(*actor.Ref)
+	return winRef.(*WindowRef)
 }

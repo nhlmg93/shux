@@ -63,24 +63,24 @@ func TestGetProcessCWDNonExistent(t *testing.T) {
 func TestParseStatFields(t *testing.T) {
 	// Test case from a real /proc/<pid>/stat line
 	statLine := "1234 (bash) S 1233 1233 1233 34816 1233 4194304 1234 0 0 0 10 20 0 0 20 0 1 0 1234567890 1234567 18446744073709551615"
-	
+
 	fields := parseStatFields(statLine)
-	
+
 	// Field 21 (0-indexed: 21) should be start time
 	if len(fields) < 22 {
 		t.Fatalf("Expected at least 22 fields, got %d", len(fields))
 	}
-	
+
 	// Field 0 should be PID
 	if fields[0] != "1234" {
 		t.Errorf("Field 0 (PID): got %s, want 1234", fields[0])
 	}
-	
+
 	// Field 1 should be command with parentheses
 	if fields[1] != "(bash)" {
 		t.Errorf("Field 1 (command): got %s, want (bash)", fields[1])
 	}
-	
+
 	// Field 21 should be start time
 	if fields[21] != "1234567890" {
 		t.Errorf("Field 21 (start time): got %s, want 1234567890", fields[21])
@@ -90,17 +90,17 @@ func TestParseStatFields(t *testing.T) {
 func TestParseStatFieldsWithSpacesInCommand(t *testing.T) {
 	// Test case with spaces in command name (e.g., "my app")
 	statLine := "1234 (my app with spaces) S 1233 1233 1233 34816 1233 4194304 1234 0 0 0 10 20 0 0 20 0 1 0 1234567890 1234567 18446744073709551615"
-	
+
 	fields := parseStatFields(statLine)
-	
+
 	if len(fields) < 22 {
 		t.Fatalf("Expected at least 22 fields, got %d", len(fields))
 	}
-	
+
 	if fields[0] != "1234" {
 		t.Errorf("Field 0 (PID): got %s, want 1234", fields[0])
 	}
-	
+
 	if fields[1] != "(my app with spaces)" {
 		t.Errorf("Field 1 (command): got %s, want (my app with spaces)", fields[1])
 	}
@@ -113,17 +113,17 @@ func TestGetProcessStartTime(t *testing.T) {
 
 	// Use our own PID
 	ownPid := os.Getpid()
-	
+
 	startTime, err := GetProcessStartTime(ownPid)
 	if err != nil {
 		t.Fatalf("GetProcessStartTime failed for self: %v", err)
 	}
-	
+
 	// Start time should be a positive number (in clock ticks since boot)
 	if startTime == 0 {
 		t.Error("Expected non-zero start time")
 	}
-	
+
 	t.Logf("Our process start time: %d", startTime)
 }
 
@@ -145,7 +145,7 @@ func TestResolveCWD(t *testing.T) {
 	if resolved != tmpDir {
 		t.Errorf("ResolveCWD normal: got %s, want %s", resolved, tmpDir)
 	}
-	
+
 	// Test deleted directory scenario
 	deletedPath := "/home/user/olddir (deleted)"
 	resolved = ResolveCWD(deletedPath)
@@ -162,23 +162,23 @@ func TestVerifyProcess(t *testing.T) {
 
 	// Use our own PID
 	ownPid := os.Getpid()
-	
+
 	// Get our start time
 	startTime, err := GetProcessStartTime(ownPid)
 	if err != nil {
 		t.Fatalf("Failed to get own start time: %v", err)
 	}
-	
+
 	// Verify should succeed with correct start time
 	if !VerifyProcess(ownPid, startTime) {
 		t.Error("VerifyProcess should succeed for self with correct start time")
 	}
-	
+
 	// Verify should fail with wrong start time
 	if VerifyProcess(ownPid, startTime+1000) {
 		t.Error("VerifyProcess should fail with wrong start time")
 	}
-	
+
 	// Verify should fail for non-existent process
 	if VerifyProcess(99999, startTime) {
 		t.Error("VerifyProcess should fail for non-existent process")

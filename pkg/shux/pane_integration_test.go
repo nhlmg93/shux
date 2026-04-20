@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/nhlmg93/gotor/actor"
 )
 
 func TestPaneWriteAndGetContent(t *testing.T) {
@@ -166,7 +164,7 @@ func TestPaneContentIsolation(t *testing.T) {
 		win.Send(SwitchToPane{Index: 1})
 		reply := sessionRef.Ask(GetActivePane{})
 		result := <-reply
-		return result != nil && result.(*actor.Ref) != pane1
+		return result != nil && result.(*PaneRef) != pane1
 	})
 
 	// Get pane 2 content - should not have PANE1_DATA
@@ -188,7 +186,7 @@ func TestPaneContentIsolation(t *testing.T) {
 	pollFor(100*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(GetActivePane{})
 		result := <-reply
-		return result != nil && result.(*actor.Ref) == pane1
+		return result != nil && result.(*PaneRef) == pane1
 	})
 
 	reply2 := sessionRef.Ask(GetPaneContent{})

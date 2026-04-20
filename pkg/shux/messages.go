@@ -1,8 +1,6 @@
 package shux
 
-import "github.com/nhlmg93/gotor/actor"
-
-// Message types for actor communication.
+// Message types for loop communication.
 
 // Session messages.
 type CreateWindow struct {
@@ -15,8 +13,8 @@ type SwitchWindow struct{ Delta int }
 type GetActiveWindow struct{}
 type SessionEmpty struct{ ID uint32 }
 
-type SubscribeUpdates struct{ Subscriber *actor.Ref }
-type UnsubscribeUpdates struct{ Subscriber *actor.Ref }
+type SubscribeUpdates struct{ Subscriber chan any }
+type UnsubscribeUpdates struct{ Subscriber chan any }
 
 // Pane messages (terminal panes within windows).
 type CreatePane struct {
@@ -75,7 +73,7 @@ const (
 	KeyModSuper
 )
 
-// KeyInput is a normalized keyboard event sent through the actor hierarchy.
+// KeyInput is a normalized keyboard event sent through the session/window/pane loops.
 type KeyInput struct {
 	Code        rune
 	Text        string
@@ -91,11 +89,11 @@ type PaneMode struct {
 	CursorHidden bool
 }
 
-// Snapshot data gathering asks.
+// Snapshot data gathering requests.
 type GetSessionSnapshotData struct{}
 
 // SessionSnapshotData is returned by session in response to GetSessionSnapshotData.
-// Contains session-level info; windows are gathered via separate asks.
+// Contains session-level info; window data is gathered via separate requests.
 type SessionSnapshotData struct {
 	ID           uint32
 	Shell        string
@@ -132,14 +130,14 @@ type PaneContentUpdated struct {
 	ID uint32
 }
 
-// ResizeTerm is the specific resize message for Pane actors
-// (uses rows/cols like ResizeMsg but kept for explicit pane handling).
+// ResizeTerm is the pane-specific resize message.
+// It uses rows/cols like ResizeMsg but stays explicit at the pane boundary.
 type ResizeTerm struct {
 	Rows int
 	Cols int
 }
 
-// ResizeMsg is the common resize message for any Resizable actor.
+// ResizeMsg is the common resize message for any Resizable component.
 type ResizeMsg struct {
 	Rows int
 	Cols int

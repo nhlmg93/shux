@@ -4,11 +4,10 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/nhlmg93/gotor/actor"
 )
 
 type Model struct {
-	session     *actor.Ref
+	session     *SessionRef
 	width       int
 	height      int
 	prefixMode  bool
@@ -40,8 +39,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		Infof("ui: window size %dx%d", msg.Width, msg.Height)
 		if !m.initialized {
 			m.initialized = true
-			reply := m.session.Ask(GetActiveWindow{})
-			existing := <-reply
+			existing, _ := askValue(m.session, GetActiveWindow{})
 			if existing == nil {
 				Infof("ui: creating initial window %dx%d", msg.Height, msg.Width)
 				m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
@@ -66,8 +64,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case UpdateMsg:
-		reply := m.session.Ask(GetPaneContent{})
-		result := <-reply
+		result, _ := askValue(m.session, GetPaneContent{})
 		if result == nil {
 			m.content = nil
 			return m, nil
@@ -97,8 +94,12 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 			return false
 		case "d":
 			Infof("ui: detach requested")
-			reply := m.session.Ask(DetachSession{})
-			if err, _ := (<-reply).(error); err != nil {
+			result, ok := askValue(m.session, DetachSession{})
+			if !ok {
+				Warnf("ui: detach failed: session unavailable")
+				return false
+			}
+			if err, _ := result.(error); err != nil {
 				Warnf("ui: detach failed: %v", err)
 				return false
 			}
@@ -175,7 +176,7 @@ func (m Model) renderContent() string {
 	return strings.Join(lines, "\n")
 }
 
-func NewModel(session *actor.Ref) Model {
+func NewModel(session *SessionRef) Model {
 	return Model{session: session}
 }
 

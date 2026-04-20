@@ -1,15 +1,45 @@
 package shux
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"time"
 
 	"github.com/mitchellh/go-libghostty"
-	"github.com/nhlmg93/gotor/actor"
 )
 
 var _ Resizable = (*Pane)(nil)
+
+type PaneRef struct {
+	*loopRef
+}
+
+func (r *PaneRef) Send(msg any) bool {
+	if r == nil {
+		return false
+	}
+	return r.send(msg)
+}
+
+func (r *PaneRef) Ask(msg any) chan any {
+	if r == nil {
+		return nil
+	}
+	return r.ask(msg)
+}
+
+func (r *PaneRef) Stop() {
+	if r != nil {
+		r.stopLoop()
+	}
+}
+
+func (r *PaneRef) Shutdown() {
+	if r != nil {
+		r.shutdown()
+	}
+}
 
 type PaneCell struct {
 	Text         string
@@ -39,8 +69,9 @@ type PaneContent struct {
 }
 
 type Pane struct {
+	ref           *PaneRef
+	parent        *WindowRef
 	id            uint32
-	self          *actor.Ref
 	term          *libghostty.Terminal
 	renderState   *libghostty.RenderState
 	rowIterator   *libghostty.RenderStateRowIterator
@@ -55,7 +86,7 @@ type Pane struct {
 	bellCount     uint64
 	dirty         bool
 	cachedContent *PaneContent
-	updateTimer   *actor.Timer
+	updateTimer   *time.Timer
 	updatePending bool
 	stopped       bool
 }
@@ -65,6 +96,11 @@ type paneFlushUpdate struct{}
 type paneProcessExited struct{ Err error }
 
 func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
+	originalRows, originalCols := rows, cols
+	rows, cols, changed := sanitizeTermSize(rows, cols)
+	if changed {
+		Warnf("pane: id=%d sanitize-size from=%dx%d to=%dx%d", id, originalRows, originalCols, rows, cols)
+	}
 	return &Pane{
 		id:    id,
 		rows:  rows,
@@ -74,9 +110,46 @@ func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
 	}
 }
 
-func (p *Pane) Init() error {
+func StartPane(id uint32, rows, cols int, shell, cwd string, parent *WindowRef) *PaneRef {
+	p := NewPane(id, rows, cols, shell, cwd)
+	p.parent = parent
+	ref := &PaneRef{loopRef: newLoopRef(256)}
+	p.ref = ref
+	go p.run()
+	return ref
+}
+
+func (p *Pane) run() {
+	var reason error
+	defer func() {
+		if r := recover(); r != nil {
+			reason = fmt.Errorf("panic: %v", r)
+		}
+		p.terminate(reason)
+		close(p.ref.done)
+	}()
+
+	if err := p.init(); err != nil {
+		Errorf("pane: id=%d init failed err=%v", p.id, err)
+		if p.parent != nil {
+			p.parent.Send(PaneExited{ID: p.id})
+		}
+		reason = err
+		return
+	}
+
+	for {
+		select {
+		case <-p.ref.stop:
+			return
+		case msg := <-p.ref.inbox:
+			p.receive(msg)
+		}
+	}
+}
+
+func (p *Pane) init() error {
 	Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
-	p.self = actor.Self()
 
 	ghosttyTerm, err := libghostty.NewTerminal(
 		libghostty.WithSize(uint16(p.cols), uint16(p.rows)),
@@ -173,8 +246,12 @@ func (p *Pane) Init() error {
 	return nil
 }
 
-func (p *Pane) Terminate(reason error) {
-	Infof("pane: id=%d terminate pid=%d reason=%v", p.id, p.pid(), reason)
+func (p *Pane) terminate(reason error) {
+	if reason != nil {
+		Errorf("pane: crash id=%d pid=%d reason=%v", p.id, p.pid(), reason)
+	} else {
+		Infof("pane: terminate id=%d pid=%d", p.id, p.pid())
+	}
 	if p.updateTimer != nil {
 		p.updateTimer.Stop()
 	}
@@ -198,11 +275,6 @@ func (p *Pane) Terminate(reason error) {
 	}
 }
 
-func SpawnPane(id uint32, rows, cols int, shell, cwd string, parent *actor.Ref) *actor.Ref {
-	p := NewPane(id, rows, cols, shell, cwd)
-	return actor.SpawnWithParent(actor.WithLifecycle(p), 256, parent)
-}
-
 func (p *Pane) readLoop() {
 	buf := make([]byte, 4096)
 	readDone := make(chan error, 1)
@@ -211,9 +283,9 @@ func (p *Pane) readLoop() {
 	go func() {
 		for {
 			n, err := p.pty.TTY.Read(buf)
-			if n > 0 && p.self != nil {
+			if n > 0 && p.ref != nil {
 				chunk := append([]byte(nil), buf[:n]...)
-				p.self.Send(panePTYData{Data: chunk})
+				p.ref.Send(panePTYData{Data: chunk})
 			}
 			if err != nil {
 				readDone <- err
@@ -232,20 +304,20 @@ func (p *Pane) readLoop() {
 	case err = <-waitDone:
 	}
 
-	if p.self != nil {
-		p.self.Send(paneProcessExited{Err: err})
+	if p.ref != nil {
+		p.ref.Send(paneProcessExited{Err: err})
 	}
 }
 
-func (p *Pane) Receive(msg any) {
+func (p *Pane) receive(msg any) {
 	switch m := msg.(type) {
 	case panePTYData:
 		p.term.VTWrite(m.Data)
 		p.markDirty()
 	case paneFlushUpdate:
 		p.updatePending = false
-		if parent := actor.Parent(); parent != nil {
-			parent.Send(PaneContentUpdated{ID: p.id})
+		if p.parent != nil {
+			p.parent.Send(PaneContentUpdated{ID: p.id})
 		}
 	case paneProcessExited:
 		if p.stopped {
@@ -253,12 +325,10 @@ func (p *Pane) Receive(msg any) {
 		}
 		Infof("pane: id=%d process-exited pid=%d err=%v", p.id, p.pid(), m.Err)
 		p.stopped = true
-		if parent := actor.Parent(); parent != nil {
-			parent.Send(PaneExited{ID: p.id})
+		if p.parent != nil {
+			p.parent.Send(PaneExited{ID: p.id})
 		}
-		if me := actor.Self(); me != nil {
-			me.Stop()
-		}
+		p.ref.Stop()
 	case WriteToPane:
 		p.writeToPTY(m.Data)
 	case KeyInput:
@@ -276,37 +346,33 @@ func (p *Pane) Receive(msg any) {
 		}
 		Infof("pane: id=%d kill requested pid=%d", p.id, p.pid())
 		p.stopped = true
-		if parent := actor.Parent(); parent != nil {
-			parent.Send(PaneExited{ID: p.id})
+		if p.parent != nil {
+			p.parent.Send(PaneExited{ID: p.id})
 		}
-		if me := actor.Self(); me != nil {
-			me.Stop()
-		}
-	case actor.AskEnvelope:
+		p.ref.Stop()
+	case askEnvelope:
 		p.handleAsk(m)
 	}
 }
 
-func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
-	switch envelope.Msg.(type) {
+func (p *Pane) handleAsk(envelope askEnvelope) {
+	switch envelope.msg.(type) {
 	case GetPaneMode:
-		mode := &PaneMode{
+		envelope.reply <- &PaneMode{
 			InAltScreen:  p.IsAltScreen(),
 			CursorHidden: !p.IsCursorVisible(),
 		}
-		envelope.Reply <- mode
 	case GetPaneContent:
 		if !p.dirty && p.cachedContent != nil {
-			envelope.Reply <- p.cachedContent
+			envelope.reply <- p.cachedContent
 			return
 		}
-
 		content := p.buildContent()
 		p.cachedContent = content
 		p.dirty = false
-		envelope.Reply <- content
+		envelope.reply <- content
 	case GetPaneSnapshotData:
-		data := PaneSnapshotData{
+		envelope.reply <- PaneSnapshotData{
 			ID:          p.id,
 			Shell:       p.shell,
 			Rows:        p.rows,
@@ -314,9 +380,8 @@ func (p *Pane) handleAsk(envelope actor.AskEnvelope) {
 			CWD:         p.getCWD(),
 			WindowTitle: p.windowTitle,
 		}
-		envelope.Reply <- data
 	default:
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	}
 }
 
@@ -334,17 +399,26 @@ func (p *Pane) markDirty() {
 }
 
 func (p *Pane) scheduleContentUpdate(delay time.Duration) {
-	if p.self == nil || p.updatePending {
+	if p.ref == nil || p.updatePending {
 		return
 	}
 	p.updatePending = true
 	if p.updateTimer != nil {
 		p.updateTimer.Stop()
 	}
-	p.updateTimer = actor.SendAfter(p.self, paneFlushUpdate{}, delay)
+	p.updateTimer = time.AfterFunc(delay, func() {
+		if p.ref != nil {
+			p.ref.Send(paneFlushUpdate{})
+		}
+	})
 }
 
 func (p *Pane) Resize(rows, cols int) {
+	originalRows, originalCols := rows, cols
+	rows, cols, changed := sanitizeTermSize(rows, cols)
+	if changed {
+		Warnf("pane: id=%d sanitize-resize from=%dx%d to=%dx%d", p.id, originalRows, originalCols, rows, cols)
+	}
 	if p.term != nil {
 		_ = p.term.Resize(uint16(cols), uint16(rows), 0, 0)
 	}
@@ -375,8 +449,6 @@ func (p *Pane) pid() int {
 	return p.pty.PID()
 }
 
-// getCWD returns the current working directory of the pane's shell process.
-// Returns empty string if unable to determine.
 func (p *Pane) getCWD() string {
 	if p.pty == nil {
 		return ""

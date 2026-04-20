@@ -5,6 +5,9 @@ import "strings"
 const (
 	DefaultShell       = "/bin/sh"
 	DefaultSessionName = "default"
+	DefaultRows        = 24
+	DefaultCols        = 80
+	MaxTermDimension   = 65535
 )
 
 func normalizeShell(shell string) string {
@@ -21,4 +24,22 @@ func normalizeSessionName(name string) string {
 		return DefaultSessionName
 	}
 	return name
+}
+
+func sanitizeTermSize(rows, cols int) (int, int, bool) {
+	originalRows, originalCols := rows, cols
+
+	if rows <= 0 {
+		rows = DefaultRows
+	} else if rows > MaxTermDimension {
+		rows = MaxTermDimension
+	}
+
+	if cols <= 0 {
+		cols = DefaultCols
+	} else if cols > MaxTermDimension {
+		cols = MaxTermDimension
+	}
+
+	return rows, cols, rows != originalRows || cols != originalCols
 }

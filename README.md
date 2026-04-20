@@ -6,26 +6,25 @@ A terminal multiplexer that just works.
 
 ## Features
 
-- **Full Terminal Emulation** - Complete VT220/xterm compatibility via Ghostty
-- **Scrollback Buffer** - 10,000+ lines of history
-- **True Color** - 24-bit RGB color support
-- **Mouse Support** - Full mouse integration
-- **Kitty Graphics** - Modern terminal graphics protocol
-- **Unicode/Emoji** - Full Unicode support
-- **Actor Architecture** - Clean concurrency with goroutines
-- **Single Binary** - Static link everything into one file
+- Full terminal emulation via Ghostty
+- True color, mouse support, Unicode, and scrollback
+- Single-process design with no daemon
+- Explicit session/window/pane ownership loops in plain Go
+- Disk-backed detach and restore
+- Lua config and lightweight plugin hooks
+- Single static-ish binary once Ghostty is built
 
 ## Quick Start
 
 ### Prerequisites
 
-You need to build Ghostty's C library once:
+Build Ghostty's VT library once:
 
 ```bash
 ./build-ghostty.sh
 ```
 
-This installs `libghostty-vt-static` to `/usr/local`.
+That installs `libghostty-vt-static` to `/usr/local`.
 
 ### Build
 
@@ -34,7 +33,7 @@ export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
 go build ./cmd/shux
 ```
 
-For a fully static binary (no dynamic dependencies):
+For a fully static binary:
 
 ```bash
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
@@ -48,12 +47,24 @@ go build -ldflags '-linkmode external -extldflags "-static"' ./cmd/shux
 ```
 
 Keys:
-- `Ctrl+B` then `w` - Create new window
-- `Ctrl+B` then `n` - Next window
-- `Ctrl+B` then `p` - Previous window
-- `Ctrl+B` then `q` - Quit
 
-### Config
+- `Ctrl+B` then `w` — create window
+- `Ctrl+B` then `n` — next window
+- `Ctrl+B` then `p` — previous window
+- `Ctrl+B` then `d` — detach, save snapshot, and exit
+- `Ctrl+B` then `q` — quit
+
+## Persistence Model
+
+`shux` is single-process and disk-backed:
+
+- start: attach to a saved snapshot if one exists, otherwise create a fresh session
+- detach: save the current layout to disk and exit
+- reattach: restore windows and panes from the saved snapshot
+
+There is no tmux-style server, daemon, or client/server split.
+
+## Config
 
 Default config path:
 
@@ -95,54 +106,63 @@ return M
 
 ## Architecture
 
-Single-process, actor-based design. No daemon, no fork.
+`shux` uses explicit ownership loops instead of a separate actor framework.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                        shux                              │
-│                                                          │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
-│  │  Bubble Tea │───▶│   Session   │───▶│    Window   │  │
-│  │    (UI)     │    │   (Actor)   │    │   (Actor)   │  │
-│  └─────────────┘    └─────────────┘    └──────┬──────┘  │
-│         ▲                                      │        │
-│         │         libghostty VT               Pane       │
-│         │              Engine                (Actor)     │
-│         │                   │                    │        │
-│         └───────────────────┴────────────────────┘        │
-│                             │                           │
-│                             ▼                           │
-│                          ┌──────┐                       │
-│                          │ PTY  │──▶ Shell              │
-│                          └──────┘                       │
-└─────────────────────────────────────────────────────────┘
+```text
+Bubble Tea UI
+    │
+    ▼
+ session loop
+    │
+    ▼
+ window loop
+    │
+    ▼
+  pane loop ──▶ PTY ──▶ shell
+    │
+    └────────▶ libghostty render state
 ```
 
-**Data Flow:**
-1. User input → Bubble Tea key events
-2. `WriteToPane` message → Pane actor
-3. libghostty parses VT sequences
-4. `GetPaneContent` → RenderState API → UI redraw
+Data flow:
 
+1. Bubble Tea normalizes input into `KeyInput` or `WriteToPane`
+2. the active session forwards to the active window and pane
+3. the pane writes to the PTY and feeds output into libghostty
+4. pane updates trigger UI refresh messages
+5. the UI asks for `GetPaneContent` and renders from cached pane content
 
+## Testing
+
+Run the full Docker-backed suite:
+
+```bash
+make test
+```
+
+The default test target builds the test image, builds Ghostty in Docker, and runs `go test ./...` inside the container.
+
+`shux` also includes fuzz targets for pure helpers like snapshot decoding, stat parsing, and row rendering.
 
 ## Dependencies
 
-**Build-time:**
-- Go 1.21+
-- Zig (for building Ghostty)
+Build-time:
+
+- Go 1.26+
+- Zig
 - pkg-config
 
-**Runtime:**
-- None (static binary)
+Runtime:
+
+- none beyond the built binary and terminal environment
 
 ## Why Ghostty?
 
-Ghostty provides the most complete terminal emulation available:
-- Standards-compliant (xterm audit complete)
-- High performance (Zig-compiled, SIMD)
-- Modern features (Kitty graphics, true color)
-- Embeddable library (`libghostty-vt`)
+Ghostty provides complete, embeddable terminal emulation:
+
+- standards-compliant xterm behavior
+- high performance native VT implementation
+- modern features like true color and graphics protocols
+- a clean library boundary through `libghostty-vt`
 
 ## License
 

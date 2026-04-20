@@ -3,6 +3,7 @@ package shux
 import (
 	"encoding/gob"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -87,8 +88,18 @@ func LoadSnapshot(path string) (*SessionSnapshot, error) {
 	}
 	defer file.Close()
 
+	snapshot, err := decodeSnapshot(file)
+	if err != nil {
+		return nil, err
+	}
+
+	Infof("snapshot: load session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
+	return snapshot, nil
+}
+
+func decodeSnapshot(r io.Reader) (*SessionSnapshot, error) {
 	var snapshot SessionSnapshot
-	decoder := gob.NewDecoder(file)
+	decoder := gob.NewDecoder(r)
 	if err := decoder.Decode(&snapshot); err != nil {
 		return nil, fmt.Errorf("failed to decode snapshot: %w", err)
 	}
@@ -97,7 +108,6 @@ func LoadSnapshot(path string) (*SessionSnapshot, error) {
 		return nil, fmt.Errorf("snapshot version mismatch: got %d, expected %d", snapshot.Version, SnapshotVersion)
 	}
 
-	Infof("snapshot: load session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
 	return &snapshot, nil
 }
 

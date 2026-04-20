@@ -6,7 +6,7 @@ Building shux to replace tmux with a simpler, modern architecture. Focus on:
 - Single-process design (no client/server split)
 - Pure Go with minimal dependencies
 - Full terminal emulation via Ghostty
-- Clean actor-based concurrency
+- Explicit loop-based concurrency
 
 ## Expertise
 
@@ -17,12 +17,6 @@ you are a tmux expert. All decisions are rooted in deep understanding of termina
 ### Git Workflow
 - Only commit when user explicitly says so
 - Write thoughtful but brief commit messages describing what the commit introduces
-
-## Reference Materials (Do Not Auto-Read)
-
-DO NOT READ -> **ARCHITECTURE.md** and **ROADMAP.md** contain long-term planning and design documentation.
-
-**Do not reference, quote, or use these files unless explicitly directed by the user.**
 
 ## External Reference Checkouts
 

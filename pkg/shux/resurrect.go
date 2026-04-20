@@ -1,13 +1,9 @@
 package shux
 
-import (
-	"fmt"
+import "fmt"
 
-	"github.com/nhlmg93/gotor/actor"
-)
-
-// RestoreSessionFromSnapshot loads a session from disk and recreates the actor hierarchy.
-func RestoreSessionFromSnapshot(name string, supervisor *actor.Ref) (*actor.Ref, error) {
+// RestoreSessionFromSnapshot loads a session from disk and recreates the loop hierarchy.
+func RestoreSessionFromSnapshot(name string, notify func(any)) (*SessionRef, error) {
 	path := SessionSnapshotPath(name)
 	Infof("restore: begin session=%s path=%s", name, path)
 	snapshot, err := LoadSnapshot(path)
@@ -20,9 +16,9 @@ func RestoreSessionFromSnapshot(name string, supervisor *actor.Ref) (*actor.Ref,
 
 	Infof("restore: session=%s id=%d shell=%s windows=%d", snapshot.SessionName, snapshot.ID, snapshot.Shell, len(snapshot.Windows))
 
-	sessionRef := SpawnSessionFromSnapshot(snapshot, supervisor)
+	sessionRef := StartSessionFromSnapshot(snapshot, notify)
 
-	Infof("restore: session=%s id=%d spawned ref=%p", snapshot.SessionName, snapshot.ID, sessionRef)
+	Infof("restore: session=%s id=%d started ref=%p", snapshot.SessionName, snapshot.ID, sessionRef)
 
 	return sessionRef, nil
 }

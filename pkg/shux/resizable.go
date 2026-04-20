@@ -6,5 +6,3 @@ type Resizable interface {
 	// Resize updates the dimensions to rows x cols
 	Resize(rows, cols int)
 }
-
-

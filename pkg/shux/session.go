@@ -1,21 +1,49 @@
 package shux
 
-import (
-	"fmt"
+import "fmt"
 
-	"github.com/nhlmg93/gotor/actor"
-)
+type SessionRef struct {
+	*loopRef
+}
+
+func (r *SessionRef) Send(msg any) bool {
+	if r == nil {
+		return false
+	}
+	return r.send(msg)
+}
+
+func (r *SessionRef) Ask(msg any) chan any {
+	if r == nil {
+		return nil
+	}
+	return r.ask(msg)
+}
+
+func (r *SessionRef) Stop() {
+	if r != nil {
+		r.stopLoop()
+	}
+}
+
+func (r *SessionRef) Shutdown() {
+	if r != nil {
+		r.shutdown()
+	}
+}
 
 type Session struct {
+	ref         *SessionRef
+	notify      func(any)
 	id          uint32
 	name        string
-	windows     map[uint32]*actor.Ref
+	windows     map[uint32]*WindowRef
 	windowOrder []uint32
 	active      uint32
 	windowID    uint32
-	subscribers map[*actor.Ref]struct{}
+	subscribers map[chan any]struct{}
 	shell       string
-	snapshot    *SessionSnapshot // For restore-based creation
+	snapshot    *SessionSnapshot
 }
 
 func NewSession(id uint32) *Session {
@@ -31,50 +59,84 @@ func NewNamedSessionWithShell(id uint32, name, shell string) *Session {
 	return &Session{
 		id:          id,
 		name:        name,
-		windows:     make(map[uint32]*actor.Ref),
-		subscribers: make(map[*actor.Ref]struct{}),
+		windows:     make(map[uint32]*WindowRef),
+		subscribers: make(map[chan any]struct{}),
 		shell:       normalizeShell(shell),
 	}
 }
 
-func SpawnSession(id uint32, parent *actor.Ref) *actor.Ref {
-	return SpawnNamedSessionWithShell(id, DefaultSessionName, DefaultShell, parent)
+func StartSession(id uint32, notify func(any)) *SessionRef {
+	return StartNamedSessionWithShell(id, DefaultSessionName, DefaultShell, notify)
 }
 
-func SpawnSessionWithShell(id uint32, shell string, parent *actor.Ref) *actor.Ref {
-	return SpawnNamedSessionWithShell(id, DefaultSessionName, shell, parent)
+func StartSessionWithShell(id uint32, shell string, notify func(any)) *SessionRef {
+	return StartNamedSessionWithShell(id, DefaultSessionName, shell, notify)
 }
 
-func SpawnNamedSessionWithShell(id uint32, name, shell string, parent *actor.Ref) *actor.Ref {
+func StartNamedSessionWithShell(id uint32, name, shell string, notify func(any)) *SessionRef {
 	s := NewNamedSessionWithShell(id, name, shell)
-	return actor.SpawnWithParent(s, 32, parent)
+	s.notify = notify
+	return startSessionLoop(s)
 }
 
-// SpawnSessionFromSnapshot creates a session restored from a snapshot.
-func SpawnSessionFromSnapshot(snapshot *SessionSnapshot, parent *actor.Ref) *actor.Ref {
+func StartSessionFromSnapshot(snapshot *SessionSnapshot, notify func(any)) *SessionRef {
 	name := normalizeSessionName(snapshot.SessionName)
 	s := &Session{
 		id:          snapshot.ID,
 		name:        name,
-		windows:     make(map[uint32]*actor.Ref),
-		subscribers: make(map[*actor.Ref]struct{}),
+		notify:      notify,
+		windows:     make(map[uint32]*WindowRef),
+		subscribers: make(map[chan any]struct{}),
 		shell:       normalizeShell(snapshot.Shell),
 		snapshot:    snapshot,
 	}
-	return actor.SpawnWithParent(actor.WithLifecycle(s), 32, parent)
+	return startSessionLoop(s)
 }
 
-func (s *Session) Init() error {
+func startSessionLoop(s *Session) *SessionRef {
+	ref := &SessionRef{loopRef: newLoopRef(32)}
+	s.ref = ref
+	go s.run()
+	return ref
+}
+
+func (s *Session) run() {
+	var reason error
+	defer func() {
+		if r := recover(); r != nil {
+			reason = fmt.Errorf("panic: %v", r)
+		}
+		s.terminate(reason)
+		close(s.ref.done)
+	}()
+
 	Infof("session: init id=%d name=%s shell=%s restore=%t", s.id, s.name, s.shell, s.snapshot != nil)
 	if s.snapshot != nil {
 		s.restoreFromSnapshot()
 		s.snapshot = nil
 	}
-	return nil
+
+	for {
+		select {
+		case <-s.ref.stop:
+			return
+		case msg := <-s.ref.inbox:
+			s.receive(msg)
+		}
+	}
 }
 
-func (s *Session) Terminate(reason error) {
-	Infof("session: terminate id=%d name=%s reason=%v", s.id, s.name, reason)
+func (s *Session) terminate(reason error) {
+	for _, win := range s.windows {
+		if win != nil {
+			win.Shutdown()
+		}
+	}
+	if reason != nil {
+		Errorf("session: crash id=%d name=%s reason=%v", s.id, s.name, reason)
+		return
+	}
+	Infof("session: terminate id=%d name=%s", s.id, s.name)
 }
 
 func (s *Session) restoreFromSnapshot() {
@@ -96,8 +158,7 @@ func (s *Session) restoreFromSnapshot() {
 		}
 
 		Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
-		window := NewWindow(winSnap.ID)
-		windowRef := actor.SpawnWithParent(window, 32, actor.Self())
+		windowRef := StartWindow(winSnap.ID, s.ref)
 		s.windows[winSnap.ID] = windowRef
 		s.windowOrder = append(s.windowOrder, winSnap.ID)
 
@@ -134,7 +195,7 @@ func (s *Session) restoreFromSnapshot() {
 	Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
 }
 
-func (s *Session) Receive(msg any) {
+func (s *Session) receive(msg any) {
 	switch m := msg.(type) {
 	case CreateWindow:
 		s.createWindow(m.Rows, m.Cols)
@@ -160,29 +221,29 @@ func (s *Session) Receive(msg any) {
 		if err := s.handleDetach(); err != nil {
 			Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
 		}
-	case actor.AskEnvelope:
+	case askEnvelope:
 		s.handleAsk(m)
 	}
 }
 
-func (s *Session) handleAsk(envelope actor.AskEnvelope) {
-	switch envelope.Msg.(type) {
+func (s *Session) handleAsk(envelope askEnvelope) {
+	switch envelope.msg.(type) {
 	case GetActiveWindow:
-		envelope.Reply <- s.activeWindow()
+		envelope.reply <- s.activeWindow()
 	case GetActivePane:
 		if win := s.activeWindow(); win != nil {
-			reply := win.Ask(GetActivePane{})
-			envelope.Reply <- <-reply
+			result, _ := askValue(win, GetActivePane{})
+			envelope.reply <- result
 			return
 		}
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	case GetPaneContent:
 		if win := s.activeWindow(); win != nil {
-			reply := win.Ask(envelope.Msg)
-			envelope.Reply <- <-reply
+			result, _ := askValue(win, envelope.msg)
+			envelope.reply <- result
 			return
 		}
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	case GetSessionSnapshotData:
 		data := SessionSnapshotData{
 			ID:           s.id,
@@ -190,11 +251,11 @@ func (s *Session) handleAsk(envelope actor.AskEnvelope) {
 			ActiveWindow: s.active,
 			WindowOrder:  append([]uint32(nil), s.windowOrder...),
 		}
-		envelope.Reply <- data
+		envelope.reply <- data
 	case DetachSession:
-		envelope.Reply <- s.handleDetach()
+		envelope.reply <- s.handleDetach()
 	default:
-		envelope.Reply <- nil
+		envelope.reply <- nil
 	}
 }
 
@@ -211,13 +272,9 @@ func (s *Session) handleDetach() error {
 		win.Stop()
 	}
 
-	if parent := actor.Parent(); parent != nil {
-		parent.Send(SessionEmpty{ID: s.id})
-	}
-	if me := actor.Self(); me != nil {
-		Infof("detach: session=%s id=%d stopping actor tree", s.name, s.id)
-		me.Stop()
-	}
+	s.notifyEvent(SessionEmpty{ID: s.id})
+	Infof("detach: session=%s id=%d stopping loop", s.name, s.id)
+	s.ref.Stop()
 	return nil
 }
 
@@ -232,15 +289,14 @@ func (s *Session) buildSnapshot() *SessionSnapshot {
 		Windows:      make([]WindowSnapshot, 0, len(s.windowOrder)),
 	}
 
-	// Gather data from each window (windows collect their own pane data)
 	for _, winID := range s.windowOrder {
 		win := s.windows[winID]
 		if win == nil {
 			continue
 		}
 
-		winReply := win.Ask(GetWindowSnapshotData{})
-		winData, ok := (<-winReply).(WindowSnapshot)
+		result, ok := askValue(win, GetWindowSnapshotData{})
+		winData, ok := result.(WindowSnapshot)
 		if !ok {
 			continue
 		}
@@ -251,7 +307,7 @@ func (s *Session) buildSnapshot() *SessionSnapshot {
 	return snapshot
 }
 
-func (s *Session) activeWindow() *actor.Ref {
+func (s *Session) activeWindow() *WindowRef {
 	if s.active == 0 {
 		return nil
 	}
@@ -268,7 +324,7 @@ func (s *Session) resizeActiveWindow(rows, cols int) {
 func (s *Session) createWindow(rows, cols int) {
 	s.windowID++
 	Infof("session: id=%d name=%s create-window window=%d rows=%d cols=%d shell=%s", s.id, s.name, s.windowID, rows, cols, s.shell)
-	ref := SpawnWindow(s.windowID, actor.Self())
+	ref := StartWindow(s.windowID, s.ref)
 	s.windows[s.windowID] = ref
 	s.windowOrder = append(s.windowOrder, s.windowID)
 	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: s.shell})
@@ -318,10 +374,7 @@ func (s *Session) handleWindowEmpty(id uint32) {
 	if len(s.windowOrder) == 0 {
 		s.active = 0
 		empty := SessionEmpty{ID: s.id}
-		s.notifySubscribers(empty)
-		if parent := actor.Parent(); parent != nil {
-			parent.Send(empty)
-		}
+		s.notifyEvent(empty)
 		return
 	}
 
@@ -346,15 +399,22 @@ func (s *Session) forwardToActivePane(msg any) {
 }
 
 func (s *Session) forwardUpdate(msg PaneContentUpdated) {
-	if parent := actor.Parent(); parent != nil {
-		parent.Send(msg)
+	s.notifyEvent(msg)
+}
+
+func (s *Session) notifyEvent(msg any) {
+	if s.notify != nil {
+		s.notify(msg)
 	}
 	s.notifySubscribers(msg)
 }
 
 func (s *Session) notifySubscribers(msg any) {
 	for subscriber := range s.subscribers {
-		subscriber.Send(msg)
+		select {
+		case subscriber <- msg:
+		default:
+		}
 	}
 }
 

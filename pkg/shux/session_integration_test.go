@@ -3,8 +3,6 @@ package shux
 import (
 	"testing"
 	"time"
-
-	"github.com/nhlmg93/gotor/actor"
 )
 
 func TestSessionCreateAndSwitchWindows(t *testing.T) {
@@ -15,33 +13,29 @@ func TestSessionCreateAndSwitchWindows(t *testing.T) {
 	win1 := requireWindow(t, sessionRef, super)
 
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
-	_ = requireWindow(t, sessionRef, super) // win2
+	_ = requireWindow(t, sessionRef, super)
 
-	// Switch forward and poll until we're on a different window
 	sessionRef.Send(SwitchWindow{Delta: 1})
-	var win2 *actor.Ref
+	var win2 *WindowRef
 	if !pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
+		result := <-sessionRef.Ask(GetActiveWindow{})
 		if result == nil {
 			return false
 		}
-		win2 = result.(*actor.Ref)
+		win2 = result.(*WindowRef)
 		return win2 != win1
 	}) {
 		t.Fatal("Expected to switch to window 2")
 	}
 
-	// Switch back and verify
 	sessionRef.Send(SwitchWindow{Delta: -1})
 	var backToWin1 bool
 	pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
+		result := <-sessionRef.Ask(GetActiveWindow{})
 		if result == nil {
 			return false
 		}
-		backToWin1 = result.(*actor.Ref) == win1
+		backToWin1 = result.(*WindowRef) == win1
 		return backToWin1
 	})
 	if !backToWin1 {
@@ -53,38 +47,33 @@ func TestSessionWindowNavigationWrap(t *testing.T) {
 	sessionRef, super, cleanup := setupSession(t)
 	defer cleanup()
 
-	// Create 3 windows
 	for i := 0; i < 3; i++ {
 		sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 		requireWindow(t, sessionRef, super)
 	}
 	win1 := requireWindow(t, sessionRef, super)
 
-	// Switch +1 and verify we're on different window
 	sessionRef.Send(SwitchWindow{Delta: 1})
-	var win2 *actor.Ref
+	var win2 *WindowRef
 	if !pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
+		result := <-sessionRef.Ask(GetActiveWindow{})
 		if result == nil {
 			return false
 		}
-		win2 = result.(*actor.Ref)
+		win2 = result.(*WindowRef)
 		return win2 != win1
 	}) {
 		t.Fatal("Expected to switch from window 1")
 	}
 
-	// Switch +2 should wrap back to window 1
 	sessionRef.Send(SwitchWindow{Delta: 2})
 	var wrapped bool
 	pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
+		result := <-sessionRef.Ask(GetActiveWindow{})
 		if result == nil {
 			return false
 		}
-		wrapped = result.(*actor.Ref) == win1
+		wrapped = result.(*WindowRef) == win1
 		return wrapped
 	})
 	if !wrapped {
@@ -107,12 +96,10 @@ func TestSessionKillLastPane(t *testing.T) {
 			return true
 		default:
 		}
-		paneReply := sessionRef.Ask(GetActivePane{})
-		if <-paneReply == nil {
+		if <-sessionRef.Ask(GetActivePane{}) == nil {
 			return true
 		}
-		winReply := sessionRef.Ask(GetActiveWindow{})
-		return <-winReply == nil
+		return <-sessionRef.Ask(GetActiveWindow{}) == nil
 	})
 	if !empty {
 		t.Error("timeout waiting for SessionEmpty after killing last pane")
@@ -123,39 +110,26 @@ func TestSessionMultipleWindowsWithPanes(t *testing.T) {
 	sessionRef, super, cleanup := setupSession(t)
 	defer cleanup()
 
-	// Window 1 with extra pane
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	win1 := requireWindow(t, sessionRef, super)
 	win1.Send(CreatePane{Rows: 24, Cols: 80, Shell: "/bin/sh"})
-	// Poll for second pane to exist
-	pollFor(200*time.Millisecond, func() bool {
-		reply := win1.Ask(GetActivePane{})
-		result := <-reply
-		return result != nil
-	})
+	pollFor(200*time.Millisecond, func() bool { return <-win1.Ask(GetActivePane{}) != nil })
 
-	// Window 2 with extra pane
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	win2 := requireWindow(t, sessionRef, super)
 	win2.Send(CreatePane{Rows: 24, Cols: 80, Shell: "/bin/sh"})
-	pollFor(200*time.Millisecond, func() bool {
-		reply := win2.Ask(GetActivePane{})
-		result := <-reply
-		return result != nil
-	})
+	pollFor(200*time.Millisecond, func() bool { return <-win2.Ask(GetActivePane{}) != nil })
 
 	win2Pane := requirePane(t, sessionRef, super)
 
-	// Switch to window 1
 	sessionRef.Send(SwitchWindow{Delta: -1})
-	var win1Pane *actor.Ref
+	var win1Pane *PaneRef
 	if !pollFor(100*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActivePane{})
-		result := <-reply
+		result := <-sessionRef.Ask(GetActivePane{})
 		if result == nil {
 			return false
 		}
-		win1Pane = result.(*actor.Ref)
+		win1Pane = result.(*PaneRef)
 		return win1Pane != win2Pane
 	}) {
 		t.Fatal("Expected different pane in window 1")
@@ -180,20 +154,13 @@ func TestSessionWindowPersistence(t *testing.T) {
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
 	_ = requireWindow(t, sessionRef, super)
 
-	// Switch away and back
 	sessionRef.Send(SwitchWindow{Delta: -1})
-	pollFor(50*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
-		return result != nil
-	})
+	pollFor(50*time.Millisecond, func() bool { return <-sessionRef.Ask(GetActiveWindow{}) != nil })
 
 	sessionRef.Send(SwitchWindow{Delta: 1})
 	var backToWin2 bool
 	pollFor(50*time.Millisecond, func() bool {
-		reply := sessionRef.Ask(GetActiveWindow{})
-		result := <-reply
-		backToWin2 = result != nil
+		backToWin2 = <-sessionRef.Ask(GetActiveWindow{}) != nil
 		return backToWin2
 	})
 	if !backToWin2 {
@@ -205,10 +172,7 @@ func TestSessionGetPaneContentBeforeWindowCreated(t *testing.T) {
 	sessionRef, _, cleanup := setupSession(t)
 	defer cleanup()
 
-	reply := sessionRef.Ask(GetPaneContent{})
-	result := <-reply
-
-	if result != nil {
+	if result := <-sessionRef.Ask(GetPaneContent{}); result != nil {
 		t.Error("Expected nil content when no window exists")
 	}
 }
