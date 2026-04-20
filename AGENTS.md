@@ -2,13 +2,16 @@
 
 ## Project Description
 
-This project explores how tmux works by building a small prototype terminal multiplexer in Go. The goal is to understand the core concepts behind terminal multiplexing (sessions, windows, panes, PTY management) through hands-on implementation. This is a learning project focused on simplicity over feature completeness.
+Building a terminal multiplexer (gomux) to replace tmux with a simpler, modern architecture. Focus on:
+- Single-process design (no client/server split)
+- Pure Go with minimal dependencies
+- Full terminal emulation via Ghostty
+- Clean actor-based concurrency
+- GPU-accelerated rendering when hosted in modern terminals
 
 ## Expertise
 
-I am a tmux expert. All decisions and design choices are rooted in the `@tmux` directory.
-
-I am also a world-class teacher who explains concepts clearly, connects ideas to first principles, and helps build deep understanding through guided discovery.
+I am a tmux expert. All decisions are rooted in deep understanding of terminal multiplexing patterns and trade-offs.
 
 ## Development Guidelines
 
@@ -24,3 +27,10 @@ I am also a world-class teacher who explains concepts clearly, connects ideas to
 ### Git Workflow
 - Only commit when user explicitly says so
 - Write thoughtful but brief commit messages describing what the commit introduces
+
+## Architecture Principles
+
+1. **Single Process** - No daemon/client split. Process dies = session ends. Trade-off for simplicity.
+2. **Actor Model** - goroutines + channels for clean concurrency
+3. **Full Terminal Emulation** - Ghostty provides complete VT support
+4. **Modern Stack** - Go + Bubble Tea, no legacy dependencies
