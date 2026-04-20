@@ -1,77 +1,46 @@
 # Makefile for gomux - handles Ghostty dependency
+#
+# Prerequisites:
+#   - mise (https://mise.jdx.dev/) with zig@0.15.2
+#
+# Usage:
+#   make         - Build gomux
+#   make test    - Run tests
+#   make clean   - Remove build artifacts
 
-GHOSTTY_COMMIT ?= main
-GHOSTTY_VENDOR_DIR ?= ghostty-build
-INSTALL_PREFIX ?= $(shell pwd)/$(GHOSTTY_VENDOR_DIR)/usr
-ZIG_VERSION ?= 0.14.0
-ZIG_DIR ?= $(GHOSTTY_VENDOR_DIR)/zig
+GHOSTTY_DIR = ghostty-build/ghostty
+INSTALL_PREFIX = $(shell pwd)/ghostty-build/usr
 
-all: check-zig libghostty-vt-static.a gomux
+# Single source of truth for Zig
+ZIG = $(shell mise which zig 2>/dev/null)
+ifeq ($(ZIG),)
+  $(error "Zig not found. Run: mise use -g zig@0.15.2")
+endif
 
-check-zig:
-	@if ! command -v zig >/dev/null 2>&1 && [ ! -f $(ZIG_DIR)/zig ]; then \
-		echo "Zig not found. Downloading..."; \
-		mkdir -p $(ZIG_DIR); \
-		curl -L "https://ziglang.org/download/$(ZIG_VERSION)/zig-linux-x86_64-$(ZIG_VERSION).tar.xz" | tar -xJ --strip-components=1 -C $(ZIG_DIR); \
-	fi
-
-ZIG := $(shell if [ -f $(ZIG_DIR)/zig ]; then echo $(ZIG_DIR)/zig; else echo zig; fi)
+all: gomux
 
 clean:
-	rm -rf $(GHOSTTY_VENDOR_DIR)
-	rm -f gomux
+	rm -rf ghostty-build gomux
 
-go-clean:
-	go clean
+$(GHOSTTY_DIR):
+	@mkdir -p ghostty-build
+	@git clone --depth=1 https://github.com/ghostty-org/ghostty.git $(GHOSTTY_DIR)
 
-# Build the static library from Ghostty source
-libghostty-vt-static.a: $(GHOSTTY_VENDOR_DIR)/ghostty
-	@echo "Building Ghostty static library..."
-	cd $(GHOSTTY_VENDOR_DIR)/ghostty && \
-		$(ZIG) build -Doptimize=ReleaseFast -Dcpu=baseline libghostty
-	cp $(GHOSTTY_VENDOR_DIR)/ghostty/zig-out/lib/libghostty-vt-static.a .
-	@echo "✓ Ghostty library built"
+ghostty-build/usr/lib/libghostty-vt-static.a: $(GHOSTTY_DIR)
+	@echo "Building Ghostty..."
+	@cd $(GHOSTTY_DIR) && $(ZIG) build -Doptimize=ReleaseFast install
+	@mkdir -p ghostty-build/usr/lib ghostty-build/usr/include
+	@cp $(GHOSTTY_DIR)/zig-out/lib/libghostty-vt.a ghostty-build/usr/lib/libghostty-vt-static.a
+	@cp -r $(GHOSTTY_DIR)/include/ghostty ghostty-build/usr/include/
+	@echo "prefix=$(INSTALL_PREFIX)" > ghostty-build/usr/lib/pkgconfig/libghostty-vt-static.pc
+	@echo "Libs: -L\$${prefix}/lib -lghostty-vt-static" >> ghostty-build/usr/lib/pkgconfig/libghostty-vt-static.pc
+	@echo "Cflags: -I\$${prefix}/include" >> ghostty-build/usr/lib/pkgconfig/libghostty-vt-static.pc
 
-# Clone Ghostty source
-$(GHOSTTY_VENDOR_DIR)/ghostty:
-	@echo "Cloning Ghostty..."
-	mkdir -p $(GHOSTTY_VENDOR_DIR)
-	git clone https://github.com/ghostty-org/ghostty.git --depth=1 $(GHOSTTY_VENDOR_DIR)/ghostty
-	cd $(GHOSTTY_VENDOR_DIR)/ghostty && git reset --hard && git clean -fdx
-	if [ -n "$(GHOSTTY_COMMIT)" ]; then \
-		cd $(GHOSTTY_VENDOR_DIR)/ghostty && git fetch --depth=1 origin $(GHOSTTY_COMMIT) && git checkout FETCH_HEAD; \
-	fi
-
-# Build gomux binary
-# Requires PKG_CONFIG_PATH to find libghostty
-gomux: libghostty-vt-static.a
-	@echo "Building gomux..."
-	export PKG_CONFIG_PATH=$(INSTALL_PREFIX)/lib/pkgconfig:$$PKG_CONFIG_PATH && \
-		go build -o gomux ./cmd/gomux
+gomux: ghostty-build/usr/lib/libghostty-vt-static.a
+	@PKG_CONFIG_PATH=$(INSTALL_PREFIX)/lib/pkgconfig go build -o gomux ./cmd/gomux
 	@echo "✓ gomux built"
 
-# Run tests
-test: libghostty-vt-static.a
-	export PKG_CONFIG_PATH=$(INSTALL_PREFIX)/lib/pkgconfig:$$PKG_CONFIG_PATH && \
-		go test -v ./...
+test: ghostty-build/usr/lib/libghostty-vt-static.a
+	@PKG_CONFIG_PATH=$(INSTALL_PREFIX)/lib/pkgconfig go test ./...
 
-# Install locally (for development)
-install: libghostty-vt-static.a
-	@echo "Installing to $(INSTALL_PREFIX)..."
-	mkdir -p $(INSTALL_PREFIX)/lib/pkgconfig $(INSTALL_PREFIX)/include
-	cp libghostty-vt-static.a $(INSTALL_PREFIX)/lib/
-	cp -r $(GHOSTTY_VENDOR_DIR)/ghostty/include/ghostty $(INSTALL_PREFIX)/include/
-	@echo "Creating pkg-config file..."
-	@echo "prefix=$(INSTALL_PREFIX)" > $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "exec_prefix=\$${prefix}" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "libdir=\$${prefix}/lib" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "includedir=\$${prefix}/include" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "Name: libghostty-vt-static" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "Description: Ghostty terminal emulator library (static)" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "Version: 1.0.0" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "Libs: -L\$${libdir} -lghostty-vt-static" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "Cflags: -I\$${includedir}" >> $(INSTALL_PREFIX)/lib/pkgconfig/libghostty-vt-static.pc
-	@echo "✓ Installed to $(INSTALL_PREFIX)"
-
-.PHONY: all clean go-clean test install check-zig
+.PHONY: all clean test
