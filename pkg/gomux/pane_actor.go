@@ -27,8 +27,8 @@ func (p *PaneActor) Receive(msg any) {
 			p.pty.Close()
 		}
 		p.notifyExited()
-	case ResizeGrid:
-		p.grid.Resize(m.Width, m.Height)
+	case ResizeMsg:
+		p.grid.Resize(m.Cols, m.Rows)
 	case actor.AskEnvelope:
 		p.handleAsk(m)
 	}

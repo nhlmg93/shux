@@ -42,8 +42,9 @@ func (s *SessionActor) Receive(msg any) {
 		if s.parent != nil {
 			s.parent.Send(m)
 		}
-	case ResizeGrid:
-		s.handleResizeGrid(m)
+	case ResizeMsg:
+		// Forward resize to active window
+		s.resizeActiveWindow(m.Rows, m.Cols)
 	case actor.AskEnvelope:
 		s.handleAsk(m)
 	}
@@ -84,10 +85,11 @@ func (s *SessionActor) handleAsk(envelope actor.AskEnvelope) {
 	}
 }
 
-func (s *SessionActor) handleResizeGrid(r ResizeGrid) {
+func (s *SessionActor) resizeActiveWindow(rows, cols int) {
+	Infof("session %d: resizing active window to %dx%d", s.id, rows, cols)
 	if s.active != 0 {
 		if win, ok := s.windows[s.active]; ok {
-			win.Send(r)
+			win.Send(ResizeMsg{Rows: rows, Cols: cols})
 		}
 	}
 }

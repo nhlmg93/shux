@@ -54,9 +54,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Infof("ui: creating initial window %dx%d", msg.Height, msg.Width)
 			m.session.Send(CreateWindow{Rows: msg.Height, Cols: msg.Width})
 		} else {
-			// Subsequent resize - resize active terminal
+			// Subsequent resize - resize active window (which resizes all its terms)
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
-			m.resizeActiveTerm(msg.Height, msg.Width)
+			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
 		}
 		return m, m.listenForUpdates()
 
@@ -253,18 +253,6 @@ func (m *Model) sendToTerm(data []byte) {
 	termRef := <-reply
 	if termRef != nil {
 		termRef.(*actor.Ref).Send(WriteToTerm{Data: data})
-	}
-}
-
-// resizeActiveTerm sends resize message to the active terminal
-func (m *Model) resizeActiveTerm(rows, cols int) {
-	Infof("ui: requesting resize to %dx%d", rows, cols)
-	reply := m.session.Ask(GetActiveTerm{})
-	termRef := <-reply
-	if termRef != nil {
-		termRef.(*actor.Ref).Send(ResizeTerm{Rows: rows, Cols: cols})
-	} else {
-		Infof("ui: no active term to resize")
 	}
 }
 

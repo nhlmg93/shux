@@ -42,8 +42,9 @@ func (w *WindowActor) Receive(msg any) {
 		if m.ID == w.active && w.parent != nil {
 			w.parent.Send(m)
 		}
-	case ResizeGrid:
-		w.handleResizeGrid(m)
+	case ResizeMsg:
+		// Resize all terms in this window
+		w.resizeAllTerms(m.Rows, m.Cols)
 	case actor.AskEnvelope:
 		w.handleAsk(m)
 	}
@@ -103,13 +104,10 @@ func (w *WindowActor) switchToTerm(index int) {
 	}
 }
 
-func (w *WindowActor) handleResizeGrid(r ResizeGrid) {
-	// Resize active term
-	if w.active != 0 {
-		if term, ok := w.terms[w.active]; ok {
-			// Term handles resize internally
-			_ = term
-		}
+func (w *WindowActor) resizeAllTerms(rows, cols int) {
+	Infof("window %d: resizing all terms to %dx%d", w.id, rows, cols)
+	for _, term := range w.terms {
+		term.Send(ResizeTerm{Rows: rows, Cols: cols})
 	}
 }
 

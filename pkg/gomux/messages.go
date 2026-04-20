@@ -50,13 +50,8 @@ type GridUpdated struct {
 	ID uint32
 }
 
-// ResizeGrid requests resize
-type ResizeGrid struct {
-	Width  int
-	Height int
-}
-
-// ResizeTerm requests terminal resize with rows/cols
+// ResizeTerm is the specific resize message for Term actors
+// (uses rows/cols like ResizeMsg but kept for explicit term handling)
 type ResizeTerm struct {
 	Rows int
 	Cols int
