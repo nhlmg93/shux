@@ -249,10 +249,11 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
+	// Always render full UI dimensions (m.width x m.height)
+	// Content may differ during resize - stretch/compress to fit
 	width, height := m.width, m.height
 	var output strings.Builder
 
-	// Always render full terminal height, using pane content or padding with spaces
 	for i := 0; i < height; i++ {
 		var row string
 		if i < len(content.Lines) {
@@ -260,7 +261,7 @@ func (m Model) View() string {
 			if len(row) > width {
 				row = row[:width]
 			}
-			// Pad short rows to full width
+			// Pad short rows to full UI width
 			if len(row) < width {
 				row += strings.Repeat(" ", width-len(row))
 			}
@@ -270,7 +271,7 @@ func (m Model) View() string {
 				row = row[:content.CursorCol] + cursorChar + row[content.CursorCol+1:]
 			}
 		} else {
-			// Empty row beyond pane content
+			// Empty row beyond content - fill with spaces
 			row = strings.Repeat(" ", width)
 		}
 		output.WriteString(row)
