@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -17,6 +18,7 @@ type Pty interface {
 	Read([]byte) (int, error)
 	Write([]byte) (int, error)
 	Close() error
+	Kill() error // Kill process first, then close PTY (interrupts blocking reads)
 	Resize(rows, cols int) error
 	Wait() error
 	PID() int
@@ -70,6 +72,26 @@ func (p *PTY) Read(buf []byte) (int, error) {
 // Write writes data to the PTY.
 func (p *PTY) Write(data []byte) (int, error) {
 	return p.TTY.Write(data)
+}
+
+// Kill terminates the child process first, then closes the PTY.
+// This order ensures blocking reads are interrupted by the process death
+// (which closes the slave side of the PTY) rather than relying on
+// Close() to wake up blocked readers.
+func (p *PTY) Kill() error {
+	// Kill process first - this closes the slave side and wakes up master read
+	if p.Cmd != nil && p.Cmd.Process != nil {
+		_ = p.Cmd.Process.Kill()
+	}
+
+	// Give process a moment to die and close slave side
+	time.Sleep(10 * time.Millisecond)
+
+	// Now close the master side
+	if p.TTY != nil {
+		return p.TTY.Close()
+	}
+	return nil
 }
 
 // Close closes the PTY and stops the child process.

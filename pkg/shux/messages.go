@@ -1,5 +1,7 @@
 package shux
 
+import "github.com/mitchellh/go-libghostty"
+
 // Message types for loop communication.
 
 // ActionMsg is sent from UI to session/window to dispatch a named action.
@@ -177,16 +179,57 @@ type PaneMode struct {
 	CursorHidden bool
 }
 
+// PaneCell represents a single cell in the terminal display.
+type PaneCell struct {
+	Text         string
+	Width        int
+	HasFgColor   bool
+	FgColor      libghostty.ColorRGB
+	HasBgColor   bool
+	BgColor      libghostty.ColorRGB
+	Bold         bool
+	Italic       bool
+	Underline    bool
+	Blink        bool
+	Reverse      bool
+	HasHyperlink bool
+}
+
+// PaneContent contains the rendered content of a pane.
+type PaneContent struct {
+	Lines          []string
+	Cells          [][]PaneCell
+	CursorRow      int
+	CursorCol      int
+	InAltScreen    bool
+	CursorHidden   bool
+	Title          string
+	BellCount      uint64
+	ScrollbackRows uint
+}
+
 // Snapshot data gathering requests.
 type GetSessionSnapshotData struct{}
+
+// GetFullSessionSnapshot requests a complete session snapshot including all windows.
+type GetFullSessionSnapshot struct{}
 
 // SessionSnapshotData is returned by session in response to GetSessionSnapshotData.
 // Contains session-level info; window data is gathered via separate requests.
 type SessionSnapshotData struct {
 	ID           uint32
+	SessionName  string
 	Shell        string
 	ActiveWindow uint32
 	WindowOrder  []uint32
+}
+
+// GetSessionName returns the session name, defaulting if empty.
+func (s SessionSnapshotData) GetSessionName() string {
+	if s.SessionName == "" {
+		return DefaultSessionName
+	}
+	return s.SessionName
 }
 
 type GetWindowSnapshotData struct{}

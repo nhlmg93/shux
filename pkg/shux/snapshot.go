@@ -9,17 +9,23 @@ import (
 	"time"
 )
 
-const SnapshotVersion = 1
+const SnapshotVersion = 2
 
 // SessionSnapshot captures the complete state of a session for persistence.
 type SessionSnapshot struct {
-	Version      int
-	SessionName  string
-	ID           uint32
-	Shell        string
-	ActiveWindow uint32
-	WindowOrder  []uint32
-	Windows      []WindowSnapshot
+	Version        int
+	SessionName    string
+	ID             uint32
+	Shell          string
+	ActiveWindow   uint32
+	WindowOrder    []uint32
+	Windows        []WindowSnapshot
+	// Live session metadata (v2)
+	Live           bool
+	OwnerPID       int
+	OwnerStartTime uint64
+	SocketPath     string
+	AttachToken    string
 }
 
 // SplitTreeSnapshot captures the split topology for a window.
@@ -170,6 +176,16 @@ func ValidateSnapshot(snapshot *SessionSnapshot) error {
 
 	if snapshot.Version != SnapshotVersion {
 		return fmt.Errorf("version mismatch: got %d, expected %d", snapshot.Version, SnapshotVersion)
+	}
+
+	// Validate live session metadata if present
+	if snapshot.Live {
+		if snapshot.OwnerPID <= 0 {
+			return fmt.Errorf("live session has invalid owner PID: %d", snapshot.OwnerPID)
+		}
+		if snapshot.SocketPath == "" {
+			return fmt.Errorf("live session has empty socket path")
+		}
 	}
 
 	// Collect all IDs to check for uniqueness

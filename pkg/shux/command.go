@@ -119,6 +119,12 @@ func (c Command) toActionMsg() (ActionMsg, error) {
 		}
 		return ActionMsg{Action: ActionKillWindow}, nil
 
+	case "kill-session":
+		if len(c.Args) > 0 {
+			return ActionMsg{}, fmt.Errorf("kill-session takes no arguments")
+		}
+		return ActionMsg{Action: ActionKillSession}, nil
+
 	case "rename-window":
 		if len(c.Args) != 1 {
 			return ActionMsg{}, fmt.Errorf("rename-window requires exactly one argument: <name>")
@@ -307,6 +313,7 @@ func (r *CommandRegistry) registerV1Commands() {
 		{Name: "select-window", Args: []ArgInfo{{Name: "index", Required: true, Example: "0-9"}}, Description: "Select window by index"},
 		{Name: "last-window", Description: "Switch to the previously selected window"},
 		{Name: "kill-window", Description: "Kill the current window"},
+		{Name: "kill-session", Description: "Kill the entire session (all windows)"},
 		{Name: "rename-window", Args: []ArgInfo{{Name: "name", Required: true, Example: "\"my window\""}}, Description: "Rename the current window"},
 		{Name: "split-window", Args: []ArgInfo{{Name: "-h|-v", Required: true, Example: "-h or -v"}}, Description: "Split window horizontally (-v) or vertically (-h)"},
 		{Name: "select-pane", Args: []ArgInfo{{Name: "-L|-R|-U|-D", Required: true, Example: "-L"}}, Description: "Select pane in direction"},
@@ -411,6 +418,7 @@ var v1CommandNames = []string{
 	"select-window",
 	"last-window",
 	"kill-window",
+	"kill-session",
 	"rename-window",
 	"split-window",
 	"select-pane",

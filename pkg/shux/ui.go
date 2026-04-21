@@ -7,7 +7,7 @@ import (
 )
 
 type Model struct {
-	session      *SessionRef
+	session      RemoteSession
 	keymap       Keymap
 	mouseEnabled bool
 	width        int
@@ -214,16 +214,25 @@ func (m Model) renderPrefix(lines []string) string {
 	return strings.Join(lines, "\n")
 }
 
-func NewModel(session *SessionRef) Model {
+func NewModel(session RemoteSession) Model {
 	return NewModelWithOptions(session, DefaultKeymap(), true)
 }
 
-func NewModelWithKeymap(session *SessionRef, keymap Keymap) Model {
+func NewModelWithKeymap(session RemoteSession, keymap Keymap) Model {
 	return NewModelWithOptions(session, keymap, true)
 }
 
-func NewModelWithOptions(session *SessionRef, keymap Keymap, mouseEnabled bool) Model {
+func NewModelWithOptions(session RemoteSession, keymap Keymap, mouseEnabled bool) Model {
 	return Model{session: session, keymap: keymap, mouseEnabled: mouseEnabled}
+}
+
+// RemoteSession is an interface for session operations, implemented by both
+// SessionRef and RemoteSessionRef.
+type RemoteSession interface {
+	Send(msg any) bool
+	Ask(msg any) chan any
+	Stop()
+	Shutdown()
 }
 
 func normalizeKeyInput(msg tea.KeyPressMsg) (KeyInput, bool) {

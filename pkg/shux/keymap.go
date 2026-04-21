@@ -51,6 +51,7 @@ const (
 	ActionShowHelp         Action = "show_help"
 	ActionListSessions     Action = "list_sessions"
 	ActionAttachSession    Action = "attach_session"
+	ActionKillSession      Action = "kill_session"
 )
 
 var validActions = map[Action]struct{}{
@@ -94,6 +95,7 @@ var validActions = map[Action]struct{}{
 	ActionShowHelp:         {},
 	ActionListSessions:     {},
 	ActionAttachSession:    {},
+	ActionKillSession:      {},
 }
 
 // Binding describes a resolved key binding.

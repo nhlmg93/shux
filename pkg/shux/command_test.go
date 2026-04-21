@@ -342,7 +342,7 @@ func TestCommandRegistry(t *testing.T) {
 	// Test that all v0.1.0 commands are registered
 	v1Commands := []string{
 		"new-window", "next-window", "previous-window", "select-window",
-		"last-window", "kill-window", "rename-window", "split-window",
+		"last-window", "kill-window", "kill-session", "rename-window", "split-window",
 		"select-pane", "kill-pane", "resize-pane", "swap-pane",
 		"rename-session", "list-sessions", "attach-session", "choose-tree",
 		"detach", "list-keys", "quit",

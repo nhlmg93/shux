@@ -24,6 +24,11 @@ func SessionSnapshotPath(name string) string {
 	return filepath.Join(SessionDir(name), "snapshot.gob")
 }
 
+// SessionSocketPath returns the full path to a session's Unix socket.
+func SessionSocketPath(name string) string {
+	return filepath.Join(SessionDir(name), "session.sock")
+}
+
 // EnsureSessionDir creates the session directory if it doesn't exist.
 func EnsureSessionDir(name string) error {
 	dir := SessionDir(name)

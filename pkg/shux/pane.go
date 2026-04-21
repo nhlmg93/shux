@@ -1,520 +1,302 @@
 package shux
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
-	"strings"
-	"time"
 
 	"github.com/mitchellh/go-libghostty"
 )
 
-var _ Resizable = (*Pane)(nil)
+// This file provides backward compatibility during the migration to
+// the new runtime/controller architecture.
+//
+// New code should use:
+// - PaneRuntime for irreplaceable live state (PTY, process)
+// - PaneController for restartable coordination
+//
+// The old Pane type is now a wrapper that combines both.
 
-var startPanePTY = func(cmd *exec.Cmd, rows, cols int) (Pty, error) {
-	return StartWithSize(cmd, rows, cols)
-}
-
-// PaneRef is a reference to a pane loop. Methods are promoted from loopRef.
-type PaneRef struct {
-	*loopRef
-}
-
-type PaneCell struct {
-	Text         string
-	Width        int
-	HasFgColor   bool
-	FgColor      libghostty.ColorRGB
-	HasBgColor   bool
-	BgColor      libghostty.ColorRGB
-	Bold         bool
-	Italic       bool
-	Underline    bool
-	Blink        bool
-	Reverse      bool
-	HasHyperlink bool
-}
-
-type PaneContent struct {
-	Lines          []string
-	Cells          [][]PaneCell
-	CursorRow      int
-	CursorCol      int
-	InAltScreen    bool
-	CursorHidden   bool
-	Title          string
-	BellCount      uint64
-	ScrollbackRows uint
-}
-
-type paneContentCache struct {
-	dirty         bool
-	cached        *PaneContent
-	updateTimer   *time.Timer
-	updatePending bool
-}
-
-func (c *paneContentCache) Stop() {
-	if c.updateTimer != nil {
-		c.updateTimer.Stop()
-	}
-}
-
-func (c *paneContentCache) Invalidate() {
-	c.dirty = true
-	c.cached = nil
-}
-
-func (c *paneContentCache) ClearPending() {
-	c.updatePending = false
-}
-
-func (c *paneContentCache) Current() (*PaneContent, bool) {
-	if c.dirty || c.cached == nil {
-		return nil, false
-	}
-	return c.cached, true
-}
-
-func (c *paneContentCache) Store(content *PaneContent) *PaneContent {
-	c.cached = content
-	c.dirty = false
-	return content
-}
-
-func (c *paneContentCache) Schedule(ref *PaneRef, delay time.Duration) {
-	if ref == nil || c.updatePending {
-		return
-	}
-	c.updatePending = true
-	c.Stop()
-	c.updateTimer = time.AfterFunc(delay, func() {
-		if ref != nil {
-			ref.Send(paneFlushUpdate{})
-		}
-	})
-}
-
-type paneRuntime struct {
-	term         *libghostty.Terminal
-	renderState  *libghostty.RenderState
-	rowIterator  *libghostty.RenderStateRowIterator
-	rowCells     *libghostty.RenderStateRowCells
-	keyEncoder   *libghostty.KeyEncoder
-	mouseEncoder *libghostty.MouseEncoder
-	pty          Pty
-}
-
-func (r *paneRuntime) Close() {
-	if r.pty != nil {
-		_ = r.pty.Close()
-	}
-	if r.mouseEncoder != nil {
-		r.mouseEncoder.Close()
-	}
-	if r.keyEncoder != nil {
-		r.keyEncoder.Close()
-	}
-	if r.rowCells != nil {
-		r.rowCells.Close()
-	}
-	if r.rowIterator != nil {
-		r.rowIterator.Close()
-	}
-	if r.renderState != nil {
-		r.renderState.Close()
-	}
-	if r.term != nil {
-		r.term.Close()
-	}
-}
-
-func (r *paneRuntime) install(p *Pane) {
-	p.term = r.term
-	p.renderState = r.renderState
-	p.rowIterator = r.rowIterator
-	p.rowCells = r.rowCells
-	p.keyEncoder = r.keyEncoder
-	p.mouseEncoder = r.mouseEncoder
-	p.pty = r.pty
-}
-
+// Pane is the legacy pane type that combines runtime and controller.
+// Deprecated: Use PaneRuntime and PaneController directly for new code.
 type Pane struct {
-	ref          *PaneRef
-	logger       ShuxLogger
-	parent       *WindowRef
-	id           uint32
-	term         *libghostty.Terminal
-	renderState  *libghostty.RenderState
-	rowIterator  *libghostty.RenderStateRowIterator
-	rowCells     *libghostty.RenderStateRowCells
-	keyEncoder   *libghostty.KeyEncoder
-	mouseEncoder *libghostty.MouseEncoder
-	pty          Pty
-	mouseButtons map[MouseButton]bool
-	rows         int
-	cols         int
-	shell        string
-	cwd          string
-	windowTitle  string
-	bellCount    uint64
-	contentCache paneContentCache
-	stopped      bool
+	controller *PaneController
+	runtime    *PaneRuntime
+	ref        *PaneRef
 }
 
-type (
-	panePTYData       struct{ Data []byte }
-	paneFlushUpdate   struct{}
-	paneProcessExited struct{ Err error }
-)
-
+// NewPane creates a new pane with both runtime and controller.
+// This maintains backward compatibility with existing code.
 func NewPane(id uint32, rows, cols int, shell, cwd string, logger ShuxLogger) *Pane {
-	originalRows, originalCols := rows, cols
-	rows, cols, changed := sanitizeTermSize(rows, cols)
-	if changed {
-		logger.Warnf("pane: id=%d sanitize-size from=%dx%d to=%dx%d", id, originalRows, originalCols, rows, cols)
-	}
 	return &Pane{
-		id:           id,
-		rows:         rows,
-		cols:         cols,
-		shell:        shell,
-		cwd:          cwd,
-		logger:       logger,
-		mouseButtons: make(map[MouseButton]bool),
+		runtime: &PaneRuntime{
+			id:     id,
+			rows:   rows,
+			cols:   cols,
+			shell:  shell,
+			cwd:    cwd,
+			logger: logger,
+		},
 	}
 }
 
+// StartPane creates and starts a new pane with the given parameters.
+// This is the main entry point for creating panes.
 func StartPane(id uint32, rows, cols int, shell, cwd string, parent *WindowRef, logger ShuxLogger) *PaneRef {
-	p := NewPane(id, rows, cols, shell, cwd, logger)
-	p.parent = parent
-	ref := &PaneRef{loopRef: newLoopRef(256)}
-	p.ref = ref
-	go p.run()
-	return ref
-}
-
-func (p *Pane) run() {
-	var reason error
-	defer func() {
-		if r := recover(); r != nil {
-			reason = fmt.Errorf("panic: %v\n%s", r, recoverWithContext("pane", p.id, p.rows*p.cols, 0))
-		}
-		p.terminate(reason)
-		close(p.ref.done)
-	}()
-
-	if err := p.init(); err != nil {
-		p.logger.Errorf("pane: id=%d init failed err=%v", p.id, err)
-		if p.parent != nil {
-			p.parent.Send(PaneExited{ID: p.id})
-		}
-		reason = err
-		return
+	// Create the runtime first (this starts the PTY and process)
+	cfg := PaneRuntimeConfig{
+		ID:     id,
+		Rows:   rows,
+		Cols:   cols,
+		Shell:  shell,
+		CWD:    cwd,
+		Logger: logger,
 	}
 
-	for {
-		select {
-		case <-p.ref.stop:
-			return
-		case msg := <-p.ref.inbox:
-			p.receive(msg)
-		}
-	}
-}
-
-func (p *Pane) init() error {
-	p.logger.Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
-
-	runtime, cmd, err := p.newRuntime()
+	runtime, err := NewPaneRuntime(cfg)
 	if err != nil {
-		return err
+		if logger != nil {
+			logger.Errorf("pane: id=%d failed to create runtime: %v", id, err)
+		}
+		// Send exit notification so window can clean up
+		if parent != nil {
+			parent.Send(PaneExited{ID: id})
+		}
+		// Return a stub ref that's already done
+		ref := &PaneRef{loopRef: newLoopRef(1)}
+		close(ref.done)
+		return ref
 	}
 
-	p.logger.Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, runtime.pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
-	runtime.install(p)
-	p.contentCache.Invalidate()
+	// Start the controller around the runtime
+	return StartPaneController(id, runtime, parent, logger)
+}
 
-	go p.readLoop()
-	p.contentCache.Schedule(p.ref, 0)
+// PaneRef methods promoted for compatibility
+
+// GetPaneModeMsg requests the pane mode from the controller.
+// Renamed to avoid conflict with the type in messages.go.
+func GetPaneModeMsg(ref *PaneRef) *PaneMode {
+	result, _ := askValue(ref, GetPaneMode{})
+	if mode, ok := result.(*PaneMode); ok {
+		return mode
+	}
 	return nil
 }
 
-func (p *Pane) newRuntime() (_ *paneRuntime, cmd *exec.Cmd, err error) {
-	runtime := &paneRuntime{}
-	defer func() {
-		if err != nil {
-			runtime.Close()
-		}
-	}()
-
-	runtime.term, err = p.newTerminal()
-	if err != nil {
-		return nil, nil, err
+// GetPaneContentMsg requests the pane content from the controller.
+// Renamed to avoid conflict with the type in messages.go.
+func GetPaneContentMsg(ref *PaneRef) *PaneContent {
+	result, _ := askValue(ref, GetPaneContent{})
+	if content, ok := result.(*PaneContent); ok {
+		return content
 	}
-	runtime.renderState, err = libghostty.NewRenderState()
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime.rowIterator, err = libghostty.NewRenderStateRowIterator()
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime.rowCells, err = libghostty.NewRenderStateRowCells()
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime.keyEncoder, err = libghostty.NewKeyEncoder()
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime.mouseEncoder, err = libghostty.NewMouseEncoder()
-	if err != nil {
-		return nil, nil, err
-	}
-	runtime.mouseEncoder.SetOptTrackLastCell(true)
-
-	p.logger.Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
-	cmd = p.newCommand()
-	runtime.pty, err = startPanePTY(cmd, p.rows, p.cols)
-	if err != nil {
-		return nil, nil, err
-	}
-	return runtime, cmd, nil
+	return nil
 }
 
-func (p *Pane) newTerminal() (*libghostty.Terminal, error) {
-	return libghostty.NewTerminal(
-		libghostty.WithSize(uint16(p.cols), uint16(p.rows)),
-		libghostty.WithMaxScrollback(10000),
-		libghostty.WithTitleChanged(func(t *libghostty.Terminal) {
-			if title, err := t.Title(); err == nil {
-				p.windowTitle = title
-			}
-			p.markDirty()
-		}),
-		libghostty.WithBell(func(t *libghostty.Terminal) {
-			p.bellCount++
-			p.markDirty()
-		}),
-		libghostty.WithWritePty(func(t *libghostty.Terminal, data []byte) {
-			if p.pty != nil {
-				_, _ = p.pty.Write(data)
-			}
-		}),
-	)
+// GetPaneSnapshotDataMsg requests snapshot data from the controller.
+// Renamed to avoid conflict with the type in messages.go.
+func GetPaneSnapshotDataMsg(ref *PaneRef) PaneSnapshotData {
+	result, _ := askValue(ref, GetPaneSnapshotData{})
+	if data, ok := result.(PaneSnapshotData); ok {
+		return data
+	}
+	return PaneSnapshotData{}
 }
 
-func (p *Pane) newCommand() *exec.Cmd {
-	cmd := exec.Command(p.shell)
-	cmd.Env = ensureTermEnv(os.Environ())
-	if p.cwd != "" {
-		cmd.Dir = ResolveCWD(p.cwd)
-	}
-	return cmd
-}
-
-func ensureTermEnv(env []string) []string {
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "TERM=") {
-			return env
-		}
-	}
-	return append(env, "TERM=xterm-256color")
-}
-
-func (p *Pane) terminate(reason error) {
-	if reason != nil {
-		p.logger.Errorf("pane: crash id=%d pid=%d reason=%v", p.id, p.pid(), reason)
-	} else {
-		p.logger.Infof("pane: terminate id=%d pid=%d", p.id, p.pid())
-	}
-	p.contentCache.Stop()
-	(&paneRuntime{
-		term:         p.term,
-		renderState:  p.renderState,
-		rowIterator:  p.rowIterator,
-		rowCells:     p.rowCells,
-		keyEncoder:   p.keyEncoder,
-		mouseEncoder: p.mouseEncoder,
-		pty:          p.pty,
-	}).Close()
-}
-
-func (p *Pane) readLoop() {
-	buf := make([]byte, 4096)
-	readDone := make(chan error, 1)
-	waitDone := make(chan error, 1)
-
-	go func() {
-		for {
-			n, err := p.pty.Read(buf)
-			if n > 0 && p.ref != nil {
-				chunk := append([]byte(nil), buf[:n]...)
-				p.ref.Send(panePTYData{Data: chunk})
-			}
-			if err != nil {
-				readDone <- err
-				return
-			}
-		}
-	}()
-
-	go func() {
-		waitDone <- p.pty.Wait()
-	}()
-
-	var err error
-	select {
-	case err = <-readDone:
-	case err = <-waitDone:
-	}
-
-	if p.ref != nil {
-		p.ref.Send(paneProcessExited{Err: err})
+// WriteToPaneMsg writes data to the pane's PTY.
+// Renamed to avoid conflict with the type in messages.go.
+func WriteToPaneMsg(ref *PaneRef, data []byte) {
+	if ref != nil {
+		ref.Send(WriteToPane{Data: data})
 	}
 }
 
-func (p *Pane) receive(msg any) {
-	switch m := msg.(type) {
-	case panePTYData:
-		p.term.VTWrite(m.Data)
-		p.markDirty()
-	case paneFlushUpdate:
-		p.contentCache.ClearPending()
-		if p.parent != nil {
-			p.parent.Send(PaneContentUpdated{ID: p.id})
-		}
-	case paneProcessExited:
-		if p.stopped {
-			return
-		}
-		p.logger.Infof("pane: id=%d process-exited pid=%d err=%v", p.id, p.pid(), m.Err)
-		p.stopped = true
-		if p.parent != nil {
-			p.parent.Send(PaneExited{ID: p.id})
-		}
-		p.ref.Stop()
-	case WriteToPane:
-		p.writeToPTY(m.Data)
-	case KeyInput:
-		p.handleKeyInput(m)
-	case MouseInput:
-		p.handleMouseInput(m)
-	case ResizeTerm:
-		p.logger.Infof("pane: id=%d resize from=%dx%d to=%dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
-		p.Resize(m.Rows, m.Cols)
-		if p.pty != nil {
-			_ = p.pty.Resize(m.Rows, m.Cols)
-		}
-		p.markDirty()
-	case KillPane:
-		if p.stopped {
-			return
-		}
-		p.logger.Infof("pane: id=%d kill requested pid=%d", p.id, p.pid())
-		p.stopped = true
-		if p.parent != nil {
-			p.parent.Send(PaneExited{ID: p.id})
-		}
-		p.ref.Stop()
-	case askEnvelope:
-		p.handleAsk(m)
+// SendKeyInputMsg sends keyboard input to the pane.
+func SendKeyInputMsg(ref *PaneRef, input KeyInput) {
+	if ref != nil {
+		ref.Send(input)
 	}
 }
 
-func (p *Pane) handleAsk(envelope askEnvelope) {
-	switch envelope.msg.(type) {
-	case GetPaneMode:
-		envelope.reply <- &PaneMode{
-			InAltScreen:  p.IsAltScreen(),
-			CursorHidden: !p.IsCursorVisible(),
+// SendMouseInputMsg sends mouse input to the pane.
+func SendMouseInputMsg(ref *PaneRef, input MouseInput) {
+	if ref != nil {
+		ref.Send(input)
+	}
+}
+
+// KillPaneMsg kills the pane and its runtime.
+// Renamed to avoid conflict with the type in messages.go.
+func KillPaneMsg(ref *PaneRef) {
+	if ref != nil {
+		ref.Send(KillPane{})
+	}
+}
+
+// Helper functions for pane integration
+
+// BuildPaneContent builds content from a runtime directly.
+// Used by window rendering when it has direct runtime access.
+func BuildPaneContent(runtime *PaneRuntime) *PaneContent {
+	if runtime == nil {
+		return &PaneContent{
+			Lines: make([]string, 0),
+			Cells: make([][]PaneCell, 0),
 		}
-	case GetPaneContent:
-		if content, ok := p.contentCache.Current(); ok {
-			envelope.reply <- content
-			return
+	}
+	return runtime.BuildContent()
+}
+
+// RenderPaneToCells renders a pane's content into a cell grid.
+// This is used by the window renderer.
+func RenderPaneToCells(ref *PaneRef, rows, cols int) [][]PaneCell {
+	content := GetPaneContentMsg(ref)
+	if content == nil {
+		return make([][]PaneCell, 0)
+	}
+
+	screen := make([][]PaneCell, rows)
+	for r := 0; r < rows; r++ {
+		screen[r] = make([]PaneCell, cols)
+		for c := 0; c < cols; c++ {
+			screen[r][c] = blankPaneCell()
 		}
-		envelope.reply <- p.contentCache.Store(p.buildContent())
-	case GetPaneShell:
-		envelope.reply <- p.shell
-	case GetPaneSnapshotData:
-		envelope.reply <- PaneSnapshotData{
-			ID:          p.id,
-			Shell:       p.shell,
-			Rows:        p.rows,
-			Cols:        p.cols,
-			CWD:         p.getCWD(),
-			WindowTitle: p.windowTitle,
+	}
+
+	for r := 0; r < rows && r < len(content.Cells); r++ {
+		for c := 0; c < cols && c < len(content.Cells[r]); c++ {
+			screen[r][c] = content.Cells[r][c]
 		}
-	default:
-		envelope.reply <- nil
 	}
+
+	return screen
 }
 
-func (p *Pane) writeToPTY(data []byte) {
-	if len(data) == 0 || p.pty == nil {
-		return
+// GetPaneCursorPosition returns the cursor position for a pane.
+func GetPaneCursorPosition(ref *PaneRef) (row, col int, visible bool) {
+	content := GetPaneContentMsg(ref)
+	if content == nil {
+		return 0, 0, false
 	}
-	_, _ = p.pty.Write(data)
+	return content.CursorRow, content.CursorCol, !content.CursorHidden
 }
 
-func (p *Pane) markDirty() {
-	p.contentCache.Invalidate()
-	p.contentCache.Schedule(p.ref, 16*time.Millisecond)
-}
-
-func (p *Pane) Resize(rows, cols int) {
-	originalRows, originalCols := rows, cols
-	rows, cols, changed := sanitizeTermSize(rows, cols)
-	if changed {
-		p.logger.Warnf("pane: id=%d sanitize-resize from=%dx%d to=%dx%d", p.id, originalRows, originalCols, rows, cols)
-	}
-	if p.term != nil {
-		_ = p.term.Resize(uint16(cols), uint16(rows), 0, 0)
-	}
-	p.rows = rows
-	p.cols = cols
-}
-
-func (p *Pane) IsAltScreen() bool {
-	if p.term == nil {
+// IsPaneInAltScreen checks if a pane is in alt screen mode.
+func IsPaneInAltScreen(ref *PaneRef) bool {
+	mode := GetPaneModeMsg(ref)
+	if mode == nil {
 		return false
 	}
-	alt, _ := p.term.ModeGet(libghostty.ModeAltScreen)
-	return alt
+	return mode.InAltScreen
 }
 
-func (p *Pane) IsCursorVisible() bool {
-	if p.term == nil {
-		return false
+// blankPaneCell creates a blank cell.
+func blankPaneCell() PaneCell {
+	return PaneCell{Text: " ", Width: 1}
+}
+
+// Legacy paneRuntime type - now wraps PaneRuntime for compatibility
+// This allows gradual migration of code that references paneRuntime
+
+// paneRuntimeCompat wraps the new PaneRuntime for internal compatibility.
+type paneRuntimeCompat struct {
+	*PaneRuntime
+}
+
+// Close closes the runtime (legacy method).
+func (r *paneRuntimeCompat) Close() {
+	if r.PaneRuntime != nil {
+		r.PaneRuntime.Close()
 	}
-	visible, _ := p.term.ModeGet(libghostty.ModeCursorVisible)
-	return visible
+}
+
+// install installs the runtime into a legacy Pane struct.
+func (r *paneRuntimeCompat) install(p *Pane) {
+	// This is a no-op now - the runtime is accessed directly
+}
+
+// newRuntime creates a runtime for a pane (legacy compatibility).
+func (p *Pane) newRuntime() (*paneRuntimeCompat, *exec.Cmd, error) {
+	cfg := PaneRuntimeConfig{
+		ID:     p.runtime.id,
+		Rows:   p.runtime.rows,
+		Cols:   p.runtime.cols,
+		Shell:  p.runtime.shell,
+		CWD:    p.runtime.cwd,
+		Logger: p.runtime.logger,
+	}
+
+	runtime, err := NewPaneRuntime(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	p.runtime = runtime
+	return &paneRuntimeCompat{PaneRuntime: runtime}, nil, nil
+}
+
+// term accessors for legacy compatibility
+
+func (p *Pane) term() *libghostty.Terminal {
+	if p.runtime != nil {
+		return p.runtime.Term()
+	}
+	return nil
+}
+
+func (p *Pane) renderState() *libghostty.RenderState {
+	if p.runtime != nil {
+		return p.runtime.RenderState()
+	}
+	return nil
+}
+
+func (p *Pane) keyEncoder() *libghostty.KeyEncoder {
+	if p.runtime != nil {
+		return p.runtime.KeyEncoder()
+	}
+	return nil
+}
+
+func (p *Pane) mouseEncoder() *libghostty.MouseEncoder {
+	if p.runtime != nil {
+		return p.runtime.MouseEncoder()
+	}
+	return nil
+}
+
+func (p *Pane) pty() Pty {
+	if p.runtime != nil {
+		p.runtime.mu.RLock()
+		defer p.runtime.mu.RUnlock()
+		return p.runtime.pty
+	}
+	return nil
 }
 
 func (p *Pane) pid() int {
-	if p.pty == nil {
-		return 0
+	if p.runtime != nil {
+		return p.runtime.PID()
 	}
-	return p.pty.PID()
+	return 0
 }
 
 func (p *Pane) getCWD() string {
-	if p.pty == nil {
-		return ""
+	if p.runtime != nil {
+		return p.runtime.GetCWD()
 	}
+	return ""
+}
 
-	pid := p.pty.PID()
-	if pid == 0 {
-		return ""
+func (p *Pane) IsAltScreen() bool {
+	if p.runtime != nil {
+		return p.runtime.IsAltScreen()
 	}
+	return false
+}
 
-	cwd, err := GetProcessCWD(pid)
-	if err != nil {
-		return ""
+func (p *Pane) IsCursorVisible() bool {
+	if p.runtime != nil {
+		return p.runtime.IsCursorVisible()
 	}
-
-	return ResolveCWD(cwd)
+	return false
 }

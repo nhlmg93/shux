@@ -1,10 +1,40 @@
 package shux
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // SessionRef is a reference to a session loop. Methods are promoted from loopRef.
 type SessionRef struct {
 	*loopRef
+	shell       string
+	sessionName string
+	ownerMode   bool // true if running as owner process (saves on detach, doesn't stop)
+}
+
+// GetShell returns the shell used by the session.
+func (r *SessionRef) GetShell() string {
+	if r == nil {
+		return DefaultShell
+	}
+	return r.shell
+}
+
+// GetSessionName returns the name of the session.
+func (r *SessionRef) GetSessionName() string {
+	if r == nil {
+		return DefaultSessionName
+	}
+	return r.sessionName
+}
+
+// SetOwnerMode marks the session as running in owner mode.
+// In owner mode, detach saves the session but doesn't stop it.
+func (r *SessionRef) SetOwnerMode() {
+	if r != nil {
+		r.ownerMode = true
+	}
 }
 
 type Session struct {
@@ -75,7 +105,11 @@ func StartSessionFromSnapshot(snapshot *SessionSnapshot, notify func(any), logge
 }
 
 func startSessionLoop(s *Session) *SessionRef {
-	ref := &SessionRef{loopRef: newLoopRef(32)}
+	ref := &SessionRef{
+		loopRef:     newLoopRef(32),
+		shell:       s.shell,
+		sessionName: s.name,
+	}
 	s.ref = ref
 	go s.run()
 	return ref
@@ -334,6 +368,8 @@ func (s *Session) dispatchAction(msg ActionMsg) ActionResult {
 		}
 	case ActionKillWindow:
 		s.killActiveWindow()
+	case ActionKillSession:
+		return s.killSession()
 
 	// Pane-scoped actions - forward to active window for dispatch
 	case ActionKillPane, ActionZoomPane, ActionSwapPaneUp, ActionSwapPaneDown,
@@ -416,11 +452,14 @@ func (s *Session) handleAsk(envelope askEnvelope) {
 	case GetSessionSnapshotData:
 		data := SessionSnapshotData{
 			ID:           s.id,
+			SessionName:  s.name,
 			Shell:        s.shell,
 			ActiveWindow: s.active,
 			WindowOrder:  s.windowOrder.Clone(),
 		}
 		envelope.reply <- data
+	case GetFullSessionSnapshot:
+		envelope.reply <- s.buildSnapshot()
 	case DetachSession:
 		envelope.reply <- s.handleDetach()
 	case ActionMsg:
@@ -452,14 +491,29 @@ func (s *Session) executeCommandWithResult(msg ExecuteCommandMsg) CommandResult 
 }
 
 func (s *Session) handleDetach() error {
-	s.logger.Infof("detach: session=%s id=%d requested windows=%d", s.name, s.id, len(s.windowOrder))
+	s.logger.Infof("detach: session=%s id=%d requested windows=%d ownerMode=%t", s.name, s.id, len(s.windowOrder), s.ref.ownerMode)
 	snapshot := s.buildSnapshot()
+
+	// In owner mode, mark snapshot as live
+	if s.ref.ownerMode {
+		if err := MarkSnapshotLive(snapshot, os.Getpid(), SessionSocketPath(s.name)); err != nil {
+			s.logger.Warnf("detach: session=%s failed to mark live: %v", s.name, err)
+		}
+	}
+
 	path := SessionSnapshotPath(s.name)
 	s.logger.Infof("detach: session=%s id=%d snapshot-built windows=%d activeWindow=%d path=%s", s.name, s.id, len(snapshot.Windows), snapshot.ActiveWindow, path)
 	if err := SaveSnapshot(path, snapshot, s.logger); err != nil {
 		return fmt.Errorf("save snapshot %q: %w", path, err)
 	}
 
+	// In owner mode, just save - don't stop windows or the session
+	if s.ref.ownerMode {
+		s.logger.Infof("detach: session=%s id=%d owner saved and staying alive", s.name, s.id)
+		return nil
+	}
+
+	// Non-owner mode: traditional detach behavior (save and stop)
 	for _, win := range s.windows {
 		win.Stop()
 	}
@@ -534,6 +588,34 @@ func (s *Session) killActiveWindow() {
 	}
 	win.Shutdown()
 	s.handleWindowEmpty(id)
+}
+
+// killSession kills all windows and stops the session.
+// This is the "hard quit" that doesn't save state.
+func (s *Session) killSession() ActionResult {
+	s.logger.Infof("kill-session: session=%s id=%d windows=%d", s.name, s.id, len(s.windowOrder))
+
+	// Kill all windows
+	for _, win := range s.windows {
+		if win != nil {
+			win.Shutdown()
+		}
+	}
+
+	// Clear all window state
+	s.windows = make(map[uint32]*WindowRef)
+	s.windowOrder = OrderedIDList{}
+	s.active = 0
+	s.lastActive = 0
+
+	// Mark session empty
+	s.notifyEvent(SessionEmpty{ID: s.id})
+
+	// Stop the session loop
+	s.logger.Infof("kill-session: session=%s id=%d stopping loop", s.name, s.id)
+	s.ref.Stop()
+
+	return ActionResult{Quit: true}
 }
 
 func (s *Session) resizeActiveWindow(rows, cols int) {
