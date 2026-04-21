@@ -215,6 +215,22 @@ func TestPaneWriteError(t *testing.T) {
 	assertPaneStopped(t, ref, time.Second)
 }
 
+// TestPaneResizeError tests that PTY resize failures don't crash the pane.
+func TestPaneResizeError(t *testing.T) {
+	fake := newFakePTY()
+	ref, parent := startFaultTestPane(t, fake)
+	fake.setResizeErr(errors.New("resize failed"))
+
+	ref.Send(ResizeTerm{Rows: 10, Cols: 20})
+	assertPaneStillRunning(t, ref, 50*time.Millisecond)
+
+	ref.Send(KillPane{})
+	if got := waitForPaneExited(t, parent, 7, time.Second); got != 1 {
+		t.Fatalf("PaneExited count = %d, want 1", got)
+	}
+	assertPaneStopped(t, ref, time.Second)
+}
+
 // TestPaneResizeAfterClose tests that resize after close is handled gracefully.
 func TestPaneResizeAfterClose(t *testing.T) {
 	fake := newFakePTY()
