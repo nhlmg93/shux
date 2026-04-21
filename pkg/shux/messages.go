@@ -2,6 +2,19 @@ package shux
 
 // Message types for loop communication.
 
+// ActionMsg is sent from UI to session/window to dispatch a named action.
+type ActionMsg struct {
+	Action Action
+	Args   []string
+	Amount int // For resize actions, carries the resize amount
+}
+
+// ActionResult is returned for synchronous action dispatch.
+type ActionResult struct {
+	Quit bool
+	Err  error
+}
+
 // Session messages.
 type CreateWindow struct {
 	Rows int

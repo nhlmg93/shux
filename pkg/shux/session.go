@@ -16,10 +16,13 @@ type Session struct {
 	windows     map[uint32]*WindowRef
 	windowOrder OrderedIDList
 	active      uint32
+	lastActive  uint32
 	windowID    uint32
 	subscribers map[chan any]struct{}
 	shell       string
 	snapshot    *SessionSnapshot
+	lastRows    int // last known terminal dimensions for window creation
+	lastCols    int
 }
 
 func NewSession(id uint32, logger ShuxLogger) *Session {
@@ -237,6 +240,8 @@ func (s *Session) receive(msg any) {
 		s.forwardToActiveWindow(NavigatePane{Dir: m.Dir})
 	case ResizePane:
 		s.forwardToActiveWindow(ResizePane{Dir: m.Dir, Amount: m.Amount})
+	case ActionMsg:
+		_ = s.dispatchAction(m)
 	case WindowEmpty:
 		s.handleWindowEmpty(m.ID)
 	case PaneContentUpdated:
@@ -259,13 +264,128 @@ func (s *Session) receive(msg any) {
 		if err := s.handleDetach(); err != nil {
 			s.logger.Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
 		}
+	case ExecuteCommandMsg:
+		s.handleExecuteCommand(m)
 	case askEnvelope:
 		s.handleAsk(m)
 	}
 }
 
+// dispatchAction handles session-scoped and window-scoped actions.
+func (s *Session) dispatchAction(msg ActionMsg) ActionResult {
+	switch msg.Action {
+	// Session-scoped actions
+	case ActionQuit:
+		return ActionResult{Quit: true}
+	case ActionNewWindow:
+		// Use last known dimensions, or defaults if never resized
+		rows, cols := s.lastRows, s.lastCols
+		if rows <= 0 || cols <= 0 {
+			rows, cols = 24, 80
+		}
+		s.createWindow(rows, cols)
+	case ActionNextWindow:
+		s.switchWindow(1)
+	case ActionPrevWindow:
+		s.switchWindow(-1)
+	case ActionLastWindow:
+		if s.lastActive != 0 {
+			if _, ok := s.windows[s.lastActive]; ok {
+				s.setActiveWindow(s.lastActive)
+			}
+		}
+	case ActionDetach:
+		if err := s.handleDetach(); err != nil {
+			s.logger.Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
+			return ActionResult{Err: err}
+		}
+		return ActionResult{Quit: true}
+	case ActionRenameSession:
+		// TODO: implement session renaming with prompt
+		s.logger.Infof("session: rename requested (not yet implemented)")
+
+	// Window-scoped actions - forward to active window
+	case ActionSplitHorizontal:
+		s.forwardToActiveWindow(Split{Dir: SplitH})
+	case ActionSplitVertical:
+		s.forwardToActiveWindow(Split{Dir: SplitV})
+	case ActionSelectPaneLeft:
+		s.forwardToActiveWindow(NavigatePane{Dir: PaneNavLeft})
+	case ActionSelectPaneDown:
+		s.forwardToActiveWindow(NavigatePane{Dir: PaneNavDown})
+	case ActionSelectPaneUp:
+		s.forwardToActiveWindow(NavigatePane{Dir: PaneNavUp})
+	case ActionSelectPaneRight:
+		s.forwardToActiveWindow(NavigatePane{Dir: PaneNavRight})
+	case ActionResizePaneLeft:
+		s.forwardToActiveWindow(ResizePane{Dir: PaneNavLeft, Amount: msg.Amount})
+	case ActionResizePaneDown:
+		s.forwardToActiveWindow(ResizePane{Dir: PaneNavDown, Amount: msg.Amount})
+	case ActionResizePaneUp:
+		s.forwardToActiveWindow(ResizePane{Dir: PaneNavUp, Amount: msg.Amount})
+	case ActionResizePaneRight:
+		s.forwardToActiveWindow(ResizePane{Dir: PaneNavRight, Amount: msg.Amount})
+	case ActionSelectWindow0, ActionSelectWindow1, ActionSelectWindow2, ActionSelectWindow3,
+		ActionSelectWindow4, ActionSelectWindow5, ActionSelectWindow6, ActionSelectWindow7,
+		ActionSelectWindow8, ActionSelectWindow9:
+		idx := int(msg.Action[len("select_window_")] - '0')
+		if idx >= 0 && idx < len(s.windowOrder) {
+			s.setActiveWindow(s.windowOrder[idx])
+		}
+	case ActionKillWindow:
+		s.killActiveWindow()
+
+	// Pane-scoped actions - forward to active window for dispatch
+	case ActionKillPane, ActionZoomPane, ActionSwapPaneUp, ActionSwapPaneDown,
+		ActionRenameWindow:
+		s.forwardToActiveWindow(msg)
+
+	// Session management actions (deferred for now)
+	case ActionListSessions:
+		s.logger.Infof("session: list-sessions requested (not yet implemented)")
+	case ActionAttachSession:
+		if len(msg.Args) > 0 {
+			s.logger.Infof("session: attach-session %q requested (not yet implemented)", msg.Args[0])
+		} else {
+			s.logger.Infof("session: attach-session requested without name (not yet implemented)")
+		}
+
+	// Interactive/prompting actions (deferred for now)
+	case ActionCommandPrompt, ActionChooseTreeSessions, ActionChooseTreeWindows, ActionShowHelp:
+		s.logger.Infof("session: action %q requested (not yet implemented)", msg.Action)
+
+	default:
+		s.logger.Warnf("session: unknown action %q", msg.Action)
+	}
+	return ActionResult{}
+}
+
+// handleExecuteCommand parses and executes a command string.
+func (s *Session) handleExecuteCommand(msg ExecuteCommandMsg) {
+	cmd, err := ParseCommand(msg.Command)
+	if err != nil {
+		s.logger.Warnf("command: parse error: %v", err)
+		return
+	}
+
+	actionMsg, ok := cmd.ToActionMsg()
+	if !ok {
+		s.logger.Warnf("command: unknown command %q", cmd.Name)
+		return
+	}
+
+	result := s.dispatchAction(actionMsg)
+	if result.Err != nil {
+		s.logger.Warnf("command: execution error: %v", result.Err)
+		return
+	}
+	if result.Quit {
+		s.logger.Infof("command: %q triggered quit", msg.Command)
+	}
+}
+
 func (s *Session) handleAsk(envelope askEnvelope) {
-	switch envelope.msg.(type) {
+	switch m := envelope.msg.(type) {
 	case GetActiveWindow:
 		if win := s.activeWindow(); win != nil {
 			envelope.reply <- win
@@ -303,9 +423,32 @@ func (s *Session) handleAsk(envelope askEnvelope) {
 		envelope.reply <- data
 	case DetachSession:
 		envelope.reply <- s.handleDetach()
+	case ActionMsg:
+		envelope.reply <- s.dispatchAction(m)
+	case ExecuteCommandMsg:
+		envelope.reply <- s.executeCommandWithResult(m)
 	default:
 		envelope.reply <- nil
 	}
+}
+
+// executeCommandWithResult parses and executes a command, returning a CommandResult.
+func (s *Session) executeCommandWithResult(msg ExecuteCommandMsg) CommandResult {
+	cmd, err := ParseCommand(msg.Command)
+	if err != nil {
+		return CommandResult{Success: false, Error: err.Error()}
+	}
+
+	actionMsg, ok := cmd.ToActionMsg()
+	if !ok {
+		return CommandResult{Success: false, Error: fmt.Sprintf("unknown command: %s", cmd.Name)}
+	}
+
+	result := s.dispatchAction(actionMsg)
+	if result.Err != nil {
+		return CommandResult{Success: false, Error: result.Err.Error()}
+	}
+	return CommandResult{Success: true, Quit: result.Quit}
 }
 
 func (s *Session) handleDetach() error {
@@ -363,8 +506,39 @@ func (s *Session) activeWindow() *WindowRef {
 	return s.windows[s.active]
 }
 
+func (s *Session) setActiveWindow(id uint32) bool {
+	if id == 0 || id == s.active {
+		return false
+	}
+	if _, ok := s.windows[id]; !ok {
+		panic(fmt.Sprintf("session %d: setActiveWindow targets missing window %d", s.id, id))
+	}
+	prev := s.active
+	s.active = id
+	if prev != 0 {
+		s.lastActive = prev
+	}
+	s.forwardUpdate(PaneContentUpdated{})
+	s.assertInvariants()
+	return true
+}
+
+func (s *Session) killActiveWindow() {
+	if s.active == 0 {
+		return
+	}
+	id := s.active
+	win := s.windows[id]
+	if win == nil {
+		return
+	}
+	win.Shutdown()
+	s.handleWindowEmpty(id)
+}
+
 func (s *Session) resizeActiveWindow(rows, cols int) {
 	s.logger.Infof("session: id=%d name=%s resize-active-window rows=%d cols=%d", s.id, s.name, rows, cols)
+	s.lastRows, s.lastCols = rows, cols
 	if win := s.activeWindow(); win != nil {
 		win.Send(ResizeMsg{Rows: rows, Cols: cols})
 	}
@@ -398,18 +572,11 @@ func (s *Session) switchWindow(delta int) {
 		newIdx += len(s.windowOrder)
 	}
 	newActive := s.windowOrder[newIdx]
-	if newActive == s.active {
+	oldActive := s.active
+	if !s.setActiveWindow(newActive) {
 		return
 	}
-	// Verify target exists (invariant check)
-	if _, ok := s.windows[newActive]; !ok {
-		panic(fmt.Sprintf("session %d: switchWindow targets missing window %d", s.id, newActive))
-	}
-	oldActive := s.active
-	s.active = newActive
 	s.logger.Infof("session: id=%d name=%s switch-window from=%d to=%d delta=%d", s.id, s.name, oldActive, newActive, delta)
-	s.forwardUpdate(PaneContentUpdated{})
-	s.assertInvariants()
 }
 
 func (s *Session) handleWindowEmpty(id uint32) {
@@ -421,9 +588,13 @@ func (s *Session) handleWindowEmpty(id uint32) {
 	currentIdx := s.windowOrder.IndexOf(s.active)
 	delete(s.windows, id)
 	s.windowOrder.Remove(id)
+	if s.lastActive == id {
+		s.lastActive = 0
+	}
 
 	if len(s.windowOrder) == 0 {
 		s.active = 0
+		s.lastActive = 0
 		empty := SessionEmpty{ID: s.id}
 		s.notifyEvent(empty)
 		s.assertInvariants()

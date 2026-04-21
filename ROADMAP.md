@@ -86,35 +86,6 @@ If those flows are solid, shux is plausibly shippable even without broader tmux 
 
 ## Phase 0: Input, Keymap, and Prompt Foundation
 
-This phase should come first. It prevents later features from being wired in as more one-off UI branches.
-
-### 0.1 Introduce a named action layer
-Create a central action registry so UI input resolves to actions rather than directly to ad hoc message sends.
-
-This is the foundation for removing today's hardcoded key handling from `pkg/shux/ui.go`. The UI should stop deciding that specific literals like `ctrl+b`, `c`, `n`, `p`, `w`, `s`, `:`, or `d` always mean particular operations. Instead, it should ask the keymap layer to resolve input into a named action, then dispatch that action.
-
-Examples:
-- `new_window`
-- `next_window`
-- `prev_window`
-- `select_window_0` ... `select_window_9`
-- `split_horizontal`
-- `split_vertical`
-- `select_pane_left/right/up/down`
-- `kill_pane`
-- `kill_window`
-- `rename_window`
-- `rename_session`
-- `last_window`
-- `zoom_pane`
-- `resize_pane_left/right/up/down`
-- `swap_pane_up/down`
-- `detach`
-- `command_prompt`
-- `choose_tree_sessions`
-- `choose_tree_windows`
-- `show_help`
-
 ### 0.2 Ship tmux defaults as the default keymap
 Default bindings for v0.1.0 should simply be **tmux defaults** for every action shux implements. No alternate shux-specific default layout.
 
@@ -160,35 +131,6 @@ The immediate goal is to take the bindings currently hardcoded in the UI and mov
 - override bindings for named actions
 - unbind actions
 - optionally add extra bindings for the same action
-
-No tmux-style command language is needed here. Keep it declarative and small.
-
-#### Configuration shape
-Keep the API simple and explicit. For example, the config layer should be able to express something close to:
-
-```lua
-return require("shux").config({
-  keys = {
-    prefix = "C-b",
-    bind = {
-      ["c"] = "new_window",
-      ["n"] = "next_window",
-      ["p"] = "prev_window",
-      ["w"] = "choose_tree_windows",
-      ["s"] = "choose_tree_sessions",
-      [":"] = "command_prompt",
-    },
-    unbind = {
-      -- optional
-    },
-  },
-})
-```
-
-The exact Lua shape can change, but the behavior should be:
-- load tmux-default keymap first
-- apply user overrides second
-- validate the final resolved map before the UI starts
 
 ### 0.4 Add prompt/input mode
 Build a small reusable bottom-line prompt widget for:

@@ -216,6 +216,8 @@ func (w *Window) receive(msg any) {
 		w.navigatePane(m.Dir)
 	case ResizePane:
 		w.resizePane(m.Dir, m.Amount)
+	case ActionMsg:
+		w.dispatchAction(m)
 	case SwitchToPane:
 		w.switchToPane(m.Index)
 	case PaneExited:
@@ -236,6 +238,46 @@ func (w *Window) receive(msg any) {
 		}
 	case askEnvelope:
 		w.handleAsk(m)
+	}
+}
+
+// dispatchAction handles pane-scoped actions forwarded from session.
+func (w *Window) dispatchAction(msg ActionMsg) {
+	switch msg.Action {
+	case ActionKillPane:
+		if pane := w.activePane(); pane != nil {
+			pane.Send(KillPane{})
+		}
+	case ActionZoomPane:
+		// Zoom pane swaps the pane to fill the window temporarily
+		// TODO: implement zoom state and layout override
+		w.logger.Infof("window %d: zoom pane requested (not yet implemented)", w.id)
+	case ActionSwapPaneUp:
+		// Swap active pane with the previous pane in order
+		currentIdx := w.paneOrder.IndexOf(w.active)
+		if currentIdx > 0 {
+			w.paneOrder[currentIdx], w.paneOrder[currentIdx-1] = w.paneOrder[currentIdx-1], w.paneOrder[currentIdx]
+			w.syncLayout()
+			if w.parent != nil {
+				w.parent.Send(PaneContentUpdated{})
+			}
+		}
+	case ActionSwapPaneDown:
+		// Swap active pane with the next pane in order
+		currentIdx := w.paneOrder.IndexOf(w.active)
+		if currentIdx >= 0 && currentIdx < len(w.paneOrder)-1 {
+			w.paneOrder[currentIdx], w.paneOrder[currentIdx+1] = w.paneOrder[currentIdx+1], w.paneOrder[currentIdx]
+			w.syncLayout()
+			if w.parent != nil {
+				w.parent.Send(PaneContentUpdated{})
+			}
+		}
+	case ActionRenameWindow:
+		// TODO: implement window renaming with prompt
+		w.logger.Infof("window %d: rename requested (not yet implemented)", w.id)
+	default:
+		// Unknown action - log and ignore
+		w.logger.Warnf("window %d: unknown action %q", w.id, msg.Action)
 	}
 }
 

@@ -93,12 +93,35 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 
 	if m.prefixMode {
 		m.prefixMode = false
-		if binding, ok := m.keymap.BindingFor(keystroke); ok {
-			return m.dispatchBinding(binding)
+		action, ok := m.keymap.ActionFor(keystroke)
+		if !ok {
+			// Unbound key after prefix - send the prefix then the key
+			m.sendKeyInput(m.keymap.PrefixInput())
+			m.sendKey(key)
+			return false
 		}
-		m.sendKeyInput(m.keymap.PrefixInput())
-		m.sendKey(key)
-		return false
+		// Handle send_prefix action inline (UI concern)
+		if action == ActionSendPrefix {
+			m.sendKeyInput(m.keymap.PrefixInput())
+			return false
+		}
+		// Send ActionMsg to session for dispatch.
+		binding, _ := m.keymap.BindingFor(keystroke)
+		binding = binding.normalized()
+		msg := ActionMsg{Action: action, Amount: binding.Amount}
+		result, _ := askValue(m.session, msg)
+		switch v := result.(type) {
+		case ActionResult:
+			if v.Err != nil {
+				Warnf("ui: action %q failed: %v", action, v.Err)
+				return false
+			}
+			return v.Quit
+		case bool:
+			return v
+		default:
+			return false
+		}
 	}
 
 	if keystroke == m.keymap.Prefix() {
@@ -108,72 +131,6 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 
 	m.sendKey(key)
 	return false
-}
-
-func (m *Model) dispatchBinding(binding Binding) bool {
-	binding = binding.normalized()
-	switch binding.Action {
-	case ActionQuit:
-		return true
-	case ActionNewWindow:
-		m.session.Send(CreateWindow{Rows: m.height, Cols: m.width})
-		return false
-	case ActionNextWindow:
-		m.session.Send(SwitchWindow{Delta: 1})
-		return false
-	case ActionPrevWindow:
-		m.session.Send(SwitchWindow{Delta: -1})
-		return false
-	case ActionSplitHorizontal:
-		m.session.Send(Split{Dir: SplitH})
-		return false
-	case ActionSplitVertical:
-		m.session.Send(Split{Dir: SplitV})
-		return false
-	case ActionSelectPaneLeft:
-		m.session.Send(NavigatePane{Dir: PaneNavLeft})
-		return false
-	case ActionSelectPaneDown:
-		m.session.Send(NavigatePane{Dir: PaneNavDown})
-		return false
-	case ActionSelectPaneUp:
-		m.session.Send(NavigatePane{Dir: PaneNavUp})
-		return false
-	case ActionSelectPaneRight:
-		m.session.Send(NavigatePane{Dir: PaneNavRight})
-		return false
-	case ActionResizePaneLeft:
-		m.session.Send(ResizePane{Dir: PaneNavLeft, Amount: binding.Amount})
-		return false
-	case ActionResizePaneDown:
-		m.session.Send(ResizePane{Dir: PaneNavDown, Amount: binding.Amount})
-		return false
-	case ActionResizePaneUp:
-		m.session.Send(ResizePane{Dir: PaneNavUp, Amount: binding.Amount})
-		return false
-	case ActionResizePaneRight:
-		m.session.Send(ResizePane{Dir: PaneNavRight, Amount: binding.Amount})
-		return false
-	case ActionDetach:
-		Infof("ui: detach requested")
-		result, ok := askValue(m.session, DetachSession{})
-		if !ok {
-			Warnf("ui: detach failed: session unavailable")
-			return false
-		}
-		if err, _ := result.(error); err != nil {
-			Warnf("ui: detach failed: %v", err)
-			return false
-		}
-		Infof("ui: detach completed")
-		return true
-	case ActionSendPrefix:
-		m.sendKeyInput(m.keymap.PrefixInput())
-		return false
-	default:
-		Warnf("ui: unknown action %q", binding.Action)
-		return false
-	}
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) {

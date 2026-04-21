@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	lua "github.com/yuin/gopher-lua"
+
+	"shux/pkg/shux"
 )
 
 func loadConfig(path string, explicit bool) (Config, error) {
@@ -385,9 +387,12 @@ func (r *luaConfigRuntime) moduleLoader(L *lua.LState) int {
 func (r *luaConfigRuntime) newModule(L *lua.LState) *lua.LTable {
 	mod := L.SetFuncs(L.NewTable(), map[string]lua.LGFunction{
 		"bind_key":         r.luaBindKey,
+		"command":          r.luaCommand,
 		"config":           r.luaConfig,
 		"config_dir":       r.luaConfigDir,
 		"config_file":      r.luaConfigFile,
+		"execute":          r.luaExecute,
+		"list_commands":    r.luaListCommands,
 		"set_mouse":        r.luaSetMouse,
 		"set_prefix":       r.luaSetPrefix,
 		"set_shell":        r.luaSetShell,
@@ -397,6 +402,9 @@ func (r *luaConfigRuntime) newModule(L *lua.LState) *lua.LTable {
 	})
 	L.SetField(mod, "opt", r.newOptionsTable(L))
 	L.SetField(mod, "keymap", r.newKeymapTable(L))
+	// Note: shux.cmd uses hyphenated command names to match the CLI.
+	// Example: shux.cmd["new-window"]() or shux.cmd["resize-pane"]("-L", "10")
+	L.SetField(mod, "cmd", r.newCommandTable(L))
 	return mod
 }
 
@@ -673,4 +681,121 @@ func luaArrayValues(tbl *lua.LTable) ([]lua.LValue, error) {
 		values = append(values, value)
 	}
 	return values, nil
+}
+
+// luaCommand validates a command string without executing it.
+// Returns true if the command is valid, false otherwise.
+// Usage: shux.command("new-window") -> bool
+func (r *luaConfigRuntime) luaCommand(L *lua.LState) int {
+	cmdStr := strings.TrimSpace(L.CheckString(1))
+	cmd, err := shux.ParseCommand(cmdStr)
+	if err != nil {
+		L.Push(lua.LBool(false))
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+	_, ok := cmd.ToActionMsg()
+	L.Push(lua.LBool(ok))
+	if !ok {
+		L.Push(lua.LString(fmt.Sprintf("unknown command: %s", cmd.Name)))
+		return 2
+	}
+	return 1
+}
+
+// luaExecute validates a command and returns a table with the parsed action
+// that can be used for message construction. This allows plugins to validate
+// commands at load time and defer execution to runtime via the actor model.
+//
+// Usage: local action = shux.execute("resize-pane -L 10")
+// Returns: { action = "resize_pane_left", amount = 10, valid = true }
+// Or on error: { valid = false, error = "..." }
+func (r *luaConfigRuntime) luaExecute(L *lua.LState) int {
+	cmdStr := strings.TrimSpace(L.CheckString(1))
+	cmd, err := shux.ParseCommand(cmdStr)
+	if err != nil {
+		result := L.NewTable()
+		L.SetField(result, "valid", lua.LBool(false))
+		L.SetField(result, "error", lua.LString(err.Error()))
+		L.Push(result)
+		return 1
+	}
+
+	msg, ok := cmd.ToActionMsg()
+	result := L.NewTable()
+	L.SetField(result, "valid", lua.LBool(ok))
+
+	if !ok {
+		L.SetField(result, "error", lua.LString(fmt.Sprintf("unknown command: %s", cmd.Name)))
+		L.Push(result)
+		return 1
+	}
+
+	// Convert action name (snake_case) to a more Lua-friendly identifier
+	actionName := strings.ReplaceAll(string(msg.Action), "_", "-")
+	L.SetField(result, "action", lua.LString(actionName))
+	L.SetField(result, "name", lua.LString(cmd.Name))
+
+	if msg.Amount > 0 {
+		L.SetField(result, "amount", lua.LNumber(msg.Amount))
+	}
+	if len(msg.Args) > 0 {
+		args := L.NewTable()
+		for i, arg := range msg.Args {
+			L.SetTable(args, lua.LNumber(i+1), lua.LString(arg))
+		}
+		L.SetField(result, "args", args)
+	}
+
+	L.Push(result)
+	return 1
+}
+
+// luaListCommands returns a list of all available commands.
+// Usage: shux.list_commands() -> table of command names
+func (r *luaConfigRuntime) luaListCommands(L *lua.LState) int {
+	commands := shux.ValidCommands()
+	tbl := L.NewTable()
+	for i, name := range commands {
+		L.SetTable(tbl, lua.LNumber(i+1), lua.LString(name))
+	}
+	L.Push(tbl)
+	return 1
+}
+
+// newCommandTable creates a table of command validation functions.
+// Usage: shux.cmd.new_window() -> true (validates the command)
+func (r *luaConfigRuntime) newCommandTable(L *lua.LState) *lua.LTable {
+	commands := shux.ValidCommands()
+	tbl := L.NewTable()
+
+	for _, name := range commands {
+		// Create a closure that captures the command name
+		cmdName := name
+		fn := func(L *lua.LState) int {
+			// Build the command string with arguments
+			var b strings.Builder
+			b.WriteString(cmdName)
+			for i := 1; i <= L.GetTop(); i++ {
+				b.WriteString(" ")
+				b.WriteString(L.CheckString(i))
+			}
+			cmd, err := shux.ParseCommand(b.String())
+			if err != nil {
+				L.Push(lua.LBool(false))
+				L.Push(lua.LString(err.Error()))
+				return 2
+			}
+			_, ok := cmd.ToActionMsg()
+			L.Push(lua.LBool(ok))
+			if !ok {
+				L.Push(lua.LString(fmt.Sprintf("invalid arguments for %s", cmdName)))
+				return 2
+			}
+			return 1
+		}
+		L.SetField(tbl, name, L.NewFunction(fn))
+	}
+
+	return tbl
 }

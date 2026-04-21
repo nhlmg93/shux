@@ -4,9 +4,10 @@
 package shux
 
 import (
+	"bytes"
 	"math/rand"
-	"os"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -147,9 +148,6 @@ func TestGoroutineLeak(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping leak test in short mode")
 	}
-	if os.Getenv("SHUX_RUN_LEAK_TESTS") == "" {
-		t.Skip("Skipping flaky goroutine leak check by default; set SHUX_RUN_LEAK_TESTS=1 to enable")
-	}
 
 	runLifecycle := func(id uint32) {
 		t.Helper()
@@ -180,14 +178,21 @@ func TestGoroutineLeak(t *testing.T) {
 		runLifecycle(uint32(i + 100))
 	}
 
-	runtime.GC()
-	time.Sleep(200 * time.Millisecond)
-	final := runtime.NumGoroutine()
-
 	leakThreshold := baseline + 4
-	if final > leakThreshold {
-		t.Errorf("Possible goroutine leak: baseline=%d final=%d (threshold=%d)",
-			baseline, final, leakThreshold)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		runtime.GC()
+		time.Sleep(200 * time.Millisecond)
+		final := runtime.NumGoroutine()
+		if final <= leakThreshold {
+			return
+		}
+		if time.Now().After(deadline) {
+			var buf bytes.Buffer
+			_ = pprof.Lookup("goroutine").WriteTo(&buf, 1)
+			t.Fatalf("Possible goroutine leak: baseline=%d final=%d (threshold=%d)\n%s",
+				baseline, final, leakThreshold, buf.String())
+		}
 	}
 }
 

@@ -2,6 +2,7 @@
 package shux
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -71,12 +72,21 @@ func (p *PTY) Write(data []byte) (int, error) {
 	return p.TTY.Write(data)
 }
 
-// Close closes the PTY and cleans up resources.
+// Close closes the PTY and stops the child process.
 func (p *PTY) Close() error {
+	var ttyErr error
 	if p.TTY != nil {
-		return p.TTY.Close()
+		ttyErr = p.TTY.Close()
 	}
-	return nil
+	if p.Cmd != nil && p.Cmd.Process != nil {
+		if err := p.Cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			if ttyErr != nil {
+				return fmt.Errorf("close pty: %w (kill process: %v)", ttyErr, err)
+			}
+			return err
+		}
+	}
+	return ttyErr
 }
 
 // Resize updates the PTY size (rows x cols).

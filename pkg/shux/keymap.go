@@ -3,7 +3,6 @@ package shux
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -12,41 +11,89 @@ import (
 type Action string
 
 const (
-	ActionQuit            Action = "quit"
-	ActionNewWindow       Action = "new_window"
-	ActionNextWindow      Action = "next_window"
-	ActionPrevWindow      Action = "prev_window"
-	ActionSplitHorizontal Action = "split_horizontal"
-	ActionSplitVertical   Action = "split_vertical"
-	ActionSelectPaneLeft  Action = "select_pane_left"
-	ActionSelectPaneDown  Action = "select_pane_down"
-	ActionSelectPaneUp    Action = "select_pane_up"
-	ActionSelectPaneRight Action = "select_pane_right"
-	ActionResizePaneLeft  Action = "resize_pane_left"
-	ActionResizePaneDown  Action = "resize_pane_down"
-	ActionResizePaneUp    Action = "resize_pane_up"
-	ActionResizePaneRight Action = "resize_pane_right"
-	ActionDetach          Action = "detach"
-	ActionSendPrefix      Action = "send_prefix"
+	ActionQuit             Action = "quit"
+	ActionNewWindow        Action = "new_window"
+	ActionNextWindow       Action = "next_window"
+	ActionPrevWindow       Action = "prev_window"
+	ActionSplitHorizontal  Action = "split_horizontal"
+	ActionSplitVertical    Action = "split_vertical"
+	ActionSelectPaneLeft   Action = "select_pane_left"
+	ActionSelectPaneDown   Action = "select_pane_down"
+	ActionSelectPaneUp     Action = "select_pane_up"
+	ActionSelectPaneRight  Action = "select_pane_right"
+	ActionResizePaneLeft   Action = "resize_pane_left"
+	ActionResizePaneDown   Action = "resize_pane_down"
+	ActionResizePaneUp     Action = "resize_pane_up"
+	ActionResizePaneRight  Action = "resize_pane_right"
+	ActionDetach           Action = "detach"
+	ActionSendPrefix       Action = "send_prefix"
+	ActionSelectWindow0    Action = "select_window_0"
+	ActionSelectWindow1    Action = "select_window_1"
+	ActionSelectWindow2    Action = "select_window_2"
+	ActionSelectWindow3    Action = "select_window_3"
+	ActionSelectWindow4    Action = "select_window_4"
+	ActionSelectWindow5    Action = "select_window_5"
+	ActionSelectWindow6    Action = "select_window_6"
+	ActionSelectWindow7    Action = "select_window_7"
+	ActionSelectWindow8    Action = "select_window_8"
+	ActionSelectWindow9    Action = "select_window_9"
+	ActionKillPane         Action = "kill_pane"
+	ActionKillWindow       Action = "kill_window"
+	ActionRenameWindow     Action = "rename_window"
+	ActionRenameSession    Action = "rename_session"
+	ActionLastWindow       Action = "last_window"
+	ActionZoomPane         Action = "zoom_pane"
+	ActionSwapPaneUp       Action = "swap_pane_up"
+	ActionSwapPaneDown     Action = "swap_pane_down"
+	ActionCommandPrompt    Action = "command_prompt"
+	ActionChooseTreeSessions Action = "choose_tree_sessions"
+	ActionChooseTreeWindows  Action = "choose_tree_windows"
+	ActionShowHelp         Action = "show_help"
+	ActionListSessions     Action = "list_sessions"
+	ActionAttachSession    Action = "attach_session"
 )
 
 var validActions = map[Action]struct{}{
-	ActionQuit:            {},
-	ActionNewWindow:       {},
-	ActionNextWindow:      {},
-	ActionPrevWindow:      {},
-	ActionSplitHorizontal: {},
-	ActionSplitVertical:   {},
-	ActionSelectPaneLeft:  {},
-	ActionSelectPaneDown:  {},
-	ActionSelectPaneUp:    {},
-	ActionSelectPaneRight: {},
-	ActionResizePaneLeft:  {},
-	ActionResizePaneDown:  {},
-	ActionResizePaneUp:    {},
-	ActionResizePaneRight: {},
-	ActionDetach:          {},
-	ActionSendPrefix:      {},
+	ActionQuit:               {},
+	ActionNewWindow:          {},
+	ActionNextWindow:         {},
+	ActionPrevWindow:         {},
+	ActionSplitHorizontal:  {},
+	ActionSplitVertical:    {},
+	ActionSelectPaneLeft:   {},
+	ActionSelectPaneDown:   {},
+	ActionSelectPaneUp:     {},
+	ActionSelectPaneRight:  {},
+	ActionResizePaneLeft:   {},
+	ActionResizePaneDown:   {},
+	ActionResizePaneUp:     {},
+	ActionResizePaneRight:  {},
+	ActionDetach:             {},
+	ActionSendPrefix:       {},
+	ActionSelectWindow0:    {},
+	ActionSelectWindow1:    {},
+	ActionSelectWindow2:    {},
+	ActionSelectWindow3:    {},
+	ActionSelectWindow4:    {},
+	ActionSelectWindow5:    {},
+	ActionSelectWindow6:    {},
+	ActionSelectWindow7:    {},
+	ActionSelectWindow8:    {},
+	ActionSelectWindow9:    {},
+	ActionKillPane:         {},
+	ActionKillWindow:       {},
+	ActionRenameWindow:     {},
+	ActionRenameSession:    {},
+	ActionLastWindow:       {},
+	ActionZoomPane:         {},
+	ActionSwapPaneUp:       {},
+	ActionSwapPaneDown:     {},
+	ActionCommandPrompt:    {},
+	ActionChooseTreeSessions: {},
+	ActionChooseTreeWindows:  {},
+	ActionShowHelp:         {},
+	ActionListSessions:     {},
+	ActionAttachSession:    {},
 }
 
 // Binding describes a resolved key binding.
@@ -235,99 +282,24 @@ func resolveBinding(name string) (Binding, error) {
 	return parseTmuxCommand(name)
 }
 
+// parseTmuxCommand parses a tmux-style command string into a Binding.
+// It reuses the Command parsing infrastructure from command.go to ensure
+// consistency and avoid duplication. The command string is first parsed
+// using ParseCommand, then converted to an ActionMsg via ToActionMsg.
+// For commands that support numeric amounts (like resize-pane), the Amount
+// field is extracted from the ActionMsg and mapped to the Binding.
 func parseTmuxCommand(command string) (Binding, error) {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
-		return Binding{}, fmt.Errorf("empty command")
+	cmd, err := ParseCommand(command)
+	if err != nil {
+		return Binding{}, err
 	}
 
-	onlyCount := func(defaultAction Action) (Binding, error) {
-		binding := Binding{Action: defaultAction}
-		if len(fields) == 3 {
-			n, err := strconv.Atoi(fields[2])
-			if err != nil || n <= 0 {
-				return Binding{}, fmt.Errorf("unsupported command %q", command)
-			}
-			binding.Amount = n
-		} else if len(fields) != 2 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return binding.normalized(), nil
+	msg, err := cmd.toActionMsg()
+	if err != nil {
+		return Binding{}, err
 	}
 
-	switch fields[0] {
-	case "new-window":
-		if len(fields) != 1 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return Binding{Action: ActionNewWindow}, nil
-	case "next-window":
-		if len(fields) != 1 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return Binding{Action: ActionNextWindow}, nil
-	case "previous-window", "prev-window":
-		if len(fields) != 1 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return Binding{Action: ActionPrevWindow}, nil
-	case "detach", "detach-client":
-		if len(fields) != 1 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return Binding{Action: ActionDetach}, nil
-	case "split-window":
-		if len(fields) != 2 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		switch fields[1] {
-		case "-h":
-			return Binding{Action: ActionSplitVertical}, nil
-		case "-v":
-			return Binding{Action: ActionSplitHorizontal}, nil
-		default:
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-	case "select-pane":
-		if len(fields) != 2 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		switch fields[1] {
-		case "-L":
-			return Binding{Action: ActionSelectPaneLeft}, nil
-		case "-D":
-			return Binding{Action: ActionSelectPaneDown}, nil
-		case "-U":
-			return Binding{Action: ActionSelectPaneUp}, nil
-		case "-R":
-			return Binding{Action: ActionSelectPaneRight}, nil
-		default:
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-	case "resize-pane":
-		if len(fields) < 2 || len(fields) > 3 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		switch fields[1] {
-		case "-L":
-			return onlyCount(ActionResizePaneLeft)
-		case "-D":
-			return onlyCount(ActionResizePaneDown)
-		case "-U":
-			return onlyCount(ActionResizePaneUp)
-		case "-R":
-			return onlyCount(ActionResizePaneRight)
-		default:
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-	case "quit":
-		if len(fields) != 1 {
-			return Binding{}, fmt.Errorf("unsupported command %q", command)
-		}
-		return Binding{Action: ActionQuit}, nil
-	default:
-		return Binding{}, fmt.Errorf("unknown action or command %q", command)
-	}
+	return Binding{Action: msg.Action, Amount: msg.Amount}.normalized(), nil
 }
 
 func parseKeySpec(spec string) (string, KeyInput, error) {

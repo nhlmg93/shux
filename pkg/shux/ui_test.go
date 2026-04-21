@@ -117,8 +117,17 @@ func TestModelTmuxResizeBindingResizesPane(t *testing.T) {
 	beforeLeft := widthAt(0)
 	beforeRight := widthAt(1)
 
+	// Switch back to left pane before sending resize command
+	// (widthAt(1) left us on the right pane)
+	win.Send(SwitchToPane{Index: 0})
+	super.waitContentUpdated(50 * time.Millisecond)
+
 	model := NewModel(sessionRef)
-	updated, _ := model.Update(tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModCtrl}))
+	// First initialize the model with window size so it can track dimensions
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updated.(Model)
+	// Now send the resize keybinding
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModCtrl}))
 	model = updated.(Model)
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight, Mod: tea.ModCtrl}))
 	model = updated.(Model)
