@@ -10,6 +10,20 @@ import (
 	"github.com/creack/pty"
 )
 
+// Pty is the interface for pseudo-terminal operations.
+// This allows mocking PTY for testing.
+type Pty interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	Close() error
+	Resize(rows, cols int) error
+	Wait() error
+	PID() int
+}
+
+// Compile-time check that *PTY implements Pty interface
+var _ Pty = (*PTY)(nil)
+
 // PTY represents a pseudo-terminal with a running process.
 type PTY struct {
 	TTY *os.File
@@ -44,8 +58,17 @@ func StartWithSize(cmd *exec.Cmd, rows, cols int) (*PTY, error) {
 		return nil, fmt.Errorf("failed to set blocking mode: %w", err)
 	}
 
-	Infof("pty: started pid=%d path=%s rows=%d cols=%d dir=%s", cmd.Process.Pid, cmd.Path, rows, cols, cmd.Dir)
 	return &PTY{TTY: ptmx, Cmd: cmd, pid: cmd.Process.Pid}, nil
+}
+
+// Read reads data from the PTY.
+func (p *PTY) Read(buf []byte) (int, error) {
+	return p.TTY.Read(buf)
+}
+
+// Write writes data to the PTY.
+func (p *PTY) Write(data []byte) (int, error) {
+	return p.TTY.Write(data)
 }
 
 // Close closes the PTY and cleans up resources.
@@ -58,7 +81,6 @@ func (p *PTY) Close() error {
 
 // Resize updates the PTY size (rows x cols).
 func (p *PTY) Resize(rows, cols int) error {
-	Infof("pty: resize pid=%d rows=%d cols=%d", p.pid, rows, cols)
 	return pty.Setsize(p.TTY, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 }
 

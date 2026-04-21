@@ -51,7 +51,8 @@ type PaneSnapshot struct {
 }
 
 // SaveSnapshot atomically writes a session snapshot to disk.
-func SaveSnapshot(path string, snapshot *SessionSnapshot) error {
+// If logger is nil, logging is skipped.
+func SaveSnapshot(path string, snapshot *SessionSnapshot, logger ShuxLogger) error {
 	start := time.Now()
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -67,38 +68,49 @@ func SaveSnapshot(path string, snapshot *SessionSnapshot) error {
 	encoder := gob.NewEncoder(file)
 	if err := encoder.Encode(snapshot); err != nil {
 		if closeErr := file.Close(); closeErr != nil {
-			Warnf("snapshot: close temp file after encode failure path=%s err=%v", tmpPath, closeErr)
+			if logger != nil {
+				logger.Warnf("snapshot: close temp file after encode failure path=%s err=%v", tmpPath, closeErr)
+			}
 		}
 		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			Warnf("snapshot: remove temp file after encode failure path=%s err=%v", tmpPath, removeErr)
+			if logger != nil {
+				logger.Warnf("snapshot: remove temp file after encode failure path=%s err=%v", tmpPath, removeErr)
+			}
 		}
 		return fmt.Errorf("failed to encode snapshot: %w", err)
 	}
 
 	if err := file.Close(); err != nil {
 		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			Warnf("snapshot: remove temp file after close failure path=%s err=%v", tmpPath, removeErr)
+			if logger != nil {
+				logger.Warnf("snapshot: remove temp file after close failure path=%s err=%v", tmpPath, removeErr)
+			}
 		}
 		return fmt.Errorf("failed to close snapshot file: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
 		if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
-			Warnf("snapshot: remove temp file after rename failure path=%s err=%v", tmpPath, removeErr)
+			if logger != nil {
+				logger.Warnf("snapshot: remove temp file after rename failure path=%s err=%v", tmpPath, removeErr)
+			}
 		}
 		return fmt.Errorf("failed to rename snapshot file: %w", err)
 	}
 
-	if info, err := os.Stat(path); err == nil {
-		Infof("snapshot: save session=%s path=%s bytes=%d windows=%d duration=%s", snapshot.SessionName, path, info.Size(), len(snapshot.Windows), time.Since(start))
-	} else {
-		Infof("snapshot: save session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
+	if logger != nil {
+		if info, err := os.Stat(path); err == nil {
+			logger.Infof("snapshot: save session=%s path=%s bytes=%d windows=%d duration=%s", snapshot.SessionName, path, info.Size(), len(snapshot.Windows), time.Since(start))
+		} else {
+			logger.Infof("snapshot: save session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
+		}
 	}
 	return nil
 }
 
 // LoadSnapshot reads and decodes a session snapshot from disk.
-func LoadSnapshot(path string) (*SessionSnapshot, error) {
+// If logger is nil, logging is skipped.
+func LoadSnapshot(path string, logger ShuxLogger) (*SessionSnapshot, error) {
 	start := time.Now()
 	file, err := os.Open(path)
 	if err != nil {
@@ -106,7 +118,9 @@ func LoadSnapshot(path string) (*SessionSnapshot, error) {
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
-			Warnf("snapshot: close file path=%s err=%v", path, closeErr)
+			if logger != nil {
+				logger.Warnf("snapshot: close file path=%s err=%v", path, closeErr)
+			}
 		}
 	}()
 
@@ -115,7 +129,9 @@ func LoadSnapshot(path string) (*SessionSnapshot, error) {
 		return nil, err
 	}
 
-	Infof("snapshot: load session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
+	if logger != nil {
+		logger.Infof("snapshot: load session=%s path=%s windows=%d duration=%s", snapshot.SessionName, path, len(snapshot.Windows), time.Since(start))
+	}
 	return snapshot, nil
 }
 
@@ -134,10 +150,13 @@ func decodeSnapshot(r io.Reader) (*SessionSnapshot, error) {
 }
 
 // DeleteSnapshot removes a snapshot file from disk.
-func DeleteSnapshot(path string) error {
+// If logger is nil, logging is skipped.
+func DeleteSnapshot(path string, logger ShuxLogger) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete snapshot: %w", err)
 	}
-	Infof("snapshot: delete path=%s", path)
+	if logger != nil {
+		logger.Infof("snapshot: delete path=%s", path)
+	}
 	return nil
 }

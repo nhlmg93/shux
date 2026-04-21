@@ -54,7 +54,8 @@ func (s *testSupervisor) waitContentUpdated(timeout time.Duration) bool {
 func setupSession(t *testing.T) (*SessionRef, *testSupervisor, func()) {
 	t.Helper()
 	super := newTestSupervisor()
-	sessionRef := StartSession(1, super.handle)
+	logger := &StdLogger{Logger}
+	sessionRef := StartSession(1, super.handle, logger)
 	cleanup := func() {
 		sessionRef.Shutdown()
 	}

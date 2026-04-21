@@ -7,34 +7,9 @@ import (
 	"github.com/mitchellh/go-libghostty"
 )
 
+// WindowRef is a reference to a window loop. Methods are promoted from loopRef.
 type WindowRef struct {
 	*loopRef
-}
-
-func (r *WindowRef) Send(msg any) bool {
-	if r == nil {
-		return false
-	}
-	return r.send(msg)
-}
-
-func (r *WindowRef) Ask(msg any) chan any {
-	if r == nil {
-		return nil
-	}
-	return r.ask(msg)
-}
-
-func (r *WindowRef) Stop() {
-	if r != nil {
-		r.stopLoop()
-	}
-}
-
-func (r *WindowRef) Shutdown() {
-	if r != nil {
-		r.shutdown()
-	}
 }
 
 type paneLayout struct {
@@ -97,6 +72,7 @@ type borderState struct {
 
 type Window struct {
 	ref       *WindowRef
+	logger    ShuxLogger
 	parent    *SessionRef
 	id        uint32
 	panes     map[uint32]*PaneRef
@@ -120,9 +96,10 @@ func NewWindow(id uint32) *Window {
 	}
 }
 
-func StartWindow(id uint32, parent *SessionRef) *WindowRef {
+func StartWindow(id uint32, parent *SessionRef, logger ShuxLogger) *WindowRef {
 	w := NewWindow(id)
 	w.parent = parent
+	w.logger = logger
 	ref := &WindowRef{loopRef: newLoopRef(32)}
 	w.ref = ref
 	go w.run()
@@ -156,10 +133,10 @@ func (w *Window) terminate(reason error) {
 		}
 	}
 	if reason != nil {
-		Errorf("window: crash id=%d reason=%v", w.id, reason)
+		w.logger.Errorf("window: crash id=%d reason=%v", w.id, reason)
 		return
 	}
-	Infof("window: terminate id=%d", w.id)
+	w.logger.Infof("window: terminate id=%d", w.id)
 }
 
 func (w *Window) receive(msg any) {
@@ -264,7 +241,7 @@ func (w *Window) createPane(cmd CreatePane) {
 		w.paneID = paneID
 	}
 
-	ref := StartPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, w.ref)
+	ref := StartPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, w.ref, w.logger)
 	w.panes[paneID] = ref
 	w.paneOrder = append(w.paneOrder, paneID)
 
@@ -306,7 +283,7 @@ func (w *Window) splitPane(dir SplitDir) {
 
 	w.paneID++
 	newPaneID := w.paneID
-	newRef := StartPane(newPaneID, w.rows, w.cols, shell, cwd, w.ref)
+	newRef := StartPane(newPaneID, w.rows, w.cols, shell, cwd, w.ref, w.logger)
 	w.panes[newPaneID] = newRef
 	w.paneOrder = append(w.paneOrder, newPaneID)
 	w.root, _ = splitAroundPane(w.root, w.active, dir, newPaneID)
@@ -402,7 +379,7 @@ func (w *Window) restoreWindowLayout(root *SplitTreeSnapshot, activePane uint32)
 	collectTreePaneIDs(restored, paneIDs)
 	for paneID := range paneIDs {
 		if _, ok := w.panes[paneID]; !ok {
-			Warnf("window %d: restore layout references missing pane %d", w.id, paneID)
+			w.logger.Warnf("window %d: restore layout references missing pane %d", w.id, paneID)
 			return
 		}
 	}
@@ -843,7 +820,7 @@ func clampSplitRatio(ratio float64, avail int) float64 {
 }
 
 func (w *Window) resizeAllPanes(rows, cols int) {
-	Infof("window %d: resizing to %dx%d (was %dx%d)", w.id, rows, cols, w.rows, w.cols)
+	w.logger.Infof("window %d: resizing to %dx%d (was %dx%d)", w.id, rows, cols, w.rows, w.cols)
 	w.rows = rows
 	w.cols = cols
 	w.syncLayout()
@@ -941,7 +918,7 @@ func (w *Window) syncLayout() {
 	w.layout = layouts
 	for _, pl := range w.layout {
 		if paneRef, ok := w.panes[pl.paneID]; ok {
-			Infof("window %d: resizing pane %d to %dx%d at %d,%d", w.id, pl.paneID, pl.rows, pl.cols, pl.row, pl.col)
+			w.logger.Infof("window %d: resizing pane %d to %dx%d at %d,%d", w.id, pl.paneID, pl.rows, pl.cols, pl.row, pl.col)
 			paneRef.Send(ResizeTerm{Rows: pl.rows, Cols: pl.cols})
 		}
 	}

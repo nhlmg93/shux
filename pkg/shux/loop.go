@@ -59,6 +59,38 @@ func (r *loopRef) shutdown() {
 	<-r.done
 }
 
+// Public methods for embedding types
+
+// Send sends a message to the loop's inbox. Returns false if stopped.
+func (r *loopRef) Send(msg any) bool {
+	if r == nil {
+		return false
+	}
+	return r.send(msg)
+}
+
+// Ask sends a message and returns a channel for the reply. Returns nil if stopped.
+func (r *loopRef) Ask(msg any) chan any {
+	if r == nil {
+		return nil
+	}
+	return r.ask(msg)
+}
+
+// Stop signals the loop to stop (idempotent).
+func (r *loopRef) Stop() {
+	if r != nil {
+		r.stopLoop()
+	}
+}
+
+// Shutdown stops the loop and waits for it to complete.
+func (r *loopRef) Shutdown() {
+	if r != nil {
+		r.shutdown()
+	}
+}
+
 type asker interface {
 	Ask(msg any) chan any
 }

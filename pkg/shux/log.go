@@ -20,10 +20,69 @@ const (
 
 var (
 	// Logger is the global shux logger, writes to ~/.local/share/shux/shux.log
+	// Deprecated: Use dependency injection with the ShuxLogger interface instead
 	Logger   *log.Logger
 	logLevel LogLevel = LevelInfo // Default level (set to LevelDebug for development)
 	initOnce sync.Once
 )
+
+// ShuxLogger interface for dependency injection
+type ShuxLogger interface {
+	Infof(format string, args ...interface{})
+	Warnf(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+}
+
+// NoOpLogger is a logger that does nothing. Useful for tests.
+type NoOpLogger struct{}
+
+func (NoOpLogger) Infof(format string, args ...interface{})  {}
+func (NoOpLogger) Warnf(format string, args ...interface{})  {}
+func (NoOpLogger) Errorf(format string, args ...interface{}) {}
+func (NoOpLogger) Debugf(format string, args ...interface{}) {}
+
+// DefaultShuxLogger returns a ShuxLogger that wraps the global Logger.
+// Returns NoOpLogger if the global Logger is not initialized.
+func DefaultShuxLogger() ShuxLogger {
+	if Logger == nil {
+		return NoOpLogger{}
+	}
+	return &StdLogger{Logger}
+}
+
+// StdLogger adapts *log.Logger to the ShuxLogger interface
+type StdLogger struct {
+	*log.Logger
+}
+
+func (l *StdLogger) Infof(format string, args ...interface{}) {
+	if l.Logger == nil || logLevel > LevelInfo {
+		return
+	}
+	l.Printf("[INFO] "+format, args...)
+}
+
+func (l *StdLogger) Warnf(format string, args ...interface{}) {
+	if l.Logger == nil || logLevel > LevelWarn {
+		return
+	}
+	l.Printf("[WARN] "+format, args...)
+}
+
+func (l *StdLogger) Errorf(format string, args ...interface{}) {
+	if l.Logger == nil {
+		return
+	}
+	l.Printf("[ERROR] "+format, args...)
+}
+
+func (l *StdLogger) Debugf(format string, args ...interface{}) {
+	if l.Logger == nil || logLevel > LevelDebug {
+		return
+	}
+	l.Printf("[DEBUG] "+format, args...)
+}
 
 // InitLogger initializes the global logger to write to file
 func InitLogger() error {

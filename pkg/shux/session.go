@@ -2,38 +2,14 @@ package shux
 
 import "fmt"
 
+// SessionRef is a reference to a session loop. Methods are promoted from loopRef.
 type SessionRef struct {
 	*loopRef
 }
 
-func (r *SessionRef) Send(msg any) bool {
-	if r == nil {
-		return false
-	}
-	return r.send(msg)
-}
-
-func (r *SessionRef) Ask(msg any) chan any {
-	if r == nil {
-		return nil
-	}
-	return r.ask(msg)
-}
-
-func (r *SessionRef) Stop() {
-	if r != nil {
-		r.stopLoop()
-	}
-}
-
-func (r *SessionRef) Shutdown() {
-	if r != nil {
-		r.shutdown()
-	}
-}
-
 type Session struct {
 	ref         *SessionRef
+	logger      ShuxLogger
 	notify      func(any)
 	id          uint32
 	name        string
@@ -46,44 +22,46 @@ type Session struct {
 	snapshot    *SessionSnapshot
 }
 
-func NewSession(id uint32) *Session {
-	return NewNamedSessionWithShell(id, DefaultSessionName, DefaultShell)
+func NewSession(id uint32, logger ShuxLogger) *Session {
+	return NewNamedSessionWithShell(id, DefaultSessionName, DefaultShell, logger)
 }
 
-func NewSessionWithShell(id uint32, shell string) *Session {
-	return NewNamedSessionWithShell(id, DefaultSessionName, shell)
+func NewSessionWithShell(id uint32, shell string, logger ShuxLogger) *Session {
+	return NewNamedSessionWithShell(id, DefaultSessionName, shell, logger)
 }
 
-func NewNamedSessionWithShell(id uint32, name, shell string) *Session {
+func NewNamedSessionWithShell(id uint32, name, shell string, logger ShuxLogger) *Session {
 	name = normalizeSessionName(name)
 	return &Session{
 		id:          id,
 		name:        name,
+		logger:      logger,
 		windows:     make(map[uint32]*WindowRef),
 		subscribers: make(map[chan any]struct{}),
 		shell:       normalizeShell(shell),
 	}
 }
 
-func StartSession(id uint32, notify func(any)) *SessionRef {
-	return StartNamedSessionWithShell(id, DefaultSessionName, DefaultShell, notify)
+func StartSession(id uint32, notify func(any), logger ShuxLogger) *SessionRef {
+	return StartNamedSessionWithShell(id, DefaultSessionName, DefaultShell, notify, logger)
 }
 
-func StartSessionWithShell(id uint32, shell string, notify func(any)) *SessionRef {
-	return StartNamedSessionWithShell(id, DefaultSessionName, shell, notify)
+func StartSessionWithShell(id uint32, shell string, notify func(any), logger ShuxLogger) *SessionRef {
+	return StartNamedSessionWithShell(id, DefaultSessionName, shell, notify, logger)
 }
 
-func StartNamedSessionWithShell(id uint32, name, shell string, notify func(any)) *SessionRef {
-	s := NewNamedSessionWithShell(id, name, shell)
+func StartNamedSessionWithShell(id uint32, name, shell string, notify func(any), logger ShuxLogger) *SessionRef {
+	s := NewNamedSessionWithShell(id, name, shell, logger)
 	s.notify = notify
 	return startSessionLoop(s)
 }
 
-func StartSessionFromSnapshot(snapshot *SessionSnapshot, notify func(any)) *SessionRef {
+func StartSessionFromSnapshot(snapshot *SessionSnapshot, notify func(any), logger ShuxLogger) *SessionRef {
 	name := normalizeSessionName(snapshot.SessionName)
 	s := &Session{
 		id:          snapshot.ID,
 		name:        name,
+		logger:      logger,
 		notify:      notify,
 		windows:     make(map[uint32]*WindowRef),
 		subscribers: make(map[chan any]struct{}),
@@ -110,7 +88,7 @@ func (s *Session) run() {
 		close(s.ref.done)
 	}()
 
-	Infof("session: init id=%d name=%s shell=%s restore=%t", s.id, s.name, s.shell, s.snapshot != nil)
+	s.logger.Infof("session: init id=%d name=%s shell=%s restore=%t", s.id, s.name, s.shell, s.snapshot != nil)
 	if s.snapshot != nil {
 		s.restoreFromSnapshot()
 		s.snapshot = nil
@@ -133,14 +111,14 @@ func (s *Session) terminate(reason error) {
 		}
 	}
 	if reason != nil {
-		Errorf("session: crash id=%d name=%s reason=%v", s.id, s.name, reason)
+		s.logger.Errorf("session: crash id=%d name=%s reason=%v", s.id, s.name, reason)
 		return
 	}
-	Infof("session: terminate id=%d name=%s", s.id, s.name)
+	s.logger.Infof("session: terminate id=%d name=%s", s.id, s.name)
 }
 
 func (s *Session) restoreFromSnapshot() {
-	Infof("restore: session=%s id=%d windows=%d activeWindow=%d", s.name, s.id, len(s.snapshot.Windows), s.snapshot.ActiveWindow)
+	s.logger.Infof("restore: session=%s id=%d windows=%d activeWindow=%d", s.name, s.id, len(s.snapshot.Windows), s.snapshot.ActiveWindow)
 
 	windowsByID := make(map[uint32]WindowSnapshot, len(s.snapshot.Windows))
 	var maxWindowID uint32
@@ -157,8 +135,8 @@ func (s *Session) restoreFromSnapshot() {
 			continue
 		}
 
-		Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
-		windowRef := StartWindow(winSnap.ID, s.ref)
+		s.logger.Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
+		windowRef := StartWindow(winSnap.ID, s.ref, s.logger)
 		s.windows[winSnap.ID] = windowRef
 		s.windowOrder = append(s.windowOrder, winSnap.ID)
 
@@ -171,7 +149,7 @@ func (s *Session) restoreFromSnapshot() {
 			if !ok {
 				continue
 			}
-			Infof("restore: session=%s window=%d pane=%d shell=%s cwd=%s rows=%d cols=%d", s.name, winSnap.ID, paneSnap.ID, paneSnap.Shell, paneSnap.CWD, paneSnap.Rows, paneSnap.Cols)
+			s.logger.Infof("restore: session=%s window=%d pane=%d shell=%s cwd=%s rows=%d cols=%d", s.name, winSnap.ID, paneSnap.ID, paneSnap.Shell, paneSnap.CWD, paneSnap.Rows, paneSnap.Cols)
 			windowRef.Send(CreatePane{
 				ID:    paneSnap.ID,
 				Rows:  paneSnap.Rows,
@@ -194,7 +172,7 @@ func (s *Session) restoreFromSnapshot() {
 		s.active = s.windowOrder[0]
 	}
 
-	Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
+	s.logger.Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
 }
 
 func (s *Session) receive(msg any) {
@@ -229,7 +207,7 @@ func (s *Session) receive(msg any) {
 		s.forwardToActiveWindow(m)
 	case DetachSession:
 		if err := s.handleDetach(); err != nil {
-			Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
+			s.logger.Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)
 		}
 	case askEnvelope:
 		s.handleAsk(m)
@@ -281,11 +259,11 @@ func (s *Session) handleAsk(envelope askEnvelope) {
 }
 
 func (s *Session) handleDetach() error {
-	Infof("detach: session=%s id=%d requested windows=%d", s.name, s.id, len(s.windowOrder))
+	s.logger.Infof("detach: session=%s id=%d requested windows=%d", s.name, s.id, len(s.windowOrder))
 	snapshot := s.buildSnapshot()
 	path := SessionSnapshotPath(s.name)
-	Infof("detach: session=%s id=%d snapshot-built windows=%d activeWindow=%d path=%s", s.name, s.id, len(snapshot.Windows), snapshot.ActiveWindow, path)
-	if err := SaveSnapshot(path, snapshot); err != nil {
+	s.logger.Infof("detach: session=%s id=%d snapshot-built windows=%d activeWindow=%d path=%s", s.name, s.id, len(snapshot.Windows), snapshot.ActiveWindow, path)
+	if err := SaveSnapshot(path, snapshot, s.logger); err != nil {
 		return fmt.Errorf("save snapshot %q: %w", path, err)
 	}
 
@@ -294,7 +272,7 @@ func (s *Session) handleDetach() error {
 	}
 
 	s.notifyEvent(SessionEmpty{ID: s.id})
-	Infof("detach: session=%s id=%d stopping loop", s.name, s.id)
+	s.logger.Infof("detach: session=%s id=%d stopping loop", s.name, s.id)
 	s.ref.Stop()
 	return nil
 }
@@ -336,7 +314,7 @@ func (s *Session) activeWindow() *WindowRef {
 }
 
 func (s *Session) resizeActiveWindow(rows, cols int) {
-	Infof("session: id=%d name=%s resize-active-window rows=%d cols=%d", s.id, s.name, rows, cols)
+	s.logger.Infof("session: id=%d name=%s resize-active-window rows=%d cols=%d", s.id, s.name, rows, cols)
 	if win := s.activeWindow(); win != nil {
 		win.Send(ResizeMsg{Rows: rows, Cols: cols})
 	}
@@ -344,8 +322,8 @@ func (s *Session) resizeActiveWindow(rows, cols int) {
 
 func (s *Session) createWindow(rows, cols int) {
 	s.windowID++
-	Infof("session: id=%d name=%s create-window window=%d rows=%d cols=%d shell=%s", s.id, s.name, s.windowID, rows, cols, s.shell)
-	ref := StartWindow(s.windowID, s.ref)
+	s.logger.Infof("session: id=%d name=%s create-window window=%d rows=%d cols=%d shell=%s", s.id, s.name, s.windowID, rows, cols, s.shell)
+	ref := StartWindow(s.windowID, s.ref, s.logger)
 	s.windows[s.windowID] = ref
 	s.windowOrder = append(s.windowOrder, s.windowID)
 	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: s.shell})
@@ -374,7 +352,7 @@ func (s *Session) switchWindow(delta int) {
 	}
 	oldActive := s.active
 	s.active = newActive
-	Infof("session: id=%d name=%s switch-window from=%d to=%d delta=%d", s.id, s.name, oldActive, newActive, delta)
+	s.logger.Infof("session: id=%d name=%s switch-window from=%d to=%d delta=%d", s.id, s.name, oldActive, newActive, delta)
 	s.forwardUpdate(PaneContentUpdated{})
 }
 

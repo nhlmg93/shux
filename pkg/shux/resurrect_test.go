@@ -6,8 +6,17 @@ import (
 	"time"
 )
 
+// testLogger returns a logger for tests. Returns NoOpLogger if global Logger is not initialized.
+func testLogger() ShuxLogger {
+	if Logger == nil {
+		return NoOpLogger{}
+	}
+	return &StdLogger{Logger}
+}
+
 func TestStartSessionFromSnapshot(t *testing.T) {
 	super := newTestSupervisor()
+	logger := testLogger()
 
 	snapshot := &SessionSnapshot{
 		Version:      SnapshotVersion,
@@ -26,7 +35,7 @@ func TestStartSessionFromSnapshot(t *testing.T) {
 		}},
 	}
 
-	sessionRef := StartSessionFromSnapshot(snapshot, super.handle)
+	sessionRef := StartSessionFromSnapshot(snapshot, super.handle, logger)
 	if sessionRef == nil {
 		t.Fatal("StartSessionFromSnapshot returned nil")
 	}
@@ -119,11 +128,12 @@ func TestRestoreSessionFromSnapshot(t *testing.T) {
 	if err := EnsureSessionDir("test-session"); err != nil {
 		t.Fatalf("EnsureSessionDir failed: %v", err)
 	}
-	if err := SaveSnapshot(SessionSnapshotPath("test-session"), snapshot); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(SessionSnapshotPath("test-session"), snapshot, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
-	sessionRef, err := RestoreSessionFromSnapshot("test-session", super.handle)
+	sessionRef, err := RestoreSessionFromSnapshot("test-session", super.handle, logger)
 	if err != nil {
 		t.Fatalf("RestoreSessionFromSnapshot failed: %v", err)
 	}
@@ -153,7 +163,8 @@ func TestRestoreSessionFromSnapshotNotFound(t *testing.T) {
 	defer restoreHome(t, oldHome)
 
 	super := newTestSupervisor()
-	if _, err := RestoreSessionFromSnapshot("nonexistent", super.handle); err == nil {
+	logger := testLogger()
+	if _, err := RestoreSessionFromSnapshot("nonexistent", super.handle, logger); err == nil {
 		t.Error("Expected error for non-existent snapshot")
 	}
 }
@@ -180,7 +191,8 @@ func TestSessionDetachSavesNamedSnapshot(t *testing.T) {
 	defer restoreHome(t, oldHome)
 
 	super := newTestSupervisor()
-	sessionRef := StartNamedSessionWithShell(1, "work", "/bin/sh", super.handle)
+	logger := testLogger()
+	sessionRef := StartNamedSessionWithShell(1, "work", "/bin/sh", super.handle, logger)
 	defer sessionRef.Shutdown()
 
 	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
@@ -198,7 +210,7 @@ func TestSessionDetachSavesNamedSnapshot(t *testing.T) {
 		t.Fatalf("expected snapshot at %s", path)
 	}
 
-	snapshot, err := LoadSnapshot(path)
+	snapshot, err := LoadSnapshot(path, testLogger())
 	if err != nil {
 		t.Fatalf("load snapshot: %v", err)
 	}
@@ -242,11 +254,12 @@ func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 			},
 		},
 	}
-	if err := SaveSnapshot(SessionSnapshotPath("project"), snapshot); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(SessionSnapshotPath("project"), snapshot, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
-	sessionRef, err := RestoreSessionFromSnapshot("project", super.handle)
+	sessionRef, err := RestoreSessionFromSnapshot("project", super.handle, logger)
 	if err != nil {
 		t.Fatalf("RestoreSessionFromSnapshot failed: %v", err)
 	}
@@ -339,11 +352,12 @@ func TestRestoreSessionPreservesNestedSplitTree(t *testing.T) {
 			},
 		}},
 	}
-	if err := SaveSnapshot(SessionSnapshotPath("nested"), snapshot); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(SessionSnapshotPath("nested"), snapshot, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
-	sessionRef, err := RestoreSessionFromSnapshot("nested", super.handle)
+	sessionRef, err := RestoreSessionFromSnapshot("nested", super.handle, logger)
 	if err != nil {
 		t.Fatalf("RestoreSessionFromSnapshot failed: %v", err)
 	}

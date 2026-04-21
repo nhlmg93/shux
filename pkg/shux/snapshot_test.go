@@ -45,7 +45,8 @@ func TestSaveAndLoadSnapshot(t *testing.T) {
 	}
 
 	// Save
-	if err := SaveSnapshot(path, original); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(path, original, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
@@ -55,7 +56,7 @@ func TestSaveAndLoadSnapshot(t *testing.T) {
 	}
 
 	// Load
-	loaded, err := LoadSnapshot(path)
+	loaded, err := LoadSnapshot(path, logger)
 	if err != nil {
 		t.Fatalf("LoadSnapshot failed: %v", err)
 	}
@@ -141,11 +142,12 @@ func TestLoadSnapshotVersionMismatch(t *testing.T) {
 		ID:      1,
 	}
 
-	if err := SaveSnapshot(path, snapshot); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(path, snapshot, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
-	_, err := LoadSnapshot(path)
+	_, err := LoadSnapshot(path, logger)
 	if err == nil {
 		t.Error("Expected error for version mismatch, got nil")
 	}
@@ -155,7 +157,7 @@ func TestLoadSnapshotNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "nonexistent.gob")
 
-	_, err := LoadSnapshot(path)
+	_, err := LoadSnapshot(path, testLogger())
 	if err == nil {
 		t.Error("Expected error for missing file, got nil")
 	}
@@ -170,12 +172,13 @@ func TestDeleteSnapshot(t *testing.T) {
 		Version: SnapshotVersion,
 		ID:      1,
 	}
-	if err := SaveSnapshot(path, snapshot); err != nil {
+	logger := testLogger()
+	if err := SaveSnapshot(path, snapshot, logger); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 
 	// Delete
-	if err := DeleteSnapshot(path); err != nil {
+	if err := DeleteSnapshot(path, logger); err != nil {
 		t.Fatalf("DeleteSnapshot failed: %v", err)
 	}
 
@@ -185,7 +188,7 @@ func TestDeleteSnapshot(t *testing.T) {
 	}
 
 	// Deleting non-existent should not error
-	if err := DeleteSnapshot(path); err != nil {
+	if err := DeleteSnapshot(path, logger); err != nil {
 		t.Errorf("DeleteSnapshot on non-existent file should not error: %v", err)
 	}
 }
@@ -263,7 +266,7 @@ func TestSessionSnapshotExists(t *testing.T) {
 		t.Fatalf("EnsureSessionDir failed: %v", err)
 	}
 	snapshot := &SessionSnapshot{Version: SnapshotVersion, ID: 1}
-	if err := SaveSnapshot(SessionSnapshotPath(name), snapshot); err != nil {
+	if err := SaveSnapshot(SessionSnapshotPath(name), snapshot, testLogger()); err != nil {
 		t.Fatalf("SaveSnapshot failed: %v", err)
 	}
 

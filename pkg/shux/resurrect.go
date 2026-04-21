@@ -3,10 +3,12 @@ package shux
 import "fmt"
 
 // RestoreSessionFromSnapshot loads a session from disk and recreates the loop hierarchy.
-func RestoreSessionFromSnapshot(name string, notify func(any)) (*SessionRef, error) {
+func RestoreSessionFromSnapshot(name string, notify func(any), logger ShuxLogger) (*SessionRef, error) {
 	path := SessionSnapshotPath(name)
-	Infof("restore: begin session=%s path=%s", name, path)
-	snapshot, err := LoadSnapshot(path)
+	if logger != nil {
+		logger.Infof("restore: begin session=%s path=%s", name, path)
+	}
+	snapshot, err := LoadSnapshot(path, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load snapshot: %w", err)
 	}
@@ -14,11 +16,15 @@ func RestoreSessionFromSnapshot(name string, notify func(any)) (*SessionRef, err
 		snapshot.SessionName = name
 	}
 
-	Infof("restore: session=%s id=%d shell=%s windows=%d", snapshot.SessionName, snapshot.ID, snapshot.Shell, len(snapshot.Windows))
+	if logger != nil {
+		logger.Infof("restore: session=%s id=%d shell=%s windows=%d", snapshot.SessionName, snapshot.ID, snapshot.Shell, len(snapshot.Windows))
+	}
 
-	sessionRef := StartSessionFromSnapshot(snapshot, notify)
+	sessionRef := StartSessionFromSnapshot(snapshot, notify, logger)
 
-	Infof("restore: session=%s id=%d started ref=%p", snapshot.SessionName, snapshot.ID, sessionRef)
+	if logger != nil {
+		logger.Infof("restore: session=%s id=%d started ref=%p", snapshot.SessionName, snapshot.ID, sessionRef)
+	}
 
 	return sessionRef, nil
 }

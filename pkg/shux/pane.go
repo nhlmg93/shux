@@ -11,34 +11,9 @@ import (
 
 var _ Resizable = (*Pane)(nil)
 
+// PaneRef is a reference to a pane loop. Methods are promoted from loopRef.
 type PaneRef struct {
 	*loopRef
-}
-
-func (r *PaneRef) Send(msg any) bool {
-	if r == nil {
-		return false
-	}
-	return r.send(msg)
-}
-
-func (r *PaneRef) Ask(msg any) chan any {
-	if r == nil {
-		return nil
-	}
-	return r.ask(msg)
-}
-
-func (r *PaneRef) Stop() {
-	if r != nil {
-		r.stopLoop()
-	}
-}
-
-func (r *PaneRef) Shutdown() {
-	if r != nil {
-		r.shutdown()
-	}
 }
 
 type PaneCell struct {
@@ -70,6 +45,7 @@ type PaneContent struct {
 
 type Pane struct {
 	ref           *PaneRef
+	logger        ShuxLogger
 	parent        *WindowRef
 	id            uint32
 	term          *libghostty.Terminal
@@ -78,7 +54,7 @@ type Pane struct {
 	rowCells      *libghostty.RenderStateRowCells
 	keyEncoder    *libghostty.KeyEncoder
 	mouseEncoder  *libghostty.MouseEncoder
-	pty           *PTY
+	pty           Pty
 	mouseButtons  map[MouseButton]bool
 	rows          int
 	cols          int
@@ -99,11 +75,11 @@ type (
 	paneProcessExited struct{ Err error }
 )
 
-func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
+func NewPane(id uint32, rows, cols int, shell, cwd string, logger ShuxLogger) *Pane {
 	originalRows, originalCols := rows, cols
 	rows, cols, changed := sanitizeTermSize(rows, cols)
 	if changed {
-		Warnf("pane: id=%d sanitize-size from=%dx%d to=%dx%d", id, originalRows, originalCols, rows, cols)
+		logger.Warnf("pane: id=%d sanitize-size from=%dx%d to=%dx%d", id, originalRows, originalCols, rows, cols)
 	}
 	return &Pane{
 		id:           id,
@@ -111,12 +87,13 @@ func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
 		cols:         cols,
 		shell:        shell,
 		cwd:          cwd,
+		logger:       logger,
 		mouseButtons: make(map[MouseButton]bool),
 	}
 }
 
-func StartPane(id uint32, rows, cols int, shell, cwd string, parent *WindowRef) *PaneRef {
-	p := NewPane(id, rows, cols, shell, cwd)
+func StartPane(id uint32, rows, cols int, shell, cwd string, parent *WindowRef, logger ShuxLogger) *PaneRef {
+	p := NewPane(id, rows, cols, shell, cwd, logger)
 	p.parent = parent
 	ref := &PaneRef{loopRef: newLoopRef(256)}
 	p.ref = ref
@@ -135,7 +112,7 @@ func (p *Pane) run() {
 	}()
 
 	if err := p.init(); err != nil {
-		Errorf("pane: id=%d init failed err=%v", p.id, err)
+		p.logger.Errorf("pane: id=%d init failed err=%v", p.id, err)
 		if p.parent != nil {
 			p.parent.Send(PaneExited{ID: p.id})
 		}
@@ -154,7 +131,7 @@ func (p *Pane) run() {
 }
 
 func (p *Pane) init() error {
-	Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
+	p.logger.Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
 
 	ghosttyTerm, err := libghostty.NewTerminal(
 		libghostty.WithSize(uint16(p.cols), uint16(p.rows)),
@@ -170,8 +147,8 @@ func (p *Pane) init() error {
 			p.markDirty()
 		}),
 		libghostty.WithWritePty(func(t *libghostty.Terminal, data []byte) {
-			if p.pty != nil && p.pty.TTY != nil {
-				_, _ = p.pty.TTY.Write(data)
+			if p.pty != nil {
+				_, _ = p.pty.Write(data)
 			}
 		}),
 	)
@@ -220,7 +197,7 @@ func (p *Pane) init() error {
 	}
 	mouseEncoder.SetOptTrackLastCell(true)
 
-	Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
+	p.logger.Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
 	cmd := exec.Command(p.shell)
 	env := os.Environ()
 	termSet := false
@@ -249,7 +226,7 @@ func (p *Pane) init() error {
 		return err
 	}
 
-	Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
+	p.logger.Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
 	p.term = ghosttyTerm
 	p.renderState = renderState
 	p.rowIterator = rowIterator
@@ -266,9 +243,9 @@ func (p *Pane) init() error {
 
 func (p *Pane) terminate(reason error) {
 	if reason != nil {
-		Errorf("pane: crash id=%d pid=%d reason=%v", p.id, p.pid(), reason)
+		p.logger.Errorf("pane: crash id=%d pid=%d reason=%v", p.id, p.pid(), reason)
 	} else {
-		Infof("pane: terminate id=%d pid=%d", p.id, p.pid())
+		p.logger.Infof("pane: terminate id=%d pid=%d", p.id, p.pid())
 	}
 	if p.updateTimer != nil {
 		p.updateTimer.Stop()
@@ -303,7 +280,7 @@ func (p *Pane) readLoop() {
 
 	go func() {
 		for {
-			n, err := p.pty.TTY.Read(buf)
+			n, err := p.pty.Read(buf)
 			if n > 0 && p.ref != nil {
 				chunk := append([]byte(nil), buf[:n]...)
 				p.ref.Send(panePTYData{Data: chunk})
@@ -344,7 +321,7 @@ func (p *Pane) receive(msg any) {
 		if p.stopped {
 			return
 		}
-		Infof("pane: id=%d process-exited pid=%d err=%v", p.id, p.pid(), m.Err)
+		p.logger.Infof("pane: id=%d process-exited pid=%d err=%v", p.id, p.pid(), m.Err)
 		p.stopped = true
 		if p.parent != nil {
 			p.parent.Send(PaneExited{ID: p.id})
@@ -357,7 +334,7 @@ func (p *Pane) receive(msg any) {
 	case MouseInput:
 		p.handleMouseInput(m)
 	case ResizeTerm:
-		Infof("pane: id=%d resize from=%dx%d to=%dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
+		p.logger.Infof("pane: id=%d resize from=%dx%d to=%dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
 		p.Resize(m.Rows, m.Cols)
 		if p.pty != nil {
 			_ = p.pty.Resize(m.Rows, m.Cols)
@@ -367,7 +344,7 @@ func (p *Pane) receive(msg any) {
 		if p.stopped {
 			return
 		}
-		Infof("pane: id=%d kill requested pid=%d", p.id, p.pid())
+		p.logger.Infof("pane: id=%d kill requested pid=%d", p.id, p.pid())
 		p.stopped = true
 		if p.parent != nil {
 			p.parent.Send(PaneExited{ID: p.id})
@@ -411,10 +388,10 @@ func (p *Pane) handleAsk(envelope askEnvelope) {
 }
 
 func (p *Pane) writeToPTY(data []byte) {
-	if len(data) == 0 || p.pty == nil || p.pty.TTY == nil {
+	if len(data) == 0 || p.pty == nil {
 		return
 	}
-	_, _ = p.pty.TTY.Write(data)
+	_, _ = p.pty.Write(data)
 }
 
 func (p *Pane) markDirty() {
@@ -442,7 +419,7 @@ func (p *Pane) Resize(rows, cols int) {
 	originalRows, originalCols := rows, cols
 	rows, cols, changed := sanitizeTermSize(rows, cols)
 	if changed {
-		Warnf("pane: id=%d sanitize-resize from=%dx%d to=%dx%d", p.id, originalRows, originalCols, rows, cols)
+		p.logger.Warnf("pane: id=%d sanitize-resize from=%dx%d to=%dx%d", p.id, originalRows, originalCols, rows, cols)
 	}
 	if p.term != nil {
 		_ = p.term.Resize(uint16(cols), uint16(rows), 0, 0)

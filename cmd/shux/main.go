@@ -30,20 +30,21 @@ func runApp(opts RunOptions) error {
 		err        error
 	)
 
+	logger := shux.DefaultShuxLogger()
 	if shux.SessionSnapshotExists(sessionName) {
 		shux.Infof("startup: session=%s mode=restore path=%s", sessionName, snapshotPath)
-		sessionRef, err = shux.RestoreSessionFromSnapshot(sessionName, nil)
+		sessionRef, err = shux.RestoreSessionFromSnapshot(sessionName, nil, logger)
 		if err != nil {
 			return fmt.Errorf("failed to restore session: %w", err)
 		}
-		if err := shux.DeleteSnapshot(snapshotPath); err != nil {
+		if err := shux.DeleteSnapshot(snapshotPath, logger); err != nil {
 			shux.Warnf("startup: session=%s failed to delete restored snapshot path=%s err=%v", sessionName, snapshotPath, err)
 		} else {
 			shux.Infof("startup: session=%s consumed snapshot path=%s", sessionName, snapshotPath)
 		}
 	} else {
 		shux.Infof("startup: session=%s mode=create shell=%s", sessionName, opts.Shell)
-		sessionRef = shux.StartNamedSessionWithShell(1, sessionName, opts.Shell, nil)
+		sessionRef = shux.StartNamedSessionWithShell(1, sessionName, opts.Shell, nil, logger)
 		shux.Infof("startup: session=%s created shell=%s", sessionName, opts.Shell)
 	}
 	defer sessionRef.Shutdown()
