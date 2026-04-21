@@ -2,21 +2,46 @@
 
 > you shouldn't have.
 
-`shux` is an experimental terminal multiplexer built around full terminal emulation, a single-process design, and simple disk-backed session restore.
+`shux` is a terminal multiplexer for Linux built around three ideas:
 
-A larger docs site can come later. For now, this README just covers the basics.
+- **real terminal emulation** via Ghostty
+- **simple actor-style concurrency** for sessions, windows, and panes
+- **disk-backed recovery** so sessions can be detached, reattached, and restored
+
+It targets the same daily workflow space as tmux, but with a smaller, more explicit architecture.
 
 ## Status
 
-Pre-release and still changing quickly.
-Expect rough edges, missing features, and config/runtime details that may evolve.
+**Pre-release.**
+
+shux is already useful for real workflows, but it is still moving quickly. Core session/window/pane behavior, splits, navigation, snapshots, detach/reattach, and restore are in place. Some tmux-like actions and UX paths are still incomplete.
+
+## Documentation
+
+The docs site lives in [`docs/`](./docs).
+
+Start it locally with:
+
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+Useful entry points:
+
+- [`docs/src/content/docs/introduction.md`](./docs/src/content/docs/introduction.md)
+- [`docs/src/content/docs/installation.md`](./docs/src/content/docs/installation.md)
+- [`docs/src/content/docs/quick-start.md`](./docs/src/content/docs/quick-start.md)
+- [`ROADMAP.md`](./ROADMAP.md)
 
 ## Highlights
 
 - Full terminal emulation via Ghostty
 - True color, mouse, Unicode, and scrollback support
-- Single-process design with no daemon or client/server split
-- Disk-backed detach and restore
+- Named sessions with disk-backed snapshots
+- Live reattach when the owner is still running
+- Snapshot restore when the owner is gone
 - Lua config with lightweight plugin hooks
 
 ## Build
@@ -26,7 +51,7 @@ Requirements:
 - Go 1.26+
 - Zig 0.15.2
 - `pkg-config`
-- a C toolchain
+- a C/C++ toolchain
 
 Build `shux`:
 
@@ -42,10 +67,7 @@ That produces `./shux` in the repo root.
 ./shux
 ```
 
-## Contributing
-
-Contributions are welcome, but the project is still pre-release and moving quickly.
-Small, focused changes are easiest to review.
+## Development
 
 Useful commands:
 
@@ -57,10 +79,9 @@ make ci-test
 
 Notes:
 
-- `make test` runs the local unit/integration suite
-- `make ci-test` runs the full Docker-backed suite used for CI, including integration, e2e, fuzz seed coverage, and stress tests
+- `make test` runs the local Go test suite
+- `make ci-test` runs the Docker-backed CI suite
 - `make test-native` is kept as a compatibility alias for `make test`
-- CI uses both the local suite and the Docker-backed CI suite
 
 ## License
 

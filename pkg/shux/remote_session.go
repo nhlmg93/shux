@@ -11,15 +11,15 @@ import (
 // RemoteSessionRef proxies session operations over IPC to a live owner.
 // It mimics SessionRef's interface for UI compatibility.
 type RemoteSessionRef struct {
-	client       *IPCClient
-	sessionName  string
-	stopped      atomic.Bool
-	mu           sync.RWMutex
-	subscribers  map[chan any]struct{}
-	updates      chan any
-	stop         chan struct{}
-	wg           sync.WaitGroup
-	logger       ShuxLogger
+	client      *IPCClient
+	sessionName string
+	stopped     atomic.Bool
+	mu          sync.RWMutex
+	subscribers map[chan any]struct{}
+	updates     chan any
+	stop        chan struct{}
+	wg          sync.WaitGroup
+	logger      ShuxLogger
 }
 
 // NewRemoteSessionRef creates a new remote session reference connected to a live owner.

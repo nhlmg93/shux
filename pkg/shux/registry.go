@@ -9,10 +9,10 @@ import (
 // It survives controller restarts and provides stable identity.
 type Registry struct {
 	mu       sync.RWMutex
-	runtimes map[uint32]*PaneRuntime       // pane_id -> runtime
-	panes    map[uint32]*PaneController    // pane_id -> controller
-	windows  map[uint32]*WindowController  // window_id -> controller
-	session  *SessionController            // single session controller
+	runtimes map[uint32]*PaneRuntime      // pane_id -> runtime
+	panes    map[uint32]*PaneController   // pane_id -> controller
+	windows  map[uint32]*WindowController // window_id -> controller
+	session  *SessionController           // single session controller
 }
 
 // NewRegistry creates a new empty registry.
@@ -190,19 +190,19 @@ func (r *Registry) Stats() RegistryStats {
 	defer r.mu.RUnlock()
 
 	return RegistryStats{
-		RuntimeCount:  len(r.runtimes),
-		PaneCount:     len(r.panes),
-		WindowCount:   len(r.windows),
-		HasSession:    r.session != nil,
+		RuntimeCount: len(r.runtimes),
+		PaneCount:    len(r.panes),
+		WindowCount:  len(r.windows),
+		HasSession:   r.session != nil,
 	}
 }
 
 // RegistryStats contains statistics about the registry.
 type RegistryStats struct {
-	RuntimeCount  int
-	PaneCount     int
-	WindowCount   int
-	HasSession    bool
+	RuntimeCount int
+	PaneCount    int
+	WindowCount  int
+	HasSession   bool
 }
 
 // Clear removes all entries from the registry.

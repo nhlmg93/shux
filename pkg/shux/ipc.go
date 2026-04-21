@@ -255,12 +255,12 @@ func (s *IPCServer) removeClient(c *IPCConn) {
 
 // IPCClient connects to a session owner's IPC server.
 type IPCClient struct {
-	conn   *IPCConn
-	mu     sync.RWMutex
+	conn    *IPCConn
+	mu      sync.RWMutex
 	handler func(any)
-	stop   chan struct{}
-	wg     sync.WaitGroup
-	logger ShuxLogger
+	stop    chan struct{}
+	wg      sync.WaitGroup
+	logger  ShuxLogger
 }
 
 // DialIPC connects to an IPC server at the given socket path.

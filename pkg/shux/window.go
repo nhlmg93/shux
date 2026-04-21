@@ -149,9 +149,11 @@ func (w *Window) run() {
 
 func (w *Window) terminate(reason error) {
 	for _, pane := range w.panes {
-		if pane != nil {
-			pane.Shutdown()
+		if pane == nil {
+			continue
 		}
+		pane.Send(KillPane{})
+		pane.Shutdown()
 	}
 	if reason != nil {
 		w.logger.Errorf("window: crash id=%d reason=%v", w.id, reason)

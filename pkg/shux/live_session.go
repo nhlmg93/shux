@@ -225,7 +225,7 @@ func LockSessionDir(sessionName string) (string, func(), error) {
 	lockPath := filepath.Join(SessionDir(sessionName), ".owner.lock")
 
 	// Try to create lock file exclusively
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", nil, fmt.Errorf("session lock failed (another owner starting?): %w", err)
 	}

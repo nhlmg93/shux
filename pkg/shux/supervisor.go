@@ -13,17 +13,17 @@ type Supervisor struct {
 	logger   ShuxLogger
 
 	// Configuration
-	maxRestarts     int
-	restartWindow   time.Duration
-	panicCooldown   time.Duration
+	maxRestarts   int
+	restartWindow time.Duration
+	panicCooldown time.Duration
 
 	// Restart tracking
-	restartCounts   map[uint32][]time.Time // entity_id -> restart times
-	restartMu       sync.RWMutex
+	restartCounts map[uint32][]time.Time // entity_id -> restart times
+	restartMu     sync.RWMutex
 
 	// Lifecycle
-	stop   chan struct{}
-	wg     sync.WaitGroup
+	stop chan struct{}
+	wg   sync.WaitGroup
 }
 
 // SupervisorConfig contains configuration for the supervisor.

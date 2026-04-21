@@ -23,9 +23,9 @@ type PaneVisualSnapshot struct {
 	BellCount     uint64
 	Rows          int
 	Cols          int
-	Lines         []string      // Last rendered screen content (text only)
-	Cells         [][]PaneCell  // Full cell data if available
-	VTLog         []byte        // Optional bounded VT byte ring for replay
+	Lines         []string     // Last rendered screen content (text only)
+	Cells         [][]PaneCell // Full cell data if available
+	VTLog         []byte       // Optional bounded VT byte ring for replay
 	UpdatedAtUnix int64
 }
 
@@ -62,7 +62,7 @@ type PlaybackManager struct {
 // NewPlaybackManager creates a new playback manager for a session.
 func NewPlaybackManager(sessionName string, config VisualSnapshotConfig, logger ShuxLogger) (*PlaybackManager, error) {
 	baseDir := filepath.Join(SessionDir(sessionName), "panes")
-	if err := os.MkdirAll(baseDir, 0750); err != nil {
+	if err := os.MkdirAll(baseDir, 0o750); err != nil {
 		return nil, fmt.Errorf("failed to create playback directory: %w", err)
 	}
 
@@ -238,10 +238,10 @@ func (pm *PlaybackManager) decodeSnapshot(data []byte) (*PaneVisualSnapshot, err
 
 // VisualRecoveryResult contains the result of a visual recovery attempt.
 type VisualRecoveryResult struct {
-	PaneID        uint32
-	Success       bool
-	Source        string // "live", "visual_snapshot", "blank"
-	Content       *PaneContent
+	PaneID         uint32
+	Success        bool
+	Source         string // "live", "visual_snapshot", "blank"
+	Content        *PaneContent
 	VisualSnapshot *PaneVisualSnapshot
 }
 
@@ -266,14 +266,14 @@ func (pm *PlaybackManager) RecoverVisualState(paneID uint32, runtime *PaneRuntim
 	visualSnapshot, err := pm.LoadVisualSnapshot(paneID)
 	if err == nil && visualSnapshot != nil {
 		content := &PaneContent{
-			Lines:       visualSnapshot.Lines,
-			Cells:       visualSnapshot.Cells,
-			CursorRow:   visualSnapshot.CursorRow,
-			CursorCol:   visualSnapshot.CursorCol,
-			InAltScreen: visualSnapshot.InAltScreen,
+			Lines:        visualSnapshot.Lines,
+			Cells:        visualSnapshot.Cells,
+			CursorRow:    visualSnapshot.CursorRow,
+			CursorCol:    visualSnapshot.CursorCol,
+			InAltScreen:  visualSnapshot.InAltScreen,
 			CursorHidden: !visualSnapshot.CursorVisible,
-			Title:       visualSnapshot.Title,
-			BellCount:   visualSnapshot.BellCount,
+			Title:        visualSnapshot.Title,
+			BellCount:    visualSnapshot.BellCount,
 		}
 		return &VisualRecoveryResult{
 			PaneID:         paneID,

@@ -13,13 +13,13 @@ const SnapshotVersion = 2
 
 // SessionSnapshot captures the complete state of a session for persistence.
 type SessionSnapshot struct {
-	Version        int
-	SessionName    string
-	ID             uint32
-	Shell          string
-	ActiveWindow   uint32
-	WindowOrder    []uint32
-	Windows        []WindowSnapshot
+	Version      int
+	SessionName  string
+	ID           uint32
+	Shell        string
+	ActiveWindow uint32
+	WindowOrder  []uint32
+	Windows      []WindowSnapshot
 	// Live session metadata (v2)
 	Live           bool
 	OwnerPID       int

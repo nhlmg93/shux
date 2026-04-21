@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mitchellh/go-libghostty"
 )
@@ -38,8 +39,8 @@ type PaneRuntime struct {
 	// Synchronization
 	mu       sync.RWMutex
 	closed   bool
-	stopCh   chan struct{}  // Signals readLoop to exit
-	readDone chan struct{}  // Signals readLoop has exited
+	stopCh   chan struct{} // Signals readLoop to exit
+	readDone chan struct{} // Signals readLoop has exited
 
 	// Callbacks for events
 	onTitleChanged func(title string)
@@ -336,10 +337,19 @@ func (pr *PaneRuntime) readLoop() {
 
 	pr.mu.Lock()
 	pr.closed = true
+	livePTY := pr.pty
+	pr.pty = nil
+	pr.cleanupTerminal()
 	pr.mu.Unlock()
 
+	pid := 0
+	if livePTY != nil {
+		pid = livePTY.PID()
+		_ = livePTY.Close()
+	}
+
 	if pr.logger != nil {
-		pr.logger.Infof("pane_runtime: id=%d process-exited pid=%d err=%v", pr.id, pr.PID(), err)
+		pr.logger.Infof("pane_runtime: id=%d process-exited pid=%d err=%v", pr.id, pid, err)
 	}
 
 	if pr.onProcessExit != nil {
@@ -481,41 +491,40 @@ func (pr *PaneRuntime) IsClosed() bool {
 // This is the explicit kill path - destroys the runtime.
 func (pr *PaneRuntime) Kill() error {
 	pr.mu.Lock()
-
 	if pr.closed {
 		pr.mu.Unlock()
 		return nil
 	}
 	pr.closed = true
 
-	// Get PID directly without calling PID() to avoid lock reentrancy issues
+	pty := pr.pty
 	pid := 0
-	if pr.pty != nil {
-		pid = pr.pty.PID()
+	if pty != nil {
+		pid = pty.PID()
 	}
+	readDone := pr.readDone
 	if pr.logger != nil {
 		pr.logger.Infof("pane_runtime: id=%d kill pid=%d", pr.id, pid)
 	}
 
-	// Signal read loop to stop
 	select {
 	case <-pr.stopCh:
-		// Already closed
 	default:
 		close(pr.stopCh)
 	}
-
-	// Kill PTY (kills process first, then closes PTY - interrupts blocking reads)
-	if pr.pty != nil {
-		_ = pr.pty.Kill()
-	}
-
 	pr.mu.Unlock()
 
-	// Note: We don't wait for read loop to exit here because blocking
-	// PTY reads may not be interruptible on all systems. The read loop
-	// will exit asynchronously when the PTY close is detected or process dies.
-	// The cleanup in Close() will handle any remaining resources.
+	if pty != nil {
+		_ = pty.Kill()
+	}
+
+	select {
+	case <-readDone:
+	case <-time.After(250 * time.Millisecond):
+		if pty != nil {
+			_ = pty.Close()
+		}
+	}
 
 	return nil
 }
@@ -523,17 +532,37 @@ func (pr *PaneRuntime) Kill() error {
 // Close closes the runtime resources without killing (if already exited).
 func (pr *PaneRuntime) Close() {
 	pr.mu.Lock()
-	defer pr.mu.Unlock()
+	pty := pr.pty
+	pid := 0
+	if pty != nil {
+		pid = pty.PID()
+	}
+	pr.closed = true
+	select {
+	case <-pr.stopCh:
+	default:
+		close(pr.stopCh)
+	}
+	readDone := pr.readDone
+	pr.mu.Unlock()
 
 	if pr.logger != nil {
-		pr.logger.Infof("pane_runtime: id=%d close pid=%d", pr.id, pr.PID())
+		pr.logger.Infof("pane_runtime: id=%d close pid=%d", pr.id, pid)
 	}
 
-	if pr.pty != nil {
-		_ = pr.pty.Close()
+	if pty != nil {
+		_ = pty.Close()
 	}
 
+	select {
+	case <-readDone:
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	pr.mu.Lock()
+	pr.pty = nil
 	pr.cleanupTerminal()
+	pr.mu.Unlock()
 }
 
 // RenderState returns the render state for building content.

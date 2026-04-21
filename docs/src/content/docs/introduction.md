@@ -5,7 +5,7 @@ description: What is shux and why it exists.
 
 ## What is shux?
 
-`shux` is an experimental terminal multiplexer for Linux built around three core ideas:
+`shux` is a terminal multiplexer for Linux built around three core ideas:
 
 1. **Real terminal emulation** via Ghostty
 2. **Simple actor-style concurrency** for sessions, windows, and panes
