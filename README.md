@@ -52,15 +52,15 @@ Useful commands:
 ```bash
 make
 make test
-make test-native
+make ci-test
 ```
 
 Notes:
 
-- `make test` is the full Docker-backed path
-- `make test-native` runs on the host and expects tools like `nano`, `vim`, and `less`
-- CI uses a cached native workflow for normal pushes and pull requests, plus a separate Docker parity workflow
-- fuzz targets exist for pure helpers like snapshot decoding, stat parsing, and row rendering
+- `make test` runs the local unit/integration suite
+- `make ci-test` runs the full Docker-backed suite used for CI, including integration, e2e, fuzz seed coverage, and stress tests
+- `make test-native` is kept as a compatibility alias for `make test`
+- CI uses both the local suite and the Docker-backed CI suite
 
 ## License
 

@@ -14,7 +14,6 @@ concurrency:
 env:
   GHOSTTY_REF: dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
   PKG_CONFIG_PATH: ${{ github.workspace }}/ghostty-build/usr/lib/pkgconfig
-  SHUX_E2E: "1"
 
 jobs:
   check:
@@ -93,7 +92,7 @@ jobs:
         run: go test ./cmd/shux -v -count=1
 
   pkg-tests:
-    name: pkg tests
+    name: pkg tests (unit/integration)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -111,7 +110,19 @@ jobs:
         uses: ./.github/actions/setup-ghostty-vt
         with:
           ghostty-ref: ${{ env.GHOSTTY_REF }}
-          packages: pkg-config gcc g++ nano vim less
+          packages: pkg-config gcc g++
 
-      - name: Run pkg/shux tests
-        run: go test ./pkg/shux -v -count=1
+      - name: Run local test suite
+        run: make test
+
+  ci-tests:
+    name: ci tests (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run Docker-backed CI suite
+        run: make ci-test

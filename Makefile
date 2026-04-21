@@ -11,7 +11,7 @@ GOPLS = $(GO_WRAP)gopls
 GOFUMPT = $(GO_WRAP)gofumpt
 GOLANGCI_LINT = $(GO_WRAP)golangci-lint
 
-.PHONY: all build ghostty-vt clean test test-native test-ci test-e2e doc gopls fmt fmt-check lint check
+.PHONY: all build ghostty-vt clean test test-native ci-test test-ci doc gopls fmt fmt-check lint check
 
 all: build
 
@@ -24,13 +24,15 @@ ghostty-vt:
 clean:
 	@rm -rf ghostty-build shux
 
-test:
+test: ghostty-vt
+	@PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig $(GO) test ./... -v -count=1
+
+test-native: test
+
+ci-test:
 	@docker build --build-arg GHOSTTY_REF=$(GHOSTTY_REF) -f Dockerfile.test -t shux-test . && docker run --rm shux-test
 
-test-native: ghostty-vt
-	@SHUX_E2E=1 PKG_CONFIG_PATH=$(PREFIX)/lib/pkgconfig $(GO) test ./... -v -count=1
-
-test-ci: check test
+test-ci: check test ci-test
 
 doc:
 	@$(GO) doc ./pkg/shux >/dev/null

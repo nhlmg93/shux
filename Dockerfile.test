@@ -27,4 +27,4 @@ RUN go mod download
 # Copy source last so code changes invalidate only the small final layer.
 COPY . .
 
-CMD ["go", "test", "./...", "-v", "-count=1"]
+CMD ["/usr/local/go/bin/go", "test", "-tags=ci", "./...", "-v", "-count=1"]
