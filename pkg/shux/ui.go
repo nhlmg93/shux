@@ -167,6 +167,9 @@ func (m *Model) dispatchBinding(binding Binding) bool {
 		}
 		Infof("ui: detach completed")
 		return true
+	case ActionSendPrefix:
+		m.sendKeyInput(m.keymap.PrefixInput())
+		return false
 	default:
 		Warnf("ui: unknown action %q", binding.Action)
 		return false

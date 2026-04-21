@@ -49,6 +49,41 @@ func TestPaneEncodeKeyInputModifiers(t *testing.T) {
 	}
 }
 
+func TestPrefixInputEncoding(t *testing.T) {
+	// Test default C-b prefix encoding
+	keymap := DefaultKeymap()
+	prefixInput := keymap.PrefixInput()
+
+	pane := newEncodingTestPane(t)
+	encoded, err := pane.encodeKeyInput(prefixInput)
+	if err != nil {
+		t.Fatalf("encode prefix input: %v", err)
+	}
+	// C-b should encode to byte 0x02 (STX - Start of Text)
+	expected := "\x02"
+	if string(encoded) != expected {
+		t.Fatalf("expected prefix input to encode to %q, got %q", expected, string(encoded))
+	}
+}
+
+func TestDefaultKeymapHasSendPrefixBinding(t *testing.T) {
+	keymap := DefaultKeymap()
+
+	// Verify that C-b is bound to send-prefix action
+	binding, ok := keymap.BindingFor("ctrl+b")
+	if !ok {
+		t.Fatal("expected default keymap to have binding for ctrl+b")
+	}
+	if binding.Action != ActionSendPrefix {
+		t.Fatalf("expected ctrl+b to bind to ActionSendPrefix, got %q", binding.Action)
+	}
+
+	// Verify prefix is still C-b
+	if keymap.Prefix() != "ctrl+b" {
+		t.Fatalf("expected prefix to be ctrl+b, got %q", keymap.Prefix())
+	}
+}
+
 func newEncodingTestPane(t *testing.T) *Pane {
 	t.Helper()
 

@@ -27,6 +27,7 @@ const (
 	ActionResizePaneUp    Action = "resize_pane_up"
 	ActionResizePaneRight Action = "resize_pane_right"
 	ActionDetach          Action = "detach"
+	ActionSendPrefix      Action = "send_prefix"
 )
 
 var validActions = map[Action]struct{}{
@@ -45,6 +46,7 @@ var validActions = map[Action]struct{}{
 	ActionResizePaneUp:    {},
 	ActionResizePaneRight: {},
 	ActionDetach:          {},
+	ActionSendPrefix:      {},
 }
 
 // Binding describes a resolved key binding.
@@ -142,8 +144,11 @@ func NewKeymap(cfg KeymapConfig) (Keymap, error) {
 		bindings[key] = binding.normalized()
 	}
 
-	if _, exists := bindings[prefix]; exists {
-		return Keymap{}, fmt.Errorf("binding conflict: prefix %q is also bound as an action", prefixSpec)
+	if binding, exists := bindings[prefix]; exists {
+		// Allow binding prefix key to send-prefix action (tmux behavior: press prefix twice)
+		if binding.Action != ActionSendPrefix {
+			return Keymap{}, fmt.Errorf("binding conflict: prefix %q is also bound as an action", prefixSpec)
+		}
 	}
 
 	return Keymap{
@@ -193,6 +198,7 @@ func ValidActions() []Action {
 
 func tmuxDefaultBindingSpecs() map[string]Binding {
 	return map[string]Binding{
+		"C-b":     {Action: ActionSendPrefix},
 		"c":       {Action: ActionNewWindow},
 		"n":       {Action: ActionNextWindow},
 		"p":       {Action: ActionPrevWindow},
