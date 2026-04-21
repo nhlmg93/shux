@@ -43,8 +43,8 @@ jobs:
           tags: shux-test:ci
           build-args: |
             GHOSTTY_REF=${{ env.GHOSTTY_REF }}
-          cache-from: type=gha,scope=docker-parity
-          cache-to: type=gha,mode=max,scope=docker-parity
+          cache-from: type=gha,scope=docker-test
+          cache-to: type=gha,mode=max,scope=docker-test
 
       - name: Run Docker parity suite
         run: docker run --rm shux-test:ci
