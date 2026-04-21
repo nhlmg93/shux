@@ -75,6 +75,48 @@ func TestResolveRunOptionsUsesDefaultsWhenConfigMissing(t *testing.T) {
 	if opts.Shell != "/bin/fish" {
 		t.Fatalf("expected shell from SHELL env, got %q", opts.Shell)
 	}
+	if got := opts.Keymap.Prefix(); got != "ctrl+b" {
+		t.Fatalf("expected default prefix ctrl+b, got %q", got)
+	}
+	if action, ok := opts.Keymap.ActionFor("c"); !ok || action != shux.ActionNewWindow {
+		t.Fatalf("expected tmux default binding c -> new_window, got %q (ok=%t)", action, ok)
+	}
+	if action, ok := opts.Keymap.ActionFor("up"); !ok || action != shux.ActionSelectPaneUp {
+		t.Fatalf("expected tmux default binding up -> select_pane_up, got %q (ok=%t)", action, ok)
+	}
+}
+
+func TestResolveRunOptionsSupportsGlobalShuxModule(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "global.lua")
+	writeTestFile(t, configPath, `
+		shux.opt.prefix = "C-a"
+		shux.keymap.bind("prefix", "h", "select-pane -L")
+
+		shux.setup({
+			options = {
+				session_name = "global-config",
+				shell = "/bin/bash",
+			},
+		})
+	`)
+
+	opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveRunOptions: %v", err)
+	}
+
+	if opts.SessionName != "global-config" {
+		t.Fatalf("expected session from global shux config, got %q", opts.SessionName)
+	}
+	if opts.Shell != "/bin/bash" {
+		t.Fatalf("expected shell from global shux config, got %q", opts.Shell)
+	}
+	if got := opts.Keymap.Prefix(); got != "ctrl+a" {
+		t.Fatalf("expected prefix ctrl+a, got %q", got)
+	}
+	if action, ok := opts.Keymap.ActionFor("h"); !ok || action != shux.ActionSelectPaneLeft {
+		t.Fatalf("expected h -> select_pane_left via global shux, got %q (ok=%t)", action, ok)
+	}
 }
 
 func TestResolveRunOptionsLuaPluginModuleOverridesConfig(t *testing.T) {
@@ -151,6 +193,145 @@ func TestResolveRunOptionsSupportsRequiredPluginTable(t *testing.T) {
 	}
 	if opts.Shell != shux.DefaultShell {
 		t.Fatalf("expected fallback shell %q, got %q", shux.DefaultShell, opts.Shell)
+	}
+}
+
+func TestResolveRunOptionsAppliesLuaKeyOverrides(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "init.lua")
+	writeTestFile(t, configPath, `
+		local shux = require("shux")
+
+		return shux.config({
+			keys = {
+				prefix = "C-a",
+				bind = {
+					["h"] = "select_pane_left",
+					["v"] = "split_vertical",
+				},
+				unbind = { "n" },
+			},
+		})
+	`)
+
+	opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveRunOptions: %v", err)
+	}
+
+	if got := opts.Keymap.Prefix(); got != "ctrl+a" {
+		t.Fatalf("expected prefix ctrl+a, got %q", got)
+	}
+	if action, ok := opts.Keymap.ActionFor("h"); !ok || action != shux.ActionSelectPaneLeft {
+		t.Fatalf("expected h override to select left pane, got %q (ok=%t)", action, ok)
+	}
+	if action, ok := opts.Keymap.ActionFor("v"); !ok || action != shux.ActionSplitVertical {
+		t.Fatalf("expected v override to split vertically, got %q (ok=%t)", action, ok)
+	}
+	if _, ok := opts.Keymap.ActionFor("n"); ok {
+		t.Fatal("expected n to be unbound")
+	}
+	if action, ok := opts.Keymap.ActionFor("c"); !ok || action != shux.ActionNewWindow {
+		t.Fatalf("expected tmux default c -> new_window to remain, got %q (ok=%t)", action, ok)
+	}
+}
+
+func TestResolveRunOptionsSupportsSetupKeymapsAndTmuxCommands(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "init.lua")
+	writeTestFile(t, configPath, `
+		shux.setup({
+			options = {
+				prefix = "C-a",
+				session_name = "setup-style",
+			},
+			keymaps = {
+				prefix = {
+					["h"] = "select-pane -L",
+					["v"] = "split-window -h",
+					["n"] = false,
+				},
+			},
+		})
+	`)
+
+	opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveRunOptions: %v", err)
+	}
+
+	if opts.SessionName != "setup-style" {
+		t.Fatalf("expected session from setup options, got %q", opts.SessionName)
+	}
+	if got := opts.Keymap.Prefix(); got != "ctrl+a" {
+		t.Fatalf("expected prefix ctrl+a, got %q", got)
+	}
+	if action, ok := opts.Keymap.ActionFor("h"); !ok || action != shux.ActionSelectPaneLeft {
+		t.Fatalf("expected h -> select-pane -L, got %q (ok=%t)", action, ok)
+	}
+	if action, ok := opts.Keymap.ActionFor("v"); !ok || action != shux.ActionSplitVertical {
+		t.Fatalf("expected v -> split-window -h, got %q (ok=%t)", action, ok)
+	}
+	if _, ok := opts.Keymap.ActionFor("n"); ok {
+		t.Fatal("expected n to be unbound by setup keymaps")
+	}
+}
+
+func TestResolveRunOptionsPluginCanModifyKeymap(t *testing.T) {
+	configDir := t.TempDir()
+	configPath := filepath.Join(configDir, "init.lua")
+	pluginPath := filepath.Join(configDir, "lua", "plugins", "keys.lua")
+
+	writeTestFile(t, pluginPath, `
+		local M = {}
+
+		function M.setup(shux)
+			shux.opt.prefix = "C-a"
+			shux.keymap.bind("prefix", "h", "select-pane -L")
+			shux.keymap.unbind("prefix", "n")
+		end
+
+		return M
+	`)
+	writeTestFile(t, configPath, `
+		shux.setup({
+			plugins = {
+				"plugins.keys",
+			},
+		})
+	`)
+
+	opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveRunOptions: %v", err)
+	}
+
+	if got := opts.Keymap.Prefix(); got != "ctrl+a" {
+		t.Fatalf("expected prefix ctrl+a, got %q", got)
+	}
+	if action, ok := opts.Keymap.ActionFor("h"); !ok || action != shux.ActionSelectPaneLeft {
+		t.Fatalf("expected h override to select left pane, got %q (ok=%t)", action, ok)
+	}
+	if _, ok := opts.Keymap.ActionFor("n"); ok {
+		t.Fatal("expected n to be unbound by plugin")
+	}
+}
+
+func TestResolveRunOptionsRejectsUnknownKeyAction(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "init.lua")
+	writeTestFile(t, configPath, `
+		local shux = require("shux")
+
+		return shux.config({
+			keys = {
+				bind = {
+					["h"] = "warp_drive",
+				},
+			},
+		})
+	`)
+
+	_, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err == nil {
+		t.Fatal("expected invalid action to fail")
 	}
 }
 

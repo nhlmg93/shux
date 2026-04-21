@@ -18,11 +18,13 @@ type Config struct {
 		Name string
 	}
 	Shell string
+	Keys  shux.KeymapConfig
 }
 
 type RunOptions struct {
 	SessionName string
 	Shell       string
+	Keymap      shux.Keymap
 }
 
 type cliOptions struct {
@@ -57,9 +59,15 @@ func resolveRunOptions(args []string, cli cliOptions) (RunOptions, error) {
 		shell = defaultShell()
 	}
 
+	keymap, err := shux.NewKeymap(cfg.Keys)
+	if err != nil {
+		return RunOptions{}, fmt.Errorf("resolve keymap: %w", err)
+	}
+
 	return RunOptions{
 		SessionName: sessionName,
 		Shell:       shell,
+		Keymap:      keymap,
 	}, nil
 }
 

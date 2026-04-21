@@ -8,6 +8,7 @@ import (
 
 type Model struct {
 	session     *SessionRef
+	keymap      Keymap
 	width       int
 	height      int
 	prefixMode  bool
@@ -83,64 +84,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(key tea.KeyPressMsg) bool {
+	keystroke := key.String()
+
 	if m.prefixMode {
 		m.prefixMode = false
-		switch key.String() {
-		case "q":
-			return true
-		case "w":
-			m.session.Send(CreateWindow{Rows: m.height, Cols: m.width})
-			return false
-		case "n":
-			m.session.Send(SwitchWindow{Delta: 1})
-			return false
-		case "p":
-			m.session.Send(SwitchWindow{Delta: -1})
-			return false
-		case "s":
-			m.session.Send(Split{Dir: SplitH})
-			return false
-		case "v":
-			m.session.Send(Split{Dir: SplitV})
-			return false
-		case "h":
-			m.session.Send(NavigatePane{Dir: PaneNavLeft})
-			return false
-		case "j":
-			m.session.Send(NavigatePane{Dir: PaneNavDown})
-			return false
-		case "k":
-			m.session.Send(NavigatePane{Dir: PaneNavUp})
-			return false
-		case "l":
-			m.session.Send(NavigatePane{Dir: PaneNavRight})
-			return false
-		case "d":
-			Infof("ui: detach requested")
-			result, ok := askValue(m.session, DetachSession{})
-			if !ok {
-				Warnf("ui: detach failed: session unavailable")
-				return false
-			}
-			if err, _ := result.(error); err != nil {
-				Warnf("ui: detach failed: %v", err)
-				return false
-			}
-			Infof("ui: detach completed")
-			return true
+		if action, ok := m.keymap.ActionFor(keystroke); ok {
+			return m.dispatchAction(action)
 		}
-		m.sendKeyInput(ctrlBInput())
+		m.sendKeyInput(m.keymap.PrefixInput())
 		m.sendKey(key)
 		return false
 	}
 
-	if key.String() == "ctrl+b" {
+	if keystroke == m.keymap.Prefix() {
 		m.prefixMode = true
 		return false
 	}
 
 	m.sendKey(key)
 	return false
+}
+
+func (m *Model) dispatchAction(action Action) bool {
+	switch action {
+	case ActionQuit:
+		return true
+	case ActionNewWindow:
+		m.session.Send(CreateWindow{Rows: m.height, Cols: m.width})
+		return false
+	case ActionNextWindow:
+		m.session.Send(SwitchWindow{Delta: 1})
+		return false
+	case ActionPrevWindow:
+		m.session.Send(SwitchWindow{Delta: -1})
+		return false
+	case ActionSplitHorizontal:
+		m.session.Send(Split{Dir: SplitH})
+		return false
+	case ActionSplitVertical:
+		m.session.Send(Split{Dir: SplitV})
+		return false
+	case ActionSelectPaneLeft:
+		m.session.Send(NavigatePane{Dir: PaneNavLeft})
+		return false
+	case ActionSelectPaneDown:
+		m.session.Send(NavigatePane{Dir: PaneNavDown})
+		return false
+	case ActionSelectPaneUp:
+		m.session.Send(NavigatePane{Dir: PaneNavUp})
+		return false
+	case ActionSelectPaneRight:
+		m.session.Send(NavigatePane{Dir: PaneNavRight})
+		return false
+	case ActionDetach:
+		Infof("ui: detach requested")
+		result, ok := askValue(m.session, DetachSession{})
+		if !ok {
+			Warnf("ui: detach failed: session unavailable")
+			return false
+		}
+		if err, _ := result.(error); err != nil {
+			Warnf("ui: detach failed: %v", err)
+			return false
+		}
+		Infof("ui: detach completed")
+		return true
+	default:
+		Warnf("ui: unknown action %q", action)
+		return false
+	}
 }
 
 func (m *Model) sendKey(key tea.KeyPressMsg) {
@@ -210,11 +222,11 @@ func (m Model) renderPrefix(lines []string) string {
 }
 
 func NewModel(session *SessionRef) Model {
-	return Model{session: session}
+	return NewModelWithKeymap(session, DefaultKeymap())
 }
 
-func ctrlBInput() KeyInput {
-	return KeyInput{Code: 'b', Mods: KeyModCtrl}
+func NewModelWithKeymap(session *SessionRef, keymap Keymap) Model {
+	return Model{session: session, keymap: keymap}
 }
 
 func normalizeKeyInput(msg tea.KeyPressMsg) (KeyInput, bool) {

@@ -48,12 +48,12 @@ func runApp(opts RunOptions) error {
 	}
 	defer sessionRef.Shutdown()
 
-	return runSession(sessionName, sessionRef)
+	return runSession(sessionName, sessionRef, opts.Keymap)
 }
 
-func runSession(sessionName string, sessionRef *shux.SessionRef) error {
+func runSession(sessionName string, sessionRef *shux.SessionRef, keymap shux.Keymap) error {
 	shux.Infof("ui: session=%s starting program", sessionName)
-	model := shux.NewModel(sessionRef)
+	model := shux.NewModelWithKeymap(sessionRef, keymap)
 	opts := []tea.ProgramOption{}
 	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" {
 		opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
