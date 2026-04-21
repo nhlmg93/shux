@@ -107,7 +107,7 @@ func (f *FakePTY) Write(p []byte) (int, error) {
 	f.mu.Unlock()
 
 	if shouldAutoClose {
-		f.Close()
+		_ = f.Close()
 	}
 
 	return len(p), nil
@@ -232,7 +232,6 @@ func (f *FakePTY) SetWaitError(err error) {
 
 // FaultInjector provides controlled fault injection for PTY testing.
 type FaultInjector struct {
-	mu         sync.RWMutex
 	readFault  atomic.Bool
 	writeFault atomic.Bool
 	closeFault atomic.Bool

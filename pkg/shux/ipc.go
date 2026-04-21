@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -32,6 +31,11 @@ func DialIPC(socketPath string, logger ShuxLogger) (*IPCClient, error) {
 	}, nil
 }
 
+// Send sends a message to the server.
+func (c *IPCClient) Send(msg any) error {
+	return c.conn.Send(msg)
+}
+
 // Ask sends a message and waits for a reply.
 func (c *IPCClient) Ask(msg any) (any, error) {
 	if err := c.Send(msg); err != nil {
@@ -44,6 +48,20 @@ func (c *IPCClient) Ask(msg any) (any, error) {
 	}
 
 	return reply, nil
+}
+
+// Start begins handling incoming messages.
+func (c *IPCClient) Start(handler func(any)) {
+	c.handler = handler
+	c.wg.Add(1)
+	go c.receiveLoop()
+}
+
+// Stop disconnects from the server.
+func (c *IPCClient) Stop() {
+	close(c.stop)
+	_ = c.conn.Close()
+	c.wg.Wait()
 }
 
 func (c *IPCClient) receiveLoop() {

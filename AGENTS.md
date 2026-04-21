@@ -6,6 +6,11 @@ Building shux to replace tmux with a simpler, modern, reliable architecture.
 
 ## Development Guidelines
 
+### Documentation Boundaries
+- The `docs/` directory is only for shux terminal multiplexer end-user documentation.
+- Do not treat `docs/` as a place for internal developer notes, implementation scratch docs, or agent workflow notes.
+
+
 ### Testing
 - NO UNIT TEST!
 - Integration tests should be heavily based, focused, and targeted around Sessions/Window/Pane/Config/Plugin feature set.

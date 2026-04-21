@@ -13,14 +13,20 @@ type Registry struct {
 	panes    map[uint32]*PaneController   // pane_id -> controller
 	windows  map[uint32]*WindowController // window_id -> controller
 	session  *SessionController           // single session controller
+
+	// Parent tracking for rebuild lookups (survives controller restarts)
+	paneToWindow    map[uint32]uint32 // pane_id -> window_id
+	windowToSession map[uint32]uint32 // window_id -> session_id (for future multi-session)
 }
 
 // NewRegistry creates a new empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		runtimes: make(map[uint32]*PaneRuntime),
-		panes:    make(map[uint32]*PaneController),
-		windows:  make(map[uint32]*WindowController),
+		runtimes:        make(map[uint32]*PaneRuntime),
+		panes:           make(map[uint32]*PaneController),
+		windows:         make(map[uint32]*WindowController),
+		paneToWindow:    make(map[uint32]uint32),
+		windowToSession: make(map[uint32]uint32),
 	}
 }
 
@@ -184,6 +190,71 @@ func (r *Registry) ClearSession() {
 	r.session = nil
 }
 
+// Parent Tracking Methods
+
+// SetPaneWindow sets the parent window for a pane.
+func (r *Registry) SetPaneWindow(paneID, windowID uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.paneToWindow[paneID] = windowID
+}
+
+// GetPaneWindow returns the parent window ID for a pane (0 if not set).
+func (r *Registry) GetPaneWindow(paneID uint32) uint32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.paneToWindow[paneID]
+}
+
+// RemovePaneWindow removes the parent mapping for a pane.
+func (r *Registry) RemovePaneWindow(paneID uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.paneToWindow, paneID)
+}
+
+// SetWindowSession sets the parent session for a window.
+func (r *Registry) SetWindowSession(windowID, sessionID uint32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.windowToSession[windowID] = sessionID
+}
+
+// GetWindowSession returns the parent session ID for a window (0 if not set).
+func (r *Registry) GetWindowSession(windowID uint32) uint32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.windowToSession[windowID]
+}
+
+// GetWindowPanes returns all pane IDs for a given window.
+func (r *Registry) GetWindowPanes(windowID uint32) []uint32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var paneIDs []uint32
+	for paneID, winID := range r.paneToWindow {
+		if winID == windowID {
+			paneIDs = append(paneIDs, paneID)
+		}
+	}
+	return paneIDs
+}
+
+// GetSessionWindows returns all window IDs for a given session.
+func (r *Registry) GetSessionWindows(sessionID uint32) []uint32 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var windowIDs []uint32
+	for windowID, sessID := range r.windowToSession {
+		if sessID == sessionID {
+			windowIDs = append(windowIDs, windowID)
+		}
+	}
+	return windowIDs
+}
+
 // Stats returns registry statistics.
 func (r *Registry) Stats() RegistryStats {
 	r.mu.RLock()
@@ -214,6 +285,93 @@ func (r *Registry) Clear() {
 	r.panes = make(map[uint32]*PaneController)
 	r.windows = make(map[uint32]*WindowController)
 	r.session = nil
+	r.paneToWindow = make(map[uint32]uint32)
+	r.windowToSession = make(map[uint32]uint32)
+}
+
+// Rebuild helpers for crash recovery
+
+// RebuildSessionState holds the data needed to rebuild a session controller.
+type RebuildSessionState struct {
+	SessionID    uint32
+	SessionName  string
+	Shell        string
+	WindowIDs    []uint32
+	ActiveWindow uint32
+}
+
+// GetRebuildSessionState returns the state needed to rebuild the session.
+// Returns nil if no session is registered.
+func (r *Registry) GetRebuildSessionState(sessionID uint32) *RebuildSessionState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.session == nil {
+		return nil
+	}
+
+	return &RebuildSessionState{
+		SessionID:    sessionID,
+		WindowIDs:    r.GetSessionWindows(sessionID),
+		ActiveWindow: 0, // Will be set from session's internal state
+	}
+}
+
+// RebuildWindowState holds the data needed to rebuild a window controller.
+type RebuildWindowState struct {
+	WindowID   uint32
+	SessionID  uint32
+	PaneIDs    []uint32
+	ActivePane uint32
+	PaneOrder  []uint32
+}
+
+// GetRebuildWindowState returns the state needed to rebuild a window.
+// Returns nil if window is not registered.
+func (r *Registry) GetRebuildWindowState(windowID uint32) *RebuildWindowState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if _, ok := r.windows[windowID]; !ok {
+		return nil
+	}
+
+	return &RebuildWindowState{
+		WindowID:  windowID,
+		SessionID: r.windowToSession[windowID],
+		PaneIDs:   r.GetWindowPanes(windowID),
+	}
+}
+
+// GetAllRuntimes returns a copy of all registered runtimes.
+// Used by supervisor during session/window rebuild.
+func (r *Registry) GetAllRuntimes() map[uint32]*PaneRuntime {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make(map[uint32]*PaneRuntime, len(r.runtimes))
+	for id, runtime := range r.runtimes {
+		result[id] = runtime
+	}
+	return result
+}
+
+// RegisterPaneWithParent registers a pane and sets its parent window atomically.
+func (r *Registry) RegisterPaneWithParent(pane *PaneController, windowID uint32) error {
+	if err := r.RegisterPane(pane); err != nil {
+		return err
+	}
+	r.SetPaneWindow(pane.id, windowID)
+	return nil
+}
+
+// RegisterWindowWithParent registers a window and sets its parent session atomically.
+func (r *Registry) RegisterWindowWithParent(window *WindowController, sessionID uint32) error {
+	if err := r.RegisterWindow(window); err != nil {
+		return err
+	}
+	r.SetWindowSession(window.id, sessionID)
+	return nil
 }
 
 // WindowController is a placeholder for the new window controller type.
@@ -232,7 +390,5 @@ type WindowController struct {
 // WARNING: This is a Phase 1 placeholder. SessionController functionality
 // is incomplete and will be fully implemented in Phase 2.
 type SessionController struct {
-	id   uint32
-	name string
 	// TODO(Phase 2): Add session controller fields when implementing
 }

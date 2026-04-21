@@ -97,8 +97,9 @@ func RequirePane(t *testing.T, sessionRef *shux.SessionRef, super *TestSuperviso
 	var paneRef any
 	if !PollFor(500*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(shux.GetActivePane{})
-		paneRef = <-reply
-		return paneRef != nil
+		var ok bool
+		paneRef, ok = askWithTimeout(reply, 50*time.Millisecond)
+		return ok && paneRef != nil
 	}) {
 		t.Fatal("timeout waiting for pane creation")
 	}
@@ -112,8 +113,9 @@ func RequireWindow(t *testing.T, sessionRef *shux.SessionRef, super *TestSupervi
 	var winRef any
 	if !PollFor(500*time.Millisecond, func() bool {
 		reply := sessionRef.Ask(shux.GetActiveWindow{})
-		winRef = <-reply
-		return winRef != nil
+		var ok bool
+		winRef, ok = askWithTimeout(reply, 50*time.Millisecond)
+		return ok && winRef != nil
 	}) {
 		t.Fatal("timeout waiting for window creation")
 	}
@@ -130,6 +132,18 @@ func PollFor(timeout time.Duration, condition func() bool) bool {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return false
+}
+
+func askWithTimeout(reply <-chan any, timeout time.Duration) (any, bool) {
+	select {
+	case result, ok := <-reply:
+		if !ok {
+			return nil, false
+		}
+		return result, true
+	case <-time.After(timeout):
+		return nil, false
+	}
 }
 
 // MustPoll fails the test if the condition doesn't become true within timeout.
@@ -170,7 +184,10 @@ func WaitSessionWindowCount(t *testing.T, sessionRef *shux.SessionRef, want int,
 
 	var data shux.SessionSnapshotData
 	if !PollFor(timeout, func() bool {
-		result := <-sessionRef.Ask(shux.GetSessionSnapshotData{})
+		result, ok := askWithTimeout(sessionRef.Ask(shux.GetSessionSnapshotData{}), 50*time.Millisecond)
+		if !ok {
+			return false
+		}
 		snapshot, ok := result.(shux.SessionSnapshotData)
 		if !ok {
 			return false
@@ -189,7 +206,10 @@ func WaitWindowPaneCount(t *testing.T, windowRef *shux.WindowRef, want int, time
 
 	var data shux.WindowSnapshot
 	if !PollFor(timeout, func() bool {
-		result := <-windowRef.Ask(shux.GetWindowSnapshotData{})
+		result, ok := askWithTimeout(windowRef.Ask(shux.GetWindowSnapshotData{}), 50*time.Millisecond)
+		if !ok {
+			return false
+		}
 		snapshot, ok := result.(shux.WindowSnapshot)
 		if !ok {
 			return false

@@ -11,15 +11,16 @@ import (
 // RemoteSessionRef proxies session operations over IPC to a live owner.
 // It mimics SessionRef's interface for UI compatibility.
 type RemoteSessionRef struct {
-	client      *IPCClient
-	sessionName string
-	stopped     atomic.Bool
-	mu          sync.RWMutex
-	subscribers map[chan any]struct{}
-	updates     chan any
-	stop        chan struct{}
-	wg          sync.WaitGroup
-	logger      ShuxLogger
+	client       *IPCClient
+	updateClient *IPCClient
+	sessionName  string
+	stopped      atomic.Bool
+	mu           sync.RWMutex
+	subscribers  map[chan any]struct{}
+	updates      chan any
+	stop         chan struct{}
+	wg           sync.WaitGroup
+	logger       ShuxLogger
 }
 
 // NewRemoteSessionRef creates a new remote session reference connected to a live owner.
@@ -28,27 +29,33 @@ func NewRemoteSessionRef(socketPath string, sessionName string, logger ShuxLogge
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to live session: %w", err)
 	}
-
-	ref := &RemoteSessionRef{
-		client:      client,
-		sessionName: sessionName,
-		subscribers: make(map[chan any]struct{}),
-		updates:     make(chan any, 32),
-		stop:        make(chan struct{}),
-		logger:      logger,
+	updateClient, err := DialIPC(socketPath, logger)
+	if err != nil {
+		client.Stop()
+		return nil, fmt.Errorf("failed to connect update stream: %w", err)
 	}
 
-	// Start the update handler
+	ref := &RemoteSessionRef{
+		client:       client,
+		updateClient: updateClient,
+		sessionName:  sessionName,
+		subscribers:  make(map[chan any]struct{}),
+		updates:      make(chan any, 32),
+		stop:         make(chan struct{}),
+		logger:       logger,
+	}
+
 	ref.wg.Add(1)
 	go ref.updateLoop()
 
-	// Start IPC client with handler that forwards to subscribers
-	client.Start(func(msg any) {
+	updateClient.Start(func(msg any) {
 		ref.handleUpdate(msg)
 	})
-
-	// Subscribe to updates from owner
-	_ = client.Send(IPCSubscribeUpdates{})
+	if err := updateClient.Send(IPCSubscribeUpdates{}); err != nil {
+		updateClient.Stop()
+		client.Stop()
+		return nil, fmt.Errorf("failed to subscribe to updates: %w", err)
+	}
 
 	return ref, nil
 }
@@ -60,71 +67,42 @@ func (r *RemoteSessionRef) Send(msg any) bool {
 		return false
 	}
 
-	var ipcMsg any
 	switch m := msg.(type) {
-	case ActionMsg:
-		ipcMsg = IPCActionMsg{
-			Action: m.Action,
-			Args:   m.Args,
-			Amount: m.Amount,
-		}
-	case KeyInput:
-		ipcMsg = IPCKeyInput{
-			Code:        m.Code,
-			Text:        m.Text,
-			ShiftedCode: m.ShiftedCode,
-			BaseCode:    m.BaseCode,
-			Mods:        m.Mods,
-			IsRepeat:    m.IsRepeat,
-		}
-	case MouseInput:
-		ipcMsg = IPCMouseInput{
-			Row:    m.Row,
-			Col:    m.Col,
-			Button: m.Button,
-			Mods:   m.Mods,
-			Action: m.Action,
-		}
-	case WriteToPane:
-		ipcMsg = IPCWriteToPane{Data: m.Data}
-	case ResizeMsg:
-		ipcMsg = IPCResizeMsg{Rows: m.Rows, Cols: m.Cols}
 	case SubscribeUpdates:
-		// Register local subscriber
 		r.mu.Lock()
 		if m.Subscriber != nil {
 			r.subscribers[m.Subscriber] = struct{}{}
 		}
 		r.mu.Unlock()
-		// Forward to owner so it knows to send updates to this client
-		if err := r.client.Send(IPCSubscribeUpdates{}); err != nil {
-			if r.logger != nil {
-				r.logger.Warnf("remote: failed to forward subscribe: %v", err)
-			}
-			return false
-		}
 		return true
 	case UnsubscribeUpdates:
-		// Unregister local subscriber
 		r.mu.Lock()
 		if m.Subscriber != nil {
 			delete(r.subscribers, m.Subscriber)
 		}
 		r.mu.Unlock()
-		// Forward to owner so it stops sending updates to this client
-		if err := r.client.Send(IPCUnsubscribeUpdates{}); err != nil {
-			if r.logger != nil {
-				r.logger.Warnf("remote: failed to forward unsubscribe: %v", err)
-			}
-			return false
-		}
 		return true
+	}
+
+	var ipcMsg any
+	switch m := msg.(type) {
+	case ActionMsg:
+		ipcMsg = IPCActionMsg(m)
+	case KeyInput:
+		ipcMsg = IPCKeyInput(m)
+	case MouseInput:
+		ipcMsg = IPCMouseInput(m)
+	case WriteToPane:
+		ipcMsg = IPCWriteToPane(m)
+	case ResizeMsg:
+		ipcMsg = IPCResizeMsg(m)
+	case CreateWindow:
+		ipcMsg = IPCCreateWindow(m)
 	case DetachSession:
 		ipcMsg = IPCDetachSession{}
 	case ExecuteCommandMsg:
-		ipcMsg = IPCExecuteCommandMsg{Command: m.Command}
+		ipcMsg = IPCExecuteCommandMsg(m)
 	default:
-		// Unknown message type - log and drop
 		if r.logger != nil {
 			r.logger.Warnf("remote: unsupported message type %T", msg)
 		}
@@ -137,7 +115,6 @@ func (r *RemoteSessionRef) Send(msg any) bool {
 		}
 		return false
 	}
-
 	return true
 }
 
@@ -145,7 +122,6 @@ func (r *RemoteSessionRef) Send(msg any) bool {
 // The reply channel is buffered with capacity 1.
 func (r *RemoteSessionRef) Ask(msg any) chan any {
 	reply := make(chan any, 1)
-
 	if r.stopped.Load() {
 		reply <- nil
 		return reply
@@ -154,26 +130,22 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 	var ipcMsg any
 	switch m := msg.(type) {
 	case ActionMsg:
-		ipcMsg = IPCActionMsg{
-			Action: m.Action,
-			Args:   m.Args,
-			Amount: m.Amount,
-		}
+		ipcMsg = IPCActionMsg(m)
 	case GetWindowView:
 		ipcMsg = IPCGetWindowView{}
+	case GetActiveWindow:
+		ipcMsg = IPCGetActiveWindow{}
 	case DetachSession:
 		ipcMsg = IPCDetachSession{}
 	case ExecuteCommandMsg:
-		ipcMsg = IPCExecuteCommandMsg{Command: m.Command}
+		ipcMsg = IPCExecuteCommandMsg(m)
 	case GetFullSessionSnapshot:
-		// This is handled directly by the owner, not forwarded over IPC
 		if r.logger != nil {
 			r.logger.Warnf("remote: GetFullSessionSnapshot not supported for remote clients")
 		}
 		reply <- nil
 		return reply
 	default:
-		// Unknown message type
 		if r.logger != nil {
 			r.logger.Warnf("remote: unsupported ask type %T", msg)
 		}
@@ -182,7 +154,6 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 	}
 
 	go func() {
-		// Use timeout to prevent goroutine leak if client hangs
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -191,15 +162,13 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 			err    error
 		}
 		respCh := make(chan response, 1)
-
 		go func() {
 			result, err := r.client.Ask(ipcMsg)
-			respCh <- response{result, err}
+			respCh <- response{result: result, err: err}
 		}()
 
 		var result any
 		var err error
-
 		select {
 		case <-ctx.Done():
 			err = fmt.Errorf("ask timeout")
@@ -207,7 +176,6 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 			result = resp.result
 			err = resp.err
 		}
-
 		if err != nil {
 			if r.logger != nil {
 				r.logger.Warnf("remote: ask failed: %v", err)
@@ -216,30 +184,25 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 			return
 		}
 
-		// Convert IPC response back to local types
-		switch r := result.(type) {
+		switch v := result.(type) {
 		case IPCWindowView:
-			reply <- WindowView{
-				Content:   r.Content,
-				CursorRow: r.CursorRow,
-				CursorCol: r.CursorCol,
-				CursorOn:  r.CursorOn,
-				Title:     r.Title,
-			}
+			reply <- WindowView(v)
 		case IPCActionResult:
-			var err error
-			if r.Error != "" {
-				err = fmt.Errorf("%s", r.Error)
+			var askErr error
+			if v.Error != "" {
+				askErr = fmt.Errorf("%s", v.Error)
 			}
-			reply <- ActionResult{Quit: r.Quit, Err: err}
+			reply <- ActionResult{Quit: v.Quit, Err: askErr}
 		case IPCCommandResult:
-			var err error
-			if r.Error != "" {
-				err = fmt.Errorf("%s", r.Error)
-			}
-			reply <- CommandResult{Success: r.Success, Error: err.Error(), Quit: r.Quit}
+			reply <- CommandResult(v)
 		case IPCSessionDetached:
-			reply <- nil // Detach acknowledged
+			reply <- nil
+		case bool:
+			if v {
+				reply <- true
+			} else {
+				reply <- nil
+			}
 		default:
 			reply <- result
 		}
@@ -257,13 +220,12 @@ func (r *RemoteSessionRef) Stop() {
 // Note: This does NOT kill the owner - it just detaches this client.
 func (r *RemoteSessionRef) Shutdown() {
 	if !r.stopped.CompareAndSwap(false, true) {
-		return // Already stopped
+		return
 	}
 
-	// Send unsubscribe before closing
-	_ = r.client.Send(IPCUnsubscribeUpdates{})
-
+	_ = r.updateClient.Send(IPCUnsubscribeUpdates{})
 	close(r.stop)
+	r.updateClient.Stop()
 	r.client.Stop()
 	r.wg.Wait()
 
@@ -275,7 +237,6 @@ func (r *RemoteSessionRef) Shutdown() {
 // updateLoop handles local subscriber notifications.
 func (r *RemoteSessionRef) updateLoop() {
 	defer r.wg.Done()
-
 	for {
 		select {
 		case <-r.stop:
@@ -288,26 +249,15 @@ func (r *RemoteSessionRef) updateLoop() {
 
 // handleUpdate processes messages from the owner and forwards to subscribers.
 func (r *RemoteSessionRef) handleUpdate(msg any) {
-	// Convert IPC messages to local equivalents
 	var localMsg any
 	switch m := msg.(type) {
 	case IPCWindowView:
-		localMsg = WindowView{
-			Content:   m.Content,
-			CursorRow: m.CursorRow,
-			CursorCol: m.CursorCol,
-			CursorOn:  m.CursorOn,
-			Title:     m.Title,
-		}
+		localMsg = WindowView(m)
 	case IPCPaneContentUpdated:
-		localMsg = PaneContentUpdated{ID: m.ID}
+		localMsg = PaneContentUpdated(m)
 	case IPCSessionEmpty:
-		localMsg = SessionEmpty{ID: m.ID}
-	case IPCSessionDetached:
-		// Owner acknowledged detach - client should quit
-		localMsg = SessionEmpty{ID: 0}
-	case IPCSessionKilled:
-		// Session was killed - client should quit
+		localMsg = SessionEmpty(m)
+	case IPCSessionDetached, IPCSessionKilled:
 		localMsg = SessionEmpty{ID: 0}
 	default:
 		localMsg = msg
@@ -316,7 +266,6 @@ func (r *RemoteSessionRef) handleUpdate(msg any) {
 	select {
 	case r.updates <- localMsg:
 	default:
-		// Drop update if channel full
 	}
 }
 
@@ -333,7 +282,6 @@ func (r *RemoteSessionRef) notifySubscribers(msg any) {
 		select {
 		case ch <- msg:
 		default:
-			// Drop if subscriber not keeping up
 		}
 	}
 }

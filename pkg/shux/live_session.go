@@ -210,7 +210,7 @@ func CleanupSocket(sessionName string) error {
 		// Try to dial with timeout - if it fails, socket is stale
 		conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil // Socket is active
 		}
 		// Failed to connect - socket is stale, remove it
@@ -233,7 +233,7 @@ func LockSessionDir(sessionName string) (string, func(), error) {
 	// Write our PID to the lock file
 	pid := os.Getpid()
 	_, _ = fmt.Fprintf(file, "%d\n", pid)
-	file.Close()
+	_ = file.Close()
 
 	cleanup := func() {
 		_ = os.Remove(lockPath)

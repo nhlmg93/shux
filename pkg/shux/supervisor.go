@@ -24,6 +24,24 @@ type Supervisor struct {
 	// Lifecycle
 	stop chan struct{}
 	wg   sync.WaitGroup
+
+	// Restart callbacks - set by session/window controllers for supervisor to call back
+	// These allow the supervisor to recreate controllers with proper parent references
+	onSessionRestart func() (*SessionController, error)
+	onWindowRestart  func(windowID uint32) (*WindowController, error)
+	onPaneRestart    func(runtime *PaneRuntime) (*PaneController, error)
+}
+
+// SetRestartCallbacks configures the callbacks for controller restart.
+// These are called by the supervisor to recreate controllers during crash recovery.
+func (s *Supervisor) SetRestartCallbacks(
+	sessionFn func() (*SessionController, error),
+	windowFn func(windowID uint32) (*WindowController, error),
+	paneFn func(runtime *PaneRuntime) (*PaneController, error),
+) {
+	s.onSessionRestart = sessionFn
+	s.onWindowRestart = windowFn
+	s.onPaneRestart = paneFn
 }
 
 // SupervisorConfig contains configuration for the supervisor.
@@ -85,11 +103,6 @@ func (s *Supervisor) monitorLoop() {
 
 // HandlePaneCrash handles a pane controller crash.
 // It attempts to restart the controller around the existing runtime.
-//
-// WARNING: This is a Phase 1 placeholder. The restart logic is not fully
-// implemented. The function validates that restart is possible and logs
-// the intent, but actual controller recreation requires parent window
-// tracking to be completed in Phase 2.
 func (s *Supervisor) HandlePaneCrash(paneID uint32, panicErr interface{}) error {
 	if s.logger != nil {
 		s.logger.Errorf("supervisor: pane controller %d crashed: %v", paneID, panicErr)
@@ -119,17 +132,35 @@ func (s *Supervisor) HandlePaneCrash(paneID uint32, panicErr interface{}) error 
 	default:
 	}
 
-	// Find the parent window
-	// TODO(Phase 2): Store parent relationship in registry or runtime
-	// For now, we need the window to adopt the restarted controller
+	// Find the parent window from registry
+	windowID := s.registry.GetPaneWindow(paneID)
+	if windowID == 0 {
+		return fmt.Errorf("pane %d: no parent window found in registry", paneID)
+	}
+
+	// Get the parent window reference
+	window := s.registry.GetWindow(windowID)
+	if window == nil {
+		return fmt.Errorf("pane %d: parent window %d not found", paneID, windowID)
+	}
 
 	// Create new controller around existing runtime
-	// The parent window reference needs to be obtained from context
-	// This is a simplified version - full implementation needs parent tracking
-	// TODO(Phase 2): Actually create the new controller and register it
+	if s.onPaneRestart == nil {
+		return fmt.Errorf("pane %d: no restart callback registered", paneID)
+	}
+
+	newController, err := s.onPaneRestart(runtime)
+	if err != nil {
+		return fmt.Errorf("pane %d: restart failed: %w", paneID, err)
+	}
+
+	// Register the new controller
+	if err := s.registry.RegisterPane(newController); err != nil {
+		return fmt.Errorf("pane %d: register failed: %w", paneID, err)
+	}
 
 	if s.logger != nil {
-		s.logger.Infof("supervisor: pane %d controller restart prepared (Phase 2: implement actual restart)", paneID)
+		s.logger.Infof("supervisor: pane %d controller restarted successfully", paneID)
 	}
 
 	return nil
@@ -137,9 +168,6 @@ func (s *Supervisor) HandlePaneCrash(paneID uint32, panicErr interface{}) error 
 
 // HandleWindowCrash handles a window controller crash.
 // It rebuilds the window from registry + structural state without killing panes.
-//
-// WARNING: This is a Phase 1 placeholder. The rebuild logic is not fully
-// implemented and will be completed in Phase 2.
 func (s *Supervisor) HandleWindowCrash(windowID uint32, panicErr interface{}) error {
 	if s.logger != nil {
 		s.logger.Errorf("supervisor: window controller %d crashed: %v", windowID, panicErr)
@@ -157,8 +185,6 @@ func (s *Supervisor) HandleWindowCrash(windowID uint32, panicErr interface{}) er
 	// 2. Rebuild window controller with same layout/active pane
 	// 3. Rebind pane controllers to new window
 
-	// TODO(Phase 2): Implement full window rebuild logic
-
 	time.Sleep(s.panicCooldown)
 
 	select {
@@ -167,8 +193,29 @@ func (s *Supervisor) HandleWindowCrash(windowID uint32, panicErr interface{}) er
 	default:
 	}
 
+	// Get rebuild state from registry
+	rebuildState := s.registry.GetRebuildWindowState(windowID)
+	if rebuildState == nil {
+		return fmt.Errorf("window %d: no rebuild state found in registry", windowID)
+	}
+
+	// Create new window controller
+	if s.onWindowRestart == nil {
+		return fmt.Errorf("window %d: no restart callback registered", windowID)
+	}
+
+	newController, err := s.onWindowRestart(windowID)
+	if err != nil {
+		return fmt.Errorf("window %d: restart failed: %w", windowID, err)
+	}
+
+	// Register the new controller
+	if err := s.registry.RegisterWindow(newController); err != nil {
+		return fmt.Errorf("window %d: register failed: %w", windowID, err)
+	}
+
 	if s.logger != nil {
-		s.logger.Infof("supervisor: window %d controller restart prepared (Phase 2: implement actual restart)", windowID)
+		s.logger.Infof("supervisor: window %d controller restarted successfully", windowID)
 	}
 
 	return nil
@@ -176,9 +223,6 @@ func (s *Supervisor) HandleWindowCrash(windowID uint32, panicErr interface{}) er
 
 // HandleSessionCrash handles a session controller crash.
 // It rebuilds the session from registry + structural state without killing windows.
-//
-// WARNING: This is a Phase 1 placeholder. The rebuild logic is not fully
-// implemented and will be completed in Phase 2.
 func (s *Supervisor) HandleSessionCrash(panicErr interface{}) error {
 	if s.logger != nil {
 		s.logger.Errorf("supervisor: session controller crashed: %v", panicErr)
@@ -196,8 +240,6 @@ func (s *Supervisor) HandleSessionCrash(panicErr interface{}) error {
 	// 2. All pane runtimes survive
 	// 3. Rebuild session controller with same windows/active window
 
-	// TODO(Phase 2): Implement full session rebuild logic
-
 	time.Sleep(s.panicCooldown)
 
 	select {
@@ -206,8 +248,21 @@ func (s *Supervisor) HandleSessionCrash(panicErr interface{}) error {
 	default:
 	}
 
+	// Create new session controller
+	if s.onSessionRestart == nil {
+		return fmt.Errorf("session: no restart callback registered")
+	}
+
+	newController, err := s.onSessionRestart()
+	if err != nil {
+		return fmt.Errorf("session: restart failed: %w", err)
+	}
+
+	// Register the new controller
+	s.registry.SetSession(newController)
+
 	if s.logger != nil {
-		s.logger.Infof("supervisor: session controller restart prepared (Phase 2: implement actual restart)")
+		s.logger.Infof("supervisor: session controller restarted successfully")
 	}
 
 	return nil
@@ -239,6 +294,33 @@ func (s *Supervisor) recordRestart(id uint32) {
 	defer s.restartMu.Unlock()
 
 	s.restartCounts[id] = append(s.restartCounts[id], time.Now())
+}
+
+// RestartPaneController creates a new controller around an existing runtime.
+// This is called during crash recovery to restart a pane controller.
+func (s *Supervisor) RestartPaneController(runtime *PaneRuntime) (*PaneController, error) {
+	if s.onPaneRestart == nil {
+		return nil, fmt.Errorf("no pane restart callback registered")
+	}
+	return s.onPaneRestart(runtime)
+}
+
+// RestartWindowController rebuilds a window controller from registry state.
+// This is called during crash recovery to restart a window controller.
+func (s *Supervisor) RestartWindowController(windowID uint32) (*WindowController, error) {
+	if s.onWindowRestart == nil {
+		return nil, fmt.Errorf("no window restart callback registered")
+	}
+	return s.onWindowRestart(windowID)
+}
+
+// RestartSessionController rebuilds the session controller from registry state.
+// This is called during crash recovery to restart the session controller.
+func (s *Supervisor) RestartSessionController() (*SessionController, error) {
+	if s.onSessionRestart == nil {
+		return nil, fmt.Errorf("no session restart callback registered")
+	}
+	return s.onSessionRestart()
 }
 
 // RestartStats returns restart statistics for monitoring.

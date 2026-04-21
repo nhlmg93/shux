@@ -4,7 +4,7 @@
 PREFIX=$(shell pwd)/ghostty-build/usr
 GHOSTTY_REPO ?= https://github.com/ghostty-org/ghostty.git
 GHOSTTY_REF ?= dcc39dcd401975ee77a642fa15ba7bb9f6d85b96
-GOFILES = $(shell find . -name '*.go' -not -path './ghostty-build/*')
+GOFILES = $(shell find . -name '*.go' -not -path './ghostty-build/*' -not -path './.worktree/*')
 GO_WRAP = $(shell if command -v mise >/dev/null 2>&1; then printf 'mise exec go -- '; fi)
 GO = $(GO_WRAP)go
 GOPLS = $(GO_WRAP)gopls
@@ -42,10 +42,10 @@ gopls:
 	@$(GOPLS) check $(GOFILES)
 
 fmt:
-	@$(GOFUMPT) -w .
+	@find . -name '*.go' -not -path './ghostty-build/*' -not -path './.worktree/*' -print0 | xargs -0 $(GOFUMPT) -w
 
 fmt-check:
-	@out="$$($(GOFUMPT) -l .)"; \
+	@out="$$($(GOFUMPT) -l $(GOFILES))"; \
 	if [ -n "$$out" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$out"; \

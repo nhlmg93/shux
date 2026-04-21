@@ -3,7 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
+	"golang.org/x/sys/unix"
 	"shux/pkg/shux"
 )
 
@@ -44,7 +49,6 @@ func runApp(opts RunOptions) error {
 		return fmt.Errorf("failed to create session directory: %w", err)
 	}
 
-	// Phase 1: Try to attach to live owner
 	var snapshot *shux.SessionSnapshot
 	if shux.SessionSnapshotExists(sessionName) {
 		var err error

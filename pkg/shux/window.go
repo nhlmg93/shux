@@ -10,14 +10,17 @@ type WindowRef struct {
 }
 
 type Window struct {
-	ref       *WindowRef
-	logger    ShuxLogger
-	parent    *SessionRef
-	id        uint32
-	panes     map[uint32]*PaneRef
-	paneOrder OrderedIDList
-	active    uint32
-	paneID    uint32
+	ref        *WindowRef
+	logger     ShuxLogger
+	supervisor *Supervisor // For crash recovery
+	registry   *Registry   // For rebuild from registry
+	parent     *SessionRef
+	id         uint32
+	panes      map[uint32]*PaneRef
+	paneOrder  OrderedIDList
+	active     uint32
+	paneID     uint32
+	crashed    bool // true if terminating due to crash (don't kill children)
 
 	root             *splitNode
 	layout           []paneLayout
@@ -35,13 +38,32 @@ func NewWindow(id uint32) *Window {
 	}
 }
 
+// NewWindowWithSupervisor creates a window with supervisor/registry for crash recovery.
+func NewWindowWithSupervisor(id uint32, supervisor *Supervisor, registry *Registry) *Window {
+	w := NewWindow(id)
+	w.supervisor = supervisor
+	w.registry = registry
+	return w
+}
+
 func StartWindow(id uint32, parent *SessionRef, logger ShuxLogger) *WindowRef {
 	w := NewWindow(id)
 	w.parent = parent
 	w.logger = logger
 	ref := &WindowRef{loopRef: newLoopRef(32)}
 	w.ref = ref
-	go w.run()
+	go w.runWithSupervisor()
+	return ref
+}
+
+// StartWindowWithSupervisor creates a window with supervisor support.
+func StartWindowWithSupervisor(id uint32, parent *SessionRef, logger ShuxLogger, supervisor *Supervisor, registry *Registry) *WindowRef {
+	w := NewWindowWithSupervisor(id, supervisor, registry)
+	w.parent = parent
+	w.logger = logger
+	ref := &WindowRef{loopRef: newLoopRef(32)}
+	w.ref = ref
+	go w.runWithSupervisor()
 	return ref
 }
 
@@ -65,7 +87,25 @@ func (w *Window) run() {
 	}
 }
 
+// runWithSupervisor wraps the window run loop with supervisor panic recovery.
+func (w *Window) runWithSupervisor() {
+	if w.supervisor != nil {
+		SupervisorGuard(w.supervisor, "window", w.id, w.run)
+	} else {
+		w.run()
+	}
+}
+
 func (w *Window) terminate(reason error) {
+	if reason != nil {
+		w.crashed = true
+		w.logger.Errorf("window: crash id=%d reason=%v", w.id, reason)
+		// On crash: Don't kill child panes - they survive via registry
+		// The supervisor will rebuild this window controller
+		return
+	}
+
+	// Graceful shutdown: kill all child panes
 	for _, pane := range w.panes {
 		if pane == nil {
 			continue
@@ -73,11 +113,57 @@ func (w *Window) terminate(reason error) {
 		pane.Send(KillPane{})
 		pane.Shutdown()
 	}
-	if reason != nil {
-		w.logger.Errorf("window: crash id=%d reason=%v", w.id, reason)
-		return
-	}
 	w.logger.Infof("window: terminate id=%d", w.id)
+}
+
+// IsCrashed returns true if the window terminated due to a crash.
+// Used by supervisor to distinguish crash recovery from graceful shutdown.
+func (w *Window) IsCrashed() bool {
+	return w.crashed
+}
+
+// RebuildFromRegistry reconstructs the window's pane list from registry state.
+// This is called during crash recovery - panes survive via registry.
+func (w *Window) RebuildFromRegistry() error {
+	if w.registry == nil {
+		return fmt.Errorf("window %d: no registry available for rebuild", w.id)
+	}
+
+	w.logger.Infof("window %d: rebuilding from registry", w.id)
+
+	// Get all panes for this window from registry
+	paneIDs := w.registry.GetWindowPanes(w.id)
+
+	// Get all runtimes for these panes
+	runtimes := w.registry.GetAllRuntimes()
+
+	// Reconnect to surviving panes
+	for _, paneID := range paneIDs {
+		runtime, ok := runtimes[paneID]
+		if !ok {
+			w.logger.Warnf("window %d: pane %d in registry but no runtime found", w.id, paneID)
+			continue
+		}
+
+		// Check if pane controller exists in registry
+		paneController := w.registry.GetPane(paneID)
+		if paneController == nil {
+			w.logger.Infof("window %d: pane %d runtime exists but controller missing, will be restarted", w.id, paneID)
+			continue
+		}
+
+		w.logger.Infof("window %d: reconnecting to pane %d", w.id, paneID)
+		_ = runtime // runtime survives, controller may be restarted by supervisor
+		w.paneOrder.Add(paneID)
+	}
+
+	// Restore active pane from first available
+	if firstPane, ok := w.paneOrder.First(); ok {
+		w.active = firstPane
+	}
+
+	w.logger.Infof("window %d: rebuilt with %d panes", w.id, len(w.paneOrder))
+	return nil
 }
 
 // assertInvariants validates internal state consistency.
