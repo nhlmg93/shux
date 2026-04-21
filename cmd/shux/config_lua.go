@@ -530,10 +530,6 @@ func (r *luaConfigRuntime) luaKeymapUnbind(L *lua.LState) int {
 	return 0
 }
 
-func (r *luaConfigRuntime) setOption(name, value string) error {
-	return r.setOptionValue(name, lua.LString(value))
-}
-
 func (r *luaConfigRuntime) setOptionValue(name string, value lua.LValue) error {
 	switch name {
 	case "prefix":

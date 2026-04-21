@@ -58,8 +58,7 @@ func TestModelUsesConfiguredKeymap(t *testing.T) {
 
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
 	model = updated.(Model)
-	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
-	model = updated.(Model)
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
 
 	result, ok := askValue(sessionRef, GetSessionSnapshotData{})
 	if !ok {
