@@ -45,6 +45,7 @@ type PaneRuntime struct {
 	// Callbacks for events
 	onTitleChanged func(title string)
 	onBell         func()
+	onOutput       func()
 	onProcessExit  func(error)
 
 	logger ShuxLogger
@@ -60,6 +61,7 @@ type PaneRuntimeConfig struct {
 	Logger         ShuxLogger
 	OnTitleChanged func(title string)
 	OnBell         func()
+	OnOutput       func()
 	OnProcessExit  func(err error)
 }
 
@@ -81,6 +83,7 @@ func NewPaneRuntime(cfg PaneRuntimeConfig) (*PaneRuntime, error) {
 		logger:         cfg.Logger,
 		onTitleChanged: cfg.OnTitleChanged,
 		onBell:         cfg.OnBell,
+		onOutput:       cfg.OnOutput,
 		onProcessExit:  cfg.OnProcessExit,
 		stopCh:         make(chan struct{}),
 		readDone:       make(chan struct{}),
@@ -108,7 +111,6 @@ func (pr *PaneRuntime) init() error {
 		return fmt.Errorf("create pty: %w", err)
 	}
 
-	// Start read loop
 	go pr.readLoop()
 
 	if pr.logger != nil {
@@ -116,131 +118,6 @@ func (pr *PaneRuntime) init() error {
 	}
 
 	return nil
-}
-
-// createTerminal creates the Ghostty terminal and supporting objects.
-func (pr *PaneRuntime) createTerminal() error {
-	var err error
-
-	pr.term, err = libghostty.NewTerminal(
-		libghostty.WithSize(uint16(pr.cols), uint16(pr.rows)),
-		libghostty.WithMaxScrollback(10000),
-		libghostty.WithTitleChanged(func(t *libghostty.Terminal) {
-			if title, err := t.Title(); err == nil {
-				pr.mu.Lock()
-				pr.windowTitle = title
-				pr.mu.Unlock()
-				if pr.onTitleChanged != nil {
-					pr.onTitleChanged(title)
-				}
-			}
-		}),
-		libghostty.WithBell(func(t *libghostty.Terminal) {
-			pr.mu.Lock()
-			pr.bellCount++
-			pr.mu.Unlock()
-			if pr.onBell != nil {
-				pr.onBell()
-			}
-		}),
-		libghostty.WithWritePty(func(t *libghostty.Terminal, data []byte) {
-			pr.mu.RLock()
-			pty := pr.pty
-			pr.mu.RUnlock()
-			if pty != nil {
-				_, _ = pty.Write(data)
-			}
-		}),
-	)
-	if err != nil {
-		return err
-	}
-
-	pr.renderState, err = libghostty.NewRenderState()
-	if err != nil {
-		pr.term.Close()
-		pr.term = nil
-		return err
-	}
-
-	pr.rowIterator, err = libghostty.NewRenderStateRowIterator()
-	if err != nil {
-		pr.renderState.Close()
-		pr.renderState = nil
-		pr.term.Close()
-		pr.term = nil
-		return err
-	}
-
-	pr.rowCells, err = libghostty.NewRenderStateRowCells()
-	if err != nil {
-		pr.rowIterator.Close()
-		pr.rowIterator = nil
-		pr.renderState.Close()
-		pr.renderState = nil
-		pr.term.Close()
-		pr.term = nil
-		return err
-	}
-
-	pr.keyEncoder, err = libghostty.NewKeyEncoder()
-	if err != nil {
-		pr.rowCells.Close()
-		pr.rowCells = nil
-		pr.rowIterator.Close()
-		pr.rowIterator = nil
-		pr.renderState.Close()
-		pr.renderState = nil
-		pr.term.Close()
-		pr.term = nil
-		return err
-	}
-
-	pr.mouseEncoder, err = libghostty.NewMouseEncoder()
-	if err != nil {
-		pr.keyEncoder.Close()
-		pr.keyEncoder = nil
-		pr.rowCells.Close()
-		pr.rowCells = nil
-		pr.rowIterator.Close()
-		pr.rowIterator = nil
-		pr.renderState.Close()
-		pr.renderState = nil
-		pr.term.Close()
-		pr.term = nil
-		return err
-	}
-	pr.mouseEncoder.SetOptTrackLastCell(true)
-
-	return nil
-}
-
-// cleanupTerminal closes terminal-related resources.
-func (pr *PaneRuntime) cleanupTerminal() {
-	if pr.mouseEncoder != nil {
-		pr.mouseEncoder.Close()
-		pr.mouseEncoder = nil
-	}
-	if pr.keyEncoder != nil {
-		pr.keyEncoder.Close()
-		pr.keyEncoder = nil
-	}
-	if pr.rowCells != nil {
-		pr.rowCells.Close()
-		pr.rowCells = nil
-	}
-	if pr.rowIterator != nil {
-		pr.rowIterator.Close()
-		pr.rowIterator = nil
-	}
-	if pr.renderState != nil {
-		pr.renderState.Close()
-		pr.renderState = nil
-	}
-	if pr.term != nil {
-		pr.term.Close()
-		pr.term = nil
-	}
 }
 
 // createPTY spawns the shell process with PTY.
@@ -278,8 +155,6 @@ func (pr *PaneRuntime) readLoop() {
 	readErrCh := make(chan error, 1)
 	waitDone := make(chan error, 1)
 
-	// Get PTY reference - we hold it for the entire read loop duration
-	// to avoid races with Kill() closing the PTY
 	pr.mu.RLock()
 	pty := pr.pty
 	pr.mu.RUnlock()
@@ -288,7 +163,6 @@ func (pr *PaneRuntime) readLoop() {
 		return
 	}
 
-	// Read loop - runs until error or stop signal
 	go func() {
 		for {
 			select {
@@ -302,9 +176,13 @@ func (pr *PaneRuntime) readLoop() {
 			if n > 0 {
 				pr.mu.RLock()
 				term := pr.term
+				onOutput := pr.onOutput
 				pr.mu.RUnlock()
 				if term != nil {
 					term.VTWrite(buf[:n])
+				}
+				if onOutput != nil {
+					onOutput()
 				}
 			}
 			if err != nil {
@@ -314,7 +192,6 @@ func (pr *PaneRuntime) readLoop() {
 		}
 	}()
 
-	// Wait loop - waits for process exit
 	go func() {
 		waitDone <- pty.Wait()
 	}()
@@ -324,14 +201,14 @@ func (pr *PaneRuntime) readLoop() {
 	select {
 	case err = <-readErrCh:
 	case err = <-waitDone:
-		// Process exited - signal read loop to stop (if not already closed)
+
 		select {
 		case <-pr.stopCh:
-			// Already closed
+
 		default:
 			close(pr.stopCh)
 		}
-		// Wait for read loop to finish
+
 		<-readErrCh
 	}
 
@@ -563,226 +440,6 @@ func (pr *PaneRuntime) Close() {
 	pr.pty = nil
 	pr.cleanupTerminal()
 	pr.mu.Unlock()
-}
-
-// RenderState returns the render state for building content.
-func (pr *PaneRuntime) RenderState() *libghostty.RenderState {
-	pr.mu.RLock()
-	defer pr.mu.RUnlock()
-	return pr.renderState
-}
-
-// Term returns the underlying terminal (for advanced operations).
-func (pr *PaneRuntime) Term() *libghostty.Terminal {
-	pr.mu.RLock()
-	defer pr.mu.RUnlock()
-	return pr.term
-}
-
-// KeyEncoder returns the key encoder.
-func (pr *PaneRuntime) KeyEncoder() *libghostty.KeyEncoder {
-	pr.mu.RLock()
-	defer pr.mu.RUnlock()
-	return pr.keyEncoder
-}
-
-// MouseEncoder returns the mouse encoder.
-func (pr *PaneRuntime) MouseEncoder() *libghostty.MouseEncoder {
-	pr.mu.RLock()
-	defer pr.mu.RUnlock()
-	return pr.mouseEncoder
-}
-
-// BuildContent builds the current pane content from the render state.
-func (pr *PaneRuntime) BuildContent() *PaneContent {
-	pr.mu.RLock()
-	term := pr.term
-	renderState := pr.renderState
-	rowIterator := pr.rowIterator
-	rowCells := pr.rowCells
-	rows := pr.rows
-	cols := pr.cols
-	pr.mu.RUnlock()
-
-	if term == nil || renderState == nil || rowIterator == nil || rowCells == nil {
-		return &PaneContent{
-			Lines:     make([]string, 0),
-			Cells:     make([][]PaneCell, 0),
-			CursorRow: 0,
-			CursorCol: 0,
-		}
-	}
-
-	// Update render state from terminal
-	if err := renderState.Update(term); err != nil {
-		return &PaneContent{
-			Lines:     make([]string, rows),
-			Cells:     make([][]PaneCell, rows),
-			CursorRow: 0,
-			CursorCol: 0,
-		}
-	}
-
-	// Get cursor position
-	cursorRow, cursorCol := 0, 0
-	cursorVisible := true
-	if hasCursor, _ := renderState.CursorViewportHasValue(); hasCursor {
-		if x, err := renderState.CursorViewportX(); err == nil {
-			cursorCol = int(x)
-		}
-		if y, err := renderState.CursorViewportY(); err == nil {
-			cursorRow = int(y)
-		}
-	}
-	if visible, err := renderState.CursorVisible(); err == nil {
-		cursorVisible = visible
-	}
-
-	// Get scrollback rows
-	scrollbackRows := uint(0)
-	if scrollback, err := term.ScrollbackRows(); err == nil {
-		scrollbackRows = scrollback
-	}
-
-	// Populate row iterator
-	if err := renderState.RowIterator(rowIterator); err != nil {
-		return &PaneContent{
-			Lines:     make([]string, rows),
-			Cells:     make([][]PaneCell, rows),
-			CursorRow: cursorRow,
-			CursorCol: cursorCol,
-		}
-	}
-
-	lines := make([]string, rows)
-	cells := make([][]PaneCell, rows)
-
-	rowIdx := 0
-	for rowIdx < rows && rowIterator.Next() {
-		lineCells := make([]PaneCell, cols)
-
-		// Get cells for this row
-		if err := rowIterator.Cells(rowCells); err == nil {
-			colIdx := 0
-			for colIdx < cols && rowCells.Next() {
-				cell := pr.buildCellFromRowCells(rowCells)
-				lineCells[colIdx] = cell
-				colIdx++
-			}
-		}
-
-		// Fill remaining cells with blanks
-		for c := 0; c < cols; c++ {
-			if lineCells[c].Text == "" {
-				lineCells[c] = PaneCell{Text: " ", Width: 1}
-			}
-		}
-
-		// Build line string
-		var line strings.Builder
-		for _, cell := range lineCells {
-			if cell.Width == 0 {
-				continue
-			}
-			if cell.Text == "" {
-				line.WriteByte(' ')
-			} else {
-				line.WriteString(cell.Text)
-			}
-		}
-
-		lines[rowIdx] = line.String()
-		cells[rowIdx] = lineCells
-		rowIdx++
-	}
-
-	// Fill remaining rows with blanks
-	for ; rowIdx < rows; rowIdx++ {
-		lineCells := make([]PaneCell, cols)
-		for c := 0; c < cols; c++ {
-			lineCells[c] = PaneCell{Text: " ", Width: 1}
-		}
-		lines[rowIdx] = strings.Repeat(" ", cols)
-		cells[rowIdx] = lineCells
-	}
-
-	return &PaneContent{
-		Lines:          lines,
-		Cells:          cells,
-		CursorRow:      cursorRow,
-		CursorCol:      cursorCol,
-		InAltScreen:    pr.IsAltScreen(),
-		CursorHidden:   !cursorVisible,
-		Title:          pr.GetTitle(),
-		BellCount:      pr.GetBellCount(),
-		ScrollbackRows: scrollbackRows,
-	}
-}
-
-// buildCellFromRowCells builds a PaneCell from row cell data.
-func (pr *PaneRuntime) buildCellFromRowCells(rowCells *libghostty.RenderStateRowCells) PaneCell {
-	cell := PaneCell{Text: " ", Width: 1}
-
-	// Get raw cell info
-	raw, err := rowCells.Raw()
-	if err != nil {
-		return cell
-	}
-
-	// Check width
-	if wide, err := raw.Wide(); err == nil {
-		switch wide {
-		case libghostty.CellWideWide:
-			cell.Width = 2
-		case libghostty.CellWideSpacerTail, libghostty.CellWideSpacerHead:
-			cell.Width = 0
-			cell.Text = ""
-		default:
-			cell.Width = 1
-		}
-	}
-
-	// Get graphemes (text content)
-	if graphemes, err := rowCells.Graphemes(); err == nil && len(graphemes) > 0 {
-		cell.Text = codepointsToString(graphemes)
-	} else if cell.Width > 0 {
-		cell.Text = " "
-	}
-
-	// Get style
-	if style, err := rowCells.Style(); err == nil {
-		cell.Bold = style.Bold()
-		cell.Italic = style.Italic()
-		cell.Underline = style.Underline() != libghostty.UnderlineNone
-		cell.Blink = style.Blink()
-		cell.Reverse = style.Inverse()
-	}
-
-	// Get colors
-	if fg, err := rowCells.FgColor(); err == nil && fg != nil {
-		cell.HasFgColor = true
-		cell.FgColor = *fg
-	}
-	if bg, err := rowCells.BgColor(); err == nil && bg != nil {
-		cell.HasBgColor = true
-		cell.BgColor = *bg
-	}
-
-	// Check hyperlink
-	if hasHyperlink, err := raw.HasHyperlink(); err == nil {
-		cell.HasHyperlink = hasHyperlink
-	}
-
-	return cell
-}
-
-// codepointsToString converts a slice of codepoints to a string.
-func codepointsToString(codepoints []uint32) string {
-	var b strings.Builder
-	for _, cp := range codepoints {
-		b.WriteRune(rune(cp))
-	}
-	return b.String()
 }
 
 // GetSnapshotData returns snapshot data for the runtime.

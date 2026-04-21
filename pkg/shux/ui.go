@@ -1,20 +1,23 @@
 package shux
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 type Model struct {
-	session      RemoteSession
-	keymap       Keymap
-	mouseEnabled bool
-	width        int
-	height       int
-	prefixMode   bool
-	initialized  bool
-	windowView   WindowView
+	session            RemoteSession
+	keymap             Keymap
+	mouseEnabled       bool
+	width              int
+	height             int
+	prefixMode         bool
+	initialized        bool
+	windowView         WindowView
+	startupWarnings    []string
+	startupWarningStep int
 }
 
 // SetUpdateChannel is kept as a compatibility no-op for older tests.
@@ -23,7 +26,10 @@ func SetUpdateChannel(ch chan struct{}) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(
+		func() tea.Msg { return tea.RequestWindowSize() },
+		func() tea.Msg { return UpdateMsg{} },
+	)
 }
 
 // UpdateMsg signals that pane content changed and the UI should refresh.
@@ -53,7 +59,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Infof("ui: resizing to %dx%d", msg.Height, msg.Width)
 			m.session.Send(ResizeMsg{Rows: msg.Height, Cols: msg.Width})
 		}
-		return m, nil
+		return m, func() tea.Msg { return UpdateMsg{} }
 
 	case tea.KeyPressMsg:
 		if m.handleKey(msg) {
@@ -66,6 +72,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.PasteMsg:
+		if m.hasStartupWarnings() {
+			return m, nil
+		}
 		m.session.Send(WriteToPane{Data: []byte(msg.Content)})
 		return m, nil
 
@@ -83,12 +92,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.windowView = view
 		return m, nil
 
+	case WindowView:
+		m.windowView = msg
+		return m, nil
+
 	default:
 		return m, nil
 	}
 }
 
 func (m *Model) handleKey(key tea.KeyPressMsg) bool {
+	if m.hasStartupWarnings() {
+		if key.Code == tea.KeyEnter {
+			m.advanceStartupWarning()
+		}
+		return false
+	}
+
 	keystroke := key.String()
 
 	if m.prefixMode {
@@ -134,6 +154,9 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) {
+	if m.hasStartupWarnings() {
+		return
+	}
 	if !m.mouseEnabled {
 		return
 	}
@@ -181,12 +204,16 @@ func (m Model) renderContent() string {
 		return ""
 	}
 
+	if m.hasStartupWarnings() {
+		return m.renderStartupWarnings()
+	}
+
 	if m.windowView.Content == "" {
 		lines := make([]string, m.height)
 		for i := range lines {
 			lines[i] = strings.Repeat(" ", m.width)
 		}
-		return m.renderPrefix(lines)
+		return m.renderStatusLine(lines)
 	}
 
 	viewLines := strings.Split(m.windowView.Content, "\n")
@@ -198,32 +225,112 @@ func (m Model) renderContent() string {
 		viewLines = viewLines[:m.height]
 	}
 
-	return m.renderPrefix(viewLines)
+	return m.renderStatusLine(viewLines)
 }
 
-func (m Model) renderPrefix(lines []string) string {
-	if m.prefixMode && len(lines) > 0 {
-		prefix := "[prefix]"
-		if len(prefix) < m.width {
-			prefix += strings.Repeat(" ", m.width-len(prefix))
-		} else if len(prefix) > m.width {
-			prefix = prefix[:m.width]
+func (m Model) hasStartupWarnings() bool {
+	return len(m.startupWarnings) > 0 && m.startupWarningStep < len(m.startupWarnings)
+}
+
+func (m *Model) advanceStartupWarning() {
+	if !m.hasStartupWarnings() {
+		return
+	}
+	m.startupWarningStep++
+	if m.startupWarningStep >= len(m.startupWarnings) {
+		m.clearStartupWarnings()
+	}
+}
+
+func (m *Model) clearStartupWarnings() {
+	if len(m.startupWarnings) == 0 {
+		return
+	}
+	m.startupWarnings = nil
+	m.startupWarningStep = 0
+}
+
+func (m Model) renderStartupWarnings() string {
+	lines := make([]string, 0, m.height)
+	current := m.startupWarnings[m.startupWarningStep]
+	messages := []string{
+		"Configuration errors detected.",
+		"Shux is using safe tmux-style fallback defaults.",
+		"",
+		current,
+		"",
+		"Press Enter to continue.",
+	}
+	if len(m.startupWarnings) > 1 {
+		messages = append(messages, "", fmt.Sprintf("Error %d of %d", m.startupWarningStep+1, len(m.startupWarnings)))
+	}
+
+	for _, line := range messages {
+		if len(lines) >= m.height {
+			break
 		}
-		lines[len(lines)-1] = prefix
+		if line == "" {
+			lines = append(lines, strings.Repeat(" ", m.width))
+			continue
+		}
+		for len(line) > 0 && len(lines) < m.height {
+			chunk := line
+			if len(chunk) > m.width {
+				chunk = chunk[:m.width]
+				line = line[m.width:]
+			} else {
+				line = ""
+			}
+			if len(chunk) < m.width {
+				chunk += strings.Repeat(" ", m.width-len(chunk))
+			}
+			lines = append(lines, chunk)
+		}
+	}
+	for len(lines) < m.height {
+		lines = append(lines, strings.Repeat(" ", m.width))
 	}
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) renderStatusLine(lines []string) string {
+	if len(lines) > 0 && m.prefixMode {
+		status := "[prefix]"
+		if len(status) < m.width {
+			status += strings.Repeat(" ", m.width-len(status))
+		} else if len(status) > m.width {
+			status = status[:m.width]
+		}
+		lines[len(lines)-1] = status
+	}
+	return strings.Join(lines, "\n")
+}
+
+// SetInitialSize seeds the model with a known terminal size before Bubble Tea
+// delivers its first WindowSizeMsg.
+func (m *Model) SetInitialSize(width, height int) {
+	if m == nil || width <= 0 || height <= 0 {
+		return
+	}
+	m.width = width
+	m.height = height
+}
+
 func NewModel(session RemoteSession) Model {
-	return NewModelWithOptions(session, DefaultKeymap(), true)
+	return NewModelWithOptions(session, DefaultKeymap(), false)
 }
 
 func NewModelWithKeymap(session RemoteSession, keymap Keymap) Model {
-	return NewModelWithOptions(session, keymap, true)
+	return NewModelWithOptions(session, keymap, false)
 }
 
 func NewModelWithOptions(session RemoteSession, keymap Keymap, mouseEnabled bool) Model {
-	return Model{session: session, keymap: keymap, mouseEnabled: mouseEnabled}
+	return NewModelWithStartupWarnings(session, keymap, mouseEnabled, nil)
+}
+
+func NewModelWithStartupWarnings(session RemoteSession, keymap Keymap, mouseEnabled bool, startupWarnings []string) Model {
+	warnings := append([]string(nil), startupWarnings...)
+	return Model{session: session, keymap: keymap, mouseEnabled: mouseEnabled, startupWarnings: warnings}
 }
 
 // RemoteSession is an interface for session operations, implemented by both
