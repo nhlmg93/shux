@@ -12,7 +12,7 @@ type Model struct {
 	height      int
 	prefixMode  bool
 	initialized bool
-	content     *PaneContent
+	windowView  WindowView
 }
 
 // SetUpdateChannel is kept as a compatibility no-op for older tests.
@@ -64,12 +64,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case UpdateMsg:
-		result, _ := askValue(m.session, GetPaneContent{})
+		result, _ := askValue(m.session, GetWindowView{})
 		if result == nil {
-			m.content = nil
+			m.windowView = WindowView{}
 			return m, nil
 		}
-		m.content = result.(*PaneContent)
+		view, ok := result.(WindowView)
+		if !ok {
+			m.windowView = WindowView{}
+			return m, nil
+		}
+		m.windowView = view
 		return m, nil
 
 	default:
@@ -91,6 +96,24 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 			return false
 		case "p":
 			m.session.Send(SwitchWindow{Delta: -1})
+			return false
+		case "s":
+			m.session.Send(Split{Dir: SplitH})
+			return false
+		case "v":
+			m.session.Send(Split{Dir: SplitV})
+			return false
+		case "h":
+			m.session.Send(NavigatePane{Dir: PaneNavLeft})
+			return false
+		case "j":
+			m.session.Send(NavigatePane{Dir: PaneNavDown})
+			return false
+		case "k":
+			m.session.Send(NavigatePane{Dir: PaneNavUp})
+			return false
+		case "l":
+			m.session.Send(NavigatePane{Dir: PaneNavRight})
 			return false
 		case "d":
 			Infof("ui: detach requested")
@@ -137,13 +160,12 @@ func (m Model) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 
-	if m.content != nil {
-		if title := m.content.Title; title != "" {
-			v.WindowTitle = title
-		}
-		if !m.content.CursorHidden && m.content.CursorRow >= 0 && m.content.CursorCol >= 0 && m.content.CursorRow < m.height && m.content.CursorCol < m.width {
-			v.Cursor = tea.NewCursor(m.content.CursorCol, m.content.CursorRow)
-		}
+	if m.windowView.Title != "" {
+		v.WindowTitle = m.windowView.Title
+	}
+
+	if m.windowView.CursorOn && m.windowView.CursorRow >= 0 && m.windowView.CursorCol >= 0 && m.windowView.CursorRow < m.height && m.windowView.CursorCol < m.width {
+		v.Cursor = tea.NewCursor(m.windowView.CursorCol, m.windowView.CursorRow)
 	}
 
 	return v
@@ -154,15 +176,27 @@ func (m Model) renderContent() string {
 		return ""
 	}
 
-	lines := make([]string, m.height)
-	for row := 0; row < m.height; row++ {
-		if m.content != nil && row < len(m.content.Cells) {
-			lines[row] = renderRow(m.content.Cells[row], m.width)
-			continue
+	if m.windowView.Content == "" {
+		lines := make([]string, m.height)
+		for i := range lines {
+			lines[i] = strings.Repeat(" ", m.width)
 		}
-		lines[row] = strings.Repeat(" ", m.width)
+		return m.renderPrefix(lines)
 	}
 
+	viewLines := strings.Split(m.windowView.Content, "\n")
+	if len(viewLines) < m.height {
+		for i := len(viewLines); i < m.height; i++ {
+			viewLines = append(viewLines, strings.Repeat(" ", m.width))
+		}
+	} else if len(viewLines) > m.height {
+		viewLines = viewLines[:m.height]
+	}
+
+	return m.renderPrefix(viewLines)
+}
+
+func (m Model) renderPrefix(lines []string) string {
 	if m.prefixMode && len(lines) > 0 {
 		prefix := "[prefix]"
 		if len(prefix) < m.width {
@@ -172,7 +206,6 @@ func (m Model) renderContent() string {
 		}
 		lines[len(lines)-1] = prefix
 	}
-
 	return strings.Join(lines, "\n")
 }
 

@@ -231,12 +231,14 @@ func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 					{ID: 3, Shell: "/bin/sh", Rows: 24, Cols: 80, CWD: cwd},
 					{ID: 7, Shell: "/bin/sh", Rows: 24, Cols: 80, CWD: cwd},
 				},
+				Layout: &SplitTreeSnapshot{Dir: SplitV, First: &SplitTreeSnapshot{PaneID: 3}, Second: &SplitTreeSnapshot{PaneID: 7}},
 			},
 			{
 				ID:         5,
 				ActivePane: 1,
 				PaneOrder:  []uint32{1},
 				Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 30, Cols: 100, CWD: cwd}},
+				Layout:     &SplitTreeSnapshot{PaneID: 1},
 			},
 		},
 	}
@@ -278,6 +280,9 @@ func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 	if len(winData.PaneOrder) != 2 || winData.PaneOrder[0] != 3 || winData.PaneOrder[1] != 7 {
 		t.Fatalf("unexpected pane order: %#v", winData.PaneOrder)
 	}
+	if !equalSplitTreeSnapshot(winData.Layout, snapshot.Windows[0].Layout) {
+		t.Fatalf("expected restored layout %#v, got %#v", snapshot.Windows[0].Layout, winData.Layout)
+	}
 
 	if !pollFor(2*time.Second, func() bool {
 		paneAny := <-sessionRef.Ask(GetActivePane{})
@@ -293,5 +298,77 @@ func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 		return paneData.ID == 7 && paneData.CWD == cwd
 	}) {
 		t.Fatal("expected restored active pane and cwd")
+	}
+}
+
+func TestRestoreSessionPreservesNestedSplitTree(t *testing.T) {
+	tmpDir := t.TempDir()
+	oldHome := setTestHome(t, tmpDir)
+	defer restoreHome(t, oldHome)
+
+	super := newTestSupervisor()
+	snapshot := &SessionSnapshot{
+		Version:      SnapshotVersion,
+		SessionName:  "nested",
+		ID:           7,
+		Shell:        "/bin/sh",
+		ActiveWindow: 1,
+		WindowOrder:  []uint32{1},
+		Windows: []WindowSnapshot{{
+			ID:         1,
+			ActivePane: 4,
+			PaneOrder:  []uint32{1, 2, 3, 4},
+			Panes: []PaneSnapshot{
+				{ID: 1, Shell: "/bin/sh", Rows: 12, Cols: 40},
+				{ID: 2, Shell: "/bin/sh", Rows: 12, Cols: 39},
+				{ID: 3, Shell: "/bin/sh", Rows: 11, Cols: 40},
+				{ID: 4, Shell: "/bin/sh", Rows: 11, Cols: 39},
+			},
+			Layout: &SplitTreeSnapshot{
+				Dir: SplitV,
+				First: &SplitTreeSnapshot{
+					Dir:    SplitH,
+					First:  &SplitTreeSnapshot{PaneID: 1},
+					Second: &SplitTreeSnapshot{PaneID: 3},
+				},
+				Second: &SplitTreeSnapshot{
+					Dir:    SplitH,
+					First:  &SplitTreeSnapshot{PaneID: 2},
+					Second: &SplitTreeSnapshot{PaneID: 4},
+				},
+			},
+		}},
+	}
+	if err := SaveSnapshot(SessionSnapshotPath("nested"), snapshot); err != nil {
+		t.Fatalf("SaveSnapshot failed: %v", err)
+	}
+
+	sessionRef, err := RestoreSessionFromSnapshot("nested", super.handle)
+	if err != nil {
+		t.Fatalf("RestoreSessionFromSnapshot failed: %v", err)
+	}
+	defer sessionRef.Shutdown()
+
+	activeWinAny := <-sessionRef.Ask(GetActiveWindow{})
+	if activeWinAny == nil {
+		t.Fatal("expected active window after restore")
+	}
+	activeWin := activeWinAny.(*WindowRef)
+
+	if !pollFor(2*time.Second, func() bool {
+		winResult := <-activeWin.Ask(GetWindowSnapshotData{})
+		winData, ok := winResult.(WindowSnapshot)
+		return ok && equalSplitTreeSnapshot(winData.Layout, snapshot.Windows[0].Layout)
+	}) {
+		t.Fatal("expected nested split tree to be restored")
+	}
+
+	viewResult := <-sessionRef.Ask(GetWindowView{})
+	view, ok := viewResult.(WindowView)
+	if !ok || view.Content == "" {
+		t.Fatal("expected non-empty restored window view")
+	}
+	if !contains(view.Content, "┼") {
+		t.Fatal("expected restored nested split view to contain cross intersection")
 	}
 }

@@ -180,7 +180,9 @@ func (s *Session) restoreFromSnapshot() {
 				CWD:   paneSnap.CWD,
 			})
 		}
-		if activeIdx := indexOfOrderedID(winSnap.PaneOrder, winSnap.ActivePane); activeIdx > 0 {
+		if winSnap.Layout != nil {
+			windowRef.Send(RestoreWindowLayout{Root: winSnap.Layout, ActivePane: winSnap.ActivePane})
+		} else if activeIdx := indexOfOrderedID(winSnap.PaneOrder, winSnap.ActivePane); activeIdx > 0 {
 			windowRef.Send(SwitchToPane{Index: activeIdx})
 		}
 	}
@@ -201,6 +203,10 @@ func (s *Session) receive(msg any) {
 		s.createWindow(m.Rows, m.Cols)
 	case SwitchWindow:
 		s.switchWindow(m.Delta)
+	case Split:
+		s.forwardToActiveWindow(Split{Dir: m.Dir})
+	case NavigatePane:
+		s.forwardToActiveWindow(NavigatePane{Dir: m.Dir})
 	case WindowEmpty:
 		s.handleWindowEmpty(m.ID)
 	case PaneContentUpdated:
@@ -242,6 +248,13 @@ func (s *Session) handleAsk(envelope askEnvelope) {
 		}
 		envelope.reply <- nil
 	case GetPaneContent:
+		if win := s.activeWindow(); win != nil {
+			result, _ := askValue(win, envelope.msg)
+			envelope.reply <- result
+			return
+		}
+		envelope.reply <- nil
+	case GetWindowView:
 		if win := s.activeWindow(); win != nil {
 			result, _ := askValue(win, envelope.msg)
 			envelope.reply <- result
@@ -397,6 +410,12 @@ func (s *Session) handleWindowEmpty(id uint32) {
 }
 
 func (s *Session) forwardToActivePane(msg any) {
+	if win := s.activeWindow(); win != nil {
+		win.Send(msg)
+	}
+}
+
+func (s *Session) forwardToActiveWindow(msg any) {
 	if win := s.activeWindow(); win != nil {
 		win.Send(msg)
 	}

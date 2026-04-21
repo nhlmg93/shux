@@ -1,6 +1,7 @@
 package shux
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,10 +178,18 @@ func TestWindowBroadcastResize(t *testing.T) {
 		})
 	}
 
+	// With tiling, panes should all have usable height.
+	for _, s := range initialSizes {
+		if s <= 0 {
+			t.Fatalf("Initial pane sizes should be positive: got %v", initialSizes)
+		}
+	}
+
 	sessionRef.Send(ResizeMsg{Rows: 30, Cols: 100})
 	super.waitContentUpdated(200 * time.Millisecond)
 
-	allResized := true
+	// After resize with multiple panes, each pane gets a share of the space
+	allHaveContent := true
 	for i := 0; i < 3; i++ {
 		win.Send(SwitchToPane{Index: i})
 		pollFor(50*time.Millisecond, func() bool {
@@ -189,16 +198,255 @@ func TestWindowBroadcastResize(t *testing.T) {
 				return false
 			}
 			content := result.(*PaneContent)
-			return len(content.Lines) == 30
+			return len(content.Lines) > 0
 		})
 
 		result := <-sessionRef.Ask(GetPaneContent{})
-		if result == nil || len(result.(*PaneContent).Lines) != 30 {
-			allResized = false
+		if result == nil {
+			allHaveContent = false
+			continue
+		}
+		content := result.(*PaneContent)
+		if len(content.Lines) == 0 {
+			allHaveContent = false
 		}
 	}
 
-	if !allResized {
-		t.Error("Expected all panes to be resized")
+	if !allHaveContent {
+		t.Error("Expected all panes to have content after resize")
+	}
+}
+
+func TestWindowSplitAndRender(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	win.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+
+	winDataResult := <-win.Ask(GetWindowSnapshotData{})
+	if winDataResult == nil {
+		t.Fatal("Expected window snapshot data")
+	}
+	winData := winDataResult.(WindowSnapshot)
+	if len(winData.PaneOrder) != 2 {
+		t.Fatalf("Expected 2 panes after split, got %d", len(winData.PaneOrder))
+	}
+
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	viewResult := <-sessionRef.Ask(GetWindowView{})
+	if viewResult == nil {
+		t.Fatal("Expected window view after resize")
+	}
+	view, ok := viewResult.(WindowView)
+	if !ok || view.Content == "" {
+		t.Fatal("Window view should be non-empty")
+	}
+	if !strings.Contains(view.Content, "─") {
+		t.Fatal("Expected horizontal divider in window view")
+	}
+}
+
+func TestWindowNestedSplitCrossRender(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	// Start with left/right split.
+	win.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+
+	// Split left pane top/bottom.
+	win.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	win.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+
+	// Split right pane top/bottom.
+	win.Send(SwitchToPane{Index: 1})
+	time.Sleep(20 * time.Millisecond)
+	win.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	viewResult := <-sessionRef.Ask(GetWindowView{})
+	if viewResult == nil {
+		t.Fatal("Expected window view after nested splits")
+	}
+	view, ok := viewResult.(WindowView)
+	if !ok || view.Content == "" {
+		t.Fatal("Window view should be non-empty")
+	}
+	if !strings.Contains(view.Content, "│") {
+		t.Fatal("Expected vertical divider in nested split view")
+	}
+	if !strings.Contains(view.Content, "─") {
+		t.Fatal("Expected horizontal divider in nested split view")
+	}
+	if !strings.Contains(view.Content, "┼") {
+		t.Fatal("Expected cross intersection in nested split view")
+	}
+}
+
+func TestWindowNavigatePanesByDirection(t *testing.T) {
+	sessionRef, _, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := <-sessionRef.Ask(GetActiveWindow{})
+	if win == nil {
+		t.Fatal("expected active window")
+	}
+	windowRef := win.(*WindowRef)
+
+	// Build a 2x2 layout:
+	// 1 | 2
+	// 3 | 4
+	windowRef.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+	windowRef.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	windowRef.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+	windowRef.Send(SwitchToPane{Index: 1})
+	time.Sleep(20 * time.Millisecond)
+	windowRef.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+	windowRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	time.Sleep(50 * time.Millisecond)
+
+	assertActive := func(want uint32) {
+		t.Helper()
+		got := (<-windowRef.Ask(GetWindowSnapshotData{})).(WindowSnapshot)
+		if got.ActivePane != want {
+			t.Fatalf("expected active pane %d, got %d", want, got.ActivePane)
+		}
+	}
+
+	windowRef.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	assertActive(1)
+
+	windowRef.Send(NavigatePane{Dir: PaneNavRight})
+	time.Sleep(20 * time.Millisecond)
+	assertActive(2)
+
+	windowRef.Send(NavigatePane{Dir: PaneNavDown})
+	time.Sleep(20 * time.Millisecond)
+	assertActive(4)
+
+	windowRef.Send(NavigatePane{Dir: PaneNavLeft})
+	time.Sleep(20 * time.Millisecond)
+	assertActive(3)
+
+	windowRef.Send(NavigatePane{Dir: PaneNavUp})
+	time.Sleep(20 * time.Millisecond)
+	assertActive(1)
+}
+
+func TestWindowOneSidedSplitRendersTJunction(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	// Split left/right, then split only the left side top/bottom.
+	win.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+	win.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	win.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	viewResult := <-sessionRef.Ask(GetWindowView{})
+	if viewResult == nil {
+		t.Fatal("Expected window view after split")
+	}
+	view, ok := viewResult.(WindowView)
+	if !ok || view.Content == "" {
+		t.Fatal("Window view should be non-empty")
+	}
+	if !strings.Contains(view.Content, "┤") && !strings.Contains(view.Content, "├") {
+		t.Fatal("Expected T-junction in one-sided split view")
+	}
+	if strings.Contains(view.Content, "┼") {
+		t.Fatal("Did not expect full cross intersection in one-sided split view")
+	}
+}
+
+func TestWindowClosePaneCollapsesSplit(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	// Build a one-sided split: left/right, then split only left top/bottom.
+	win.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+	win.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	win.Send(Split{Dir: SplitH})
+	time.Sleep(50 * time.Millisecond)
+
+	// Kill the newly-created lower-left pane. Layout should collapse back to two panes.
+	active := <-sessionRef.Ask(GetActivePane{})
+	if active == nil {
+		t.Fatal("expected active pane before kill")
+	}
+	active.(*PaneRef).Send(KillPane{})
+	time.Sleep(100 * time.Millisecond)
+
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	viewResult := <-sessionRef.Ask(GetWindowView{})
+	if viewResult == nil {
+		t.Fatal("Expected window view after pane close")
+	}
+	view, ok := viewResult.(WindowView)
+	if !ok || view.Content == "" {
+		t.Fatal("Window view should be non-empty")
+	}
+	if !strings.Contains(view.Content, "│") {
+		t.Fatal("Expected remaining vertical divider after pane close")
+	}
+	for _, glyph := range []string{"─", "├", "┤", "┬", "┴", "┼"} {
+		if strings.Contains(view.Content, glyph) {
+			t.Fatalf("Did not expect %q after collapsed split", glyph)
+		}
 	}
 }

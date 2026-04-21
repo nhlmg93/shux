@@ -25,6 +25,7 @@ func TestSaveAndLoadSnapshot(t *testing.T) {
 				Panes: []PaneSnapshot{
 					{ID: 1, Shell: "/bin/bash", Rows: 24, Cols: 80, CWD: "/home/user", WindowTitle: "bash"},
 				},
+				Layout: &SplitTreeSnapshot{PaneID: 1},
 			},
 			{
 				ID:         2,
@@ -33,6 +34,11 @@ func TestSaveAndLoadSnapshot(t *testing.T) {
 				Panes: []PaneSnapshot{
 					{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80, CWD: "/tmp", WindowTitle: "sh"},
 					{ID: 2, Shell: "/bin/zsh", Rows: 24, Cols: 80, CWD: "/home/user/projects", WindowTitle: "zsh"},
+				},
+				Layout: &SplitTreeSnapshot{
+					Dir:    SplitV,
+					First:  &SplitTreeSnapshot{PaneID: 1},
+					Second: &SplitTreeSnapshot{PaneID: 2},
 				},
 			},
 		},
@@ -108,8 +114,21 @@ func TestSaveAndLoadSnapshot(t *testing.T) {
 					}
 				}
 			}
+			if !equalSplitTreeSnapshot(win.Layout, origWin.Layout) {
+				t.Errorf("Window[%d].Layout: got %#v, want %#v", i, win.Layout, origWin.Layout)
+			}
 		}
 	}
+}
+
+func equalSplitTreeSnapshot(a, b *SplitTreeSnapshot) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.PaneID != b.PaneID || a.Dir != b.Dir {
+		return false
+	}
+	return equalSplitTreeSnapshot(a.First, b.First) && equalSplitTreeSnapshot(a.Second, b.Second)
 }
 
 func TestLoadSnapshotVersionMismatch(t *testing.T) {

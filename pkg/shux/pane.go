@@ -373,6 +373,8 @@ func (p *Pane) handleAsk(envelope askEnvelope) {
 		p.cachedContent = content
 		p.dirty = false
 		envelope.reply <- content
+	case GetPaneShell:
+		envelope.reply <- p.shell
 	case GetPaneSnapshotData:
 		envelope.reply <- PaneSnapshotData{
 			ID:          p.id,

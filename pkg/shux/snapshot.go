@@ -22,12 +22,21 @@ type SessionSnapshot struct {
 	Windows      []WindowSnapshot
 }
 
+// SplitTreeSnapshot captures the split topology for a window.
+type SplitTreeSnapshot struct {
+	PaneID uint32
+	Dir    SplitDir
+	First  *SplitTreeSnapshot
+	Second *SplitTreeSnapshot
+}
+
 // WindowSnapshot captures the state of a window.
 type WindowSnapshot struct {
 	ID         uint32
 	ActivePane uint32
 	PaneOrder  []uint32
 	Panes      []PaneSnapshot
+	Layout     *SplitTreeSnapshot
 }
 
 // PaneSnapshot captures the state of a pane.

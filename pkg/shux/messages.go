@@ -15,6 +15,31 @@ type (
 	SessionEmpty    struct{ ID uint32 }
 )
 
+// Split directions for pane splitting.
+type SplitDir int
+
+const (
+	SplitH SplitDir = iota // horizontal divider: panes stacked top/bottom
+	SplitV                 // vertical divider: panes side by side
+)
+
+type Split struct {
+	Dir SplitDir
+}
+
+type PaneNavDir int
+
+const (
+	PaneNavLeft PaneNavDir = iota
+	PaneNavDown
+	PaneNavUp
+	PaneNavRight
+)
+
+type NavigatePane struct {
+	Dir PaneNavDir
+}
+
 type (
 	SubscribeUpdates   struct{ Subscriber chan any }
 	UnsubscribeUpdates struct{ Subscriber chan any }
@@ -29,6 +54,11 @@ type CreatePane struct {
 	CWD   string
 }
 
+type RestoreWindowLayout struct {
+	Root       *SplitTreeSnapshot
+	ActivePane uint32
+}
+
 type (
 	KillPane       struct{}
 	PaneExited     struct{ ID uint32 }
@@ -37,6 +67,7 @@ type (
 	GetActivePane  struct{}
 	GetPaneContent struct{}
 	GetPaneMode    struct{}
+	GetPaneShell   struct{}
 )
 
 // KeyCode values are normalized internal key identifiers for non-printable keys.
@@ -114,6 +145,17 @@ type WindowSnapshotData struct {
 	ID         uint32
 	ActivePane uint32
 	PaneOrder  []uint32
+}
+
+// GetWindowView requests the rendered view of the active window.
+type GetWindowView struct{}
+
+type WindowView struct {
+	Content   string
+	CursorRow int
+	CursorCol int
+	CursorOn  bool
+	Title     string
 }
 
 type GetPaneSnapshotData struct{}
