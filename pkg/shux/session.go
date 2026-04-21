@@ -82,7 +82,7 @@ func (s *Session) run() {
 	var reason error
 	defer func() {
 		if r := recover(); r != nil {
-			reason = fmt.Errorf("panic: %v", r)
+			reason = fmt.Errorf("panic: %v\n%s", r, recoverWithContext("session", s.id, len(s.windows), int(s.active)))
 		}
 		s.terminate(reason)
 		close(s.ref.done)
@@ -117,6 +117,32 @@ func (s *Session) terminate(reason error) {
 	s.logger.Infof("session: terminate id=%d name=%s", s.id, s.name)
 }
 
+// assertInvariants validates internal state consistency.
+// Panics on invariant violation (tiger style - fail fast on bugs).
+func (s *Session) assertInvariants() {
+	// Map/order sync: len(windowOrder) == len(windows)
+	if len(s.windowOrder) != len(s.windows) {
+		panic(fmt.Sprintf("session %d: windowOrder length (%d) != windows count (%d)", s.id, len(s.windowOrder), len(s.windows)))
+	}
+
+	// windowOrder entries must all exist in windows map
+	for _, winID := range s.windowOrder {
+		if _, ok := s.windows[winID]; !ok {
+			panic(fmt.Sprintf("session %d: windowOrder contains missing window %d", s.id, winID))
+		}
+	}
+
+	// If windows exist, activeWindow must be non-zero and valid
+	if len(s.windowOrder) > 0 {
+		if s.active == 0 {
+			panic(fmt.Sprintf("session %d: activeWindow=0 but %d windows exist", s.id, len(s.windowOrder)))
+		}
+		if _, ok := s.windows[s.active]; !ok {
+			panic(fmt.Sprintf("session %d: activeWindow %d not in windows map", s.id, s.active))
+		}
+	}
+}
+
 func (s *Session) restoreFromSnapshot() {
 	s.logger.Infof("restore: session=%s id=%d windows=%d activeWindow=%d", s.name, s.id, len(s.snapshot.Windows), s.snapshot.ActiveWindow)
 
@@ -131,6 +157,7 @@ func (s *Session) restoreFromSnapshot() {
 
 	s.windowID = maxWindowID
 	s.restoreActiveWindow(s.snapshot.ActiveWindow)
+	s.assertInvariants()
 
 	s.logger.Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
 }
@@ -353,6 +380,7 @@ func (s *Session) createWindow(rows, cols int) {
 	if s.active == 0 {
 		s.active = s.windowID
 	}
+	s.assertInvariants()
 }
 
 func (s *Session) switchWindow(delta int) {
@@ -373,13 +401,23 @@ func (s *Session) switchWindow(delta int) {
 	if newActive == s.active {
 		return
 	}
+	// Verify target exists (invariant check)
+	if _, ok := s.windows[newActive]; !ok {
+		panic(fmt.Sprintf("session %d: switchWindow targets missing window %d", s.id, newActive))
+	}
 	oldActive := s.active
 	s.active = newActive
 	s.logger.Infof("session: id=%d name=%s switch-window from=%d to=%d delta=%d", s.id, s.name, oldActive, newActive, delta)
 	s.forwardUpdate(PaneContentUpdated{})
+	s.assertInvariants()
 }
 
 func (s *Session) handleWindowEmpty(id uint32) {
+	// Verify window exists before removal (invariant check)
+	if _, ok := s.windows[id]; !ok {
+		panic(fmt.Sprintf("session %d: handleWindowEmpty called for missing window %d", s.id, id))
+	}
+
 	currentIdx := s.windowOrder.IndexOf(s.active)
 	delete(s.windows, id)
 	s.windowOrder.Remove(id)
@@ -388,10 +426,12 @@ func (s *Session) handleWindowEmpty(id uint32) {
 		s.active = 0
 		empty := SessionEmpty{ID: s.id}
 		s.notifyEvent(empty)
+		s.assertInvariants()
 		return
 	}
 
 	if s.active != id {
+		s.assertInvariants()
 		return
 	}
 
@@ -403,6 +443,7 @@ func (s *Session) handleWindowEmpty(id uint32) {
 	}
 	s.active = s.windowOrder[currentIdx]
 	s.forwardUpdate(PaneContentUpdated{})
+	s.assertInvariants()
 }
 
 func (s *Session) forwardToActivePane(msg any) {

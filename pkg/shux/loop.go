@@ -1,6 +1,7 @@
 package shux
 
 import (
+	"fmt"
 	"reflect"
 	"sync"
 )
@@ -29,11 +30,15 @@ func (r *loopRef) send(msg any) bool {
 	select {
 	case <-r.stop:
 		return false
+	case <-r.done:
+		return false
 	default:
 	}
 
 	select {
 	case <-r.stop:
+		return false
+	case <-r.done:
 		return false
 	case r.inbox <- msg:
 		return true
@@ -125,4 +130,11 @@ func isNilValue(v any) bool {
 	default:
 		return false
 	}
+}
+
+// recoverWithContext generates rich crash context for panic recovery.
+// Used by all actor run() methods to log state on crash.
+func recoverWithContext(actorType string, id uint32, collectionCount, activeID int) string {
+	return fmt.Sprintf("actor=%s id=%d collection_count=%d active_id=%d",
+		actorType, id, collectionCount, activeID)
 }

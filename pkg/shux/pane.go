@@ -12,6 +12,10 @@ import (
 
 var _ Resizable = (*Pane)(nil)
 
+var startPanePTY = func(cmd *exec.Cmd, rows, cols int) (Pty, error) {
+	return StartWithSize(cmd, rows, cols)
+}
+
 // PaneRef is a reference to a pane loop. Methods are promoted from loopRef.
 type PaneRef struct {
 	*loopRef
@@ -195,7 +199,7 @@ func (p *Pane) run() {
 	var reason error
 	defer func() {
 		if r := recover(); r != nil {
-			reason = fmt.Errorf("panic: %v", r)
+			reason = fmt.Errorf("panic: %v\n%s", r, recoverWithContext("pane", p.id, p.rows*p.cols, 0))
 		}
 		p.terminate(reason)
 		close(p.ref.done)
@@ -273,7 +277,7 @@ func (p *Pane) newRuntime() (_ *paneRuntime, cmd *exec.Cmd, err error) {
 
 	p.logger.Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
 	cmd = p.newCommand()
-	runtime.pty, err = StartWithSize(cmd, p.rows, p.cols)
+	runtime.pty, err = startPanePTY(cmd, p.rows, p.cols)
 	if err != nil {
 		return nil, nil, err
 	}

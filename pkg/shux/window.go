@@ -131,7 +131,7 @@ func (w *Window) run() {
 	var reason error
 	defer func() {
 		if r := recover(); r != nil {
-			reason = fmt.Errorf("panic: %v", r)
+			reason = fmt.Errorf("panic: %v\n%s", r, recoverWithContext("window", w.id, len(w.panes), int(w.active)))
 		}
 		w.terminate(reason)
 		close(w.ref.done)
@@ -158,6 +158,50 @@ func (w *Window) terminate(reason error) {
 		return
 	}
 	w.logger.Infof("window: terminate id=%d", w.id)
+}
+
+// assertInvariants validates internal state consistency.
+// Panics on invariant violation (tiger style - fail fast on bugs).
+func (w *Window) assertInvariants() {
+	// Map/order sync: len(paneOrder) == len(panes)
+	if len(w.paneOrder) != len(w.panes) {
+		panic(fmt.Sprintf("window %d: paneOrder length (%d) != panes count (%d)", w.id, len(w.paneOrder), len(w.panes)))
+	}
+
+	// paneOrder entries must all exist in panes map
+	for _, paneID := range w.paneOrder {
+		if _, ok := w.panes[paneID]; !ok {
+			panic(fmt.Sprintf("window %d: paneOrder contains missing pane %d", w.id, paneID))
+		}
+	}
+
+	// If panes exist, active must be non-zero and valid
+	if len(w.paneOrder) > 0 {
+		if w.active == 0 {
+			panic(fmt.Sprintf("window %d: active=0 but %d panes exist", w.id, len(w.paneOrder)))
+		}
+		if _, ok := w.panes[w.active]; !ok {
+			panic(fmt.Sprintf("window %d: active pane %d not in panes map", w.id, w.active))
+		}
+	}
+
+	// root == nil iff len(paneOrder) == 0
+	hasPanes := len(w.paneOrder) > 0
+	hasRoot := w.root != nil
+	if hasPanes != hasRoot {
+		panic(fmt.Sprintf("window %d: root nil=%v but has %d panes", w.id, !hasRoot, len(w.paneOrder)))
+	}
+
+	// Split tree refs only valid pane IDs
+	if w.root != nil {
+		treePaneIDs := make(map[uint32]struct{})
+		collectTreePaneIDs(w.root, treePaneIDs)
+		for paneID := range treePaneIDs {
+			if _, ok := w.panes[paneID]; !ok {
+				panic(fmt.Sprintf("window %d: split tree references missing pane %d", w.id, paneID))
+			}
+		}
+	}
 }
 
 func (w *Window) receive(msg any) {
@@ -314,6 +358,7 @@ func (w *Window) splitPane(dir SplitDir) {
 	if w.parent != nil {
 		w.parent.Send(PaneContentUpdated{})
 	}
+	w.assertInvariants()
 }
 
 func splitAroundPane(node *splitNode, target uint32, dir SplitDir, newPaneID uint32) (*splitNode, bool) {
@@ -400,20 +445,23 @@ func (w *Window) restoreWindowLayout(root *SplitTreeSnapshot, activePane uint32)
 	collectTreePaneIDs(restored, paneIDs)
 	for paneID := range paneIDs {
 		if _, ok := w.panes[paneID]; !ok {
-			w.logger.Warnf("window %d: restore layout references missing pane %d", w.id, paneID)
-			return
+			// This is an internal invariant violation - snapshot was validated
+			panic(fmt.Sprintf("window %d: restore layout references missing pane %d", w.id, paneID))
 		}
 	}
 	w.root = restored
 	if activePane != 0 {
-		if _, ok := w.panes[activePane]; ok {
-			w.active = activePane
+		if _, ok := w.panes[activePane]; !ok {
+			// This is an internal invariant violation - snapshot was validated
+			panic(fmt.Sprintf("window %d: restore layout references missing active pane %d", w.id, activePane))
 		}
+		w.active = activePane
 	}
 	w.syncLayout()
 	if w.parent != nil {
 		w.parent.Send(PaneContentUpdated{})
 	}
+	w.assertInvariants()
 }
 
 func (w *Window) switchToPane(index int) {
@@ -424,10 +472,15 @@ func (w *Window) switchToPane(index int) {
 	if newActive == w.active {
 		return
 	}
+	// Verify target exists before switching (invariant check)
+	if _, ok := w.panes[newActive]; !ok {
+		panic(fmt.Sprintf("window %d: switchToPane targets missing pane %d", w.id, newActive))
+	}
 	w.active = newActive
 	if w.parent != nil {
 		w.parent.Send(PaneContentUpdated{})
 	}
+	w.assertInvariants()
 }
 
 func (w *Window) navigatePane(dir PaneNavDir) {
@@ -851,6 +904,11 @@ func (w *Window) resizeAllPanes(rows, cols int) {
 }
 
 func (w *Window) handlePaneExited(id uint32) {
+	// Verify pane exists before removal (invariant check)
+	if _, ok := w.panes[id]; !ok {
+		panic(fmt.Sprintf("window %d: handlePaneExited called for missing pane %d", w.id, id))
+	}
+
 	currentIdx := w.paneOrder.IndexOf(w.active)
 	if w.mouseCapturePane == id {
 		w.mouseCapturePane = 0
@@ -868,6 +926,7 @@ func (w *Window) handlePaneExited(id uint32) {
 		if w.parent != nil {
 			w.parent.Send(WindowEmpty{ID: w.id})
 		}
+		w.assertInvariants()
 		return
 	}
 
@@ -885,6 +944,7 @@ func (w *Window) handlePaneExited(id uint32) {
 	if w.parent != nil {
 		w.parent.Send(PaneContentUpdated{})
 	}
+	w.assertInvariants()
 }
 
 func removePaneNode(node *splitNode, target uint32) (*splitNode, bool) {
@@ -934,6 +994,7 @@ func (w *Window) syncLayout() {
 			paneRef.Send(ResizeTerm{Rows: pl.rows, Cols: pl.cols})
 		}
 	}
+	w.assertInvariants()
 }
 
 func layoutSplitTree(node *splitNode, row, col, rows, cols int, out *[]paneLayout) {

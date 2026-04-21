@@ -275,3 +275,262 @@ func TestSessionSnapshotExists(t *testing.T) {
 		t.Error("SessionSnapshotExists should return true for existing")
 	}
 }
+
+func TestValidateSnapshot(t *testing.T) {
+	tests := []struct {
+		name      string
+		snapshot  *SessionSnapshot
+		wantValid bool
+	}{
+		{
+			name: "valid snapshot",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				Shell:        "/bin/sh",
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1, 2},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1},
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}},
+						Layout:     &SplitTreeSnapshot{PaneID: 1},
+					},
+					{
+						ID:         2,
+						ActivePane: 2,
+						PaneOrder:  []uint32{2, 3},
+						Panes: []PaneSnapshot{
+							{ID: 2, Shell: "/bin/sh", Rows: 24, Cols: 80},
+							{ID: 3, Shell: "/bin/bash", Rows: 24, Cols: 80},
+						},
+						Layout: &SplitTreeSnapshot{
+							Dir:    SplitV,
+							Ratio:  0.5,
+							First:  &SplitTreeSnapshot{PaneID: 2},
+							Second: &SplitTreeSnapshot{PaneID: 3},
+						},
+					},
+				},
+			},
+			wantValid: true,
+		},
+		{
+			name:      "nil snapshot",
+			snapshot:  nil,
+			wantValid: false,
+		},
+		{
+			name: "wrong version",
+			snapshot: &SessionSnapshot{
+				Version: 999,
+				ID:      1,
+			},
+			wantValid: false,
+		},
+		{
+			name: "windowOrder/window count mismatch",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				WindowOrder:  []uint32{1, 2},
+				ActiveWindow: 1,
+				Windows: []WindowSnapshot{
+					{ID: 1, ActivePane: 1, PaneOrder: []uint32{1}, Panes: []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}}},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "missing active window",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 999,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{ID: 1, ActivePane: 1, PaneOrder: []uint32{1}, Panes: []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}}},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "window not in order list",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{ID: 2, ActivePane: 1, PaneOrder: []uint32{1}, Panes: []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}}},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "paneOrder/pane count mismatch",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1, 2},
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}},
+					},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "missing active pane",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 999,
+						PaneOrder:  []uint32{1},
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}},
+					},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "invalid split ratio",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1, 2},
+						Panes: []PaneSnapshot{
+							{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80},
+							{ID: 2, Shell: "/bin/bash", Rows: 24, Cols: 80},
+						},
+						Layout: &SplitTreeSnapshot{
+							Dir:    SplitV,
+							Ratio:  1.5, // Invalid: > 1
+							First:  &SplitTreeSnapshot{PaneID: 1},
+							Second: &SplitTreeSnapshot{PaneID: 2},
+						},
+					},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "split tree references missing pane",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1},
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}},
+						Layout: &SplitTreeSnapshot{
+							Dir:    SplitV,
+							Ratio:  0.5,
+							First:  &SplitTreeSnapshot{PaneID: 1},
+							Second: &SplitTreeSnapshot{PaneID: 999}, // Missing
+						},
+					},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "duplicate pane ID across windows",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 1,
+				WindowOrder:  []uint32{1, 2},
+				Windows: []WindowSnapshot{
+					{
+						ID:         1,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1},
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}},
+					},
+					{
+						ID:         2,
+						ActivePane: 1,
+						PaneOrder:  []uint32{1}, // Duplicate pane ID 1
+						Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/bash", Rows: 24, Cols: 80}},
+					},
+				},
+			},
+			wantValid: false,
+		},
+		{
+			name: "empty windows (no active) is valid",
+			snapshot: &SessionSnapshot{
+				Version:      SnapshotVersion,
+				ID:           1,
+				ActiveWindow: 0,
+				WindowOrder:  []uint32{},
+				Windows:      []WindowSnapshot{},
+			},
+			wantValid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSnapshot(tt.snapshot)
+			if tt.wantValid && err != nil {
+				t.Errorf("ValidateSnapshot() error = %v, want nil", err)
+			}
+			if !tt.wantValid && err == nil {
+				t.Error("ValidateSnapshot() expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestValidateSnapshotDoesNotPanic(t *testing.T) {
+	// Test that ValidateSnapshot handles edge cases without panicking
+	edgeCases := []*SessionSnapshot{
+		nil,
+		{Version: SnapshotVersion},
+		{Version: SnapshotVersion, WindowOrder: []uint32{1}},
+		{
+			Version:      SnapshotVersion,
+			WindowOrder:  []uint32{1},
+			ActiveWindow: 1,
+			Windows: []WindowSnapshot{
+				{
+					ID:         1,
+					ActivePane: 1,
+					PaneOrder:  []uint32{1},
+					Panes:      []PaneSnapshot{{ID: 1}},
+					Layout:     &SplitTreeSnapshot{PaneID: 1},
+				},
+			},
+		},
+	}
+
+	for i, snap := range edgeCases {
+		// Should not panic
+		_ = ValidateSnapshot(snap)
+		t.Logf("Edge case %d: passed", i)
+	}
+}

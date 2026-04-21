@@ -121,7 +121,7 @@ func TestRestoreSessionFromSnapshot(t *testing.T) {
 		WindowOrder:  []uint32{1, 2},
 		Windows: []WindowSnapshot{
 			{ID: 1, ActivePane: 1, PaneOrder: []uint32{1}, Panes: []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 24, Cols: 80}}},
-			{ID: 2, ActivePane: 1, PaneOrder: []uint32{1}, Panes: []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 30, Cols: 100}}},
+			{ID: 2, ActivePane: 2, PaneOrder: []uint32{2}, Panes: []PaneSnapshot{{ID: 2, Shell: "/bin/sh", Rows: 30, Cols: 100}}},
 		},
 	}
 
@@ -243,14 +243,19 @@ func TestRestoreSessionPreservesSelectionsAndCWD(t *testing.T) {
 					{ID: 3, Shell: "/bin/sh", Rows: 24, Cols: 80, CWD: cwd},
 					{ID: 7, Shell: "/bin/sh", Rows: 24, Cols: 80, CWD: cwd},
 				},
-				Layout: &SplitTreeSnapshot{Dir: SplitV, First: &SplitTreeSnapshot{PaneID: 3}, Second: &SplitTreeSnapshot{PaneID: 7}},
+				Layout: &SplitTreeSnapshot{
+					Dir:    SplitV,
+					Ratio:  0.5,
+					First:  &SplitTreeSnapshot{PaneID: 3},
+					Second: &SplitTreeSnapshot{PaneID: 7},
+				},
 			},
 			{
 				ID:         5,
-				ActivePane: 1,
-				PaneOrder:  []uint32{1},
-				Panes:      []PaneSnapshot{{ID: 1, Shell: "/bin/sh", Rows: 30, Cols: 100, CWD: cwd}},
-				Layout:     &SplitTreeSnapshot{PaneID: 1},
+				ActivePane: 8,
+				PaneOrder:  []uint32{8},
+				Panes:      []PaneSnapshot{{ID: 8, Shell: "/bin/sh", Rows: 30, Cols: 100, CWD: cwd}},
+				Layout:     &SplitTreeSnapshot{PaneID: 8},
 			},
 		},
 	}
@@ -338,14 +343,17 @@ func TestRestoreSessionPreservesNestedSplitTree(t *testing.T) {
 				{ID: 4, Shell: "/bin/sh", Rows: 11, Cols: 39},
 			},
 			Layout: &SplitTreeSnapshot{
-				Dir: SplitV,
+				Dir:   SplitV,
+				Ratio: 0.5,
 				First: &SplitTreeSnapshot{
 					Dir:    SplitH,
+					Ratio:  0.5,
 					First:  &SplitTreeSnapshot{PaneID: 1},
 					Second: &SplitTreeSnapshot{PaneID: 3},
 				},
 				Second: &SplitTreeSnapshot{
 					Dir:    SplitH,
+					Ratio:  0.5,
 					First:  &SplitTreeSnapshot{PaneID: 2},
 					Second: &SplitTreeSnapshot{PaneID: 4},
 				},
