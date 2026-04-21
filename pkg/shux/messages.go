@@ -40,6 +40,11 @@ type NavigatePane struct {
 	Dir PaneNavDir
 }
 
+type ResizePane struct {
+	Dir    PaneNavDir
+	Amount int
+}
+
 type (
 	SubscribeUpdates   struct{ Subscriber chan any }
 	UnsubscribeUpdates struct{ Subscriber chan any }
@@ -57,6 +62,39 @@ type CreatePane struct {
 type RestoreWindowLayout struct {
 	Root       *SplitTreeSnapshot
 	ActivePane uint32
+}
+
+type MouseAction int
+
+const (
+	MouseActionPress MouseAction = iota
+	MouseActionRelease
+	MouseActionMotion
+)
+
+type MouseButton int
+
+const (
+	MouseButtonNone MouseButton = iota
+	MouseButtonLeft
+	MouseButtonMiddle
+	MouseButtonRight
+	MouseButtonWheelUp
+	MouseButtonWheelDown
+	MouseButtonWheelLeft
+	MouseButtonWheelRight
+	MouseButtonBackward
+	MouseButtonForward
+	MouseButtonButton10
+	MouseButtonButton11
+)
+
+type MouseInput struct {
+	Row    int
+	Col    int
+	Button MouseButton
+	Mods   KeyMods
+	Action MouseAction
 }
 
 type (

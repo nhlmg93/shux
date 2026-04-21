@@ -253,3 +253,106 @@ func keyInputCodepoint(input KeyInput) rune {
 	}
 	return 0
 }
+
+func (p *Pane) handleMouseInput(input MouseInput) {
+	if p.mouseEncoder == nil || p.term == nil {
+		return
+	}
+
+	event, err := libghostty.NewMouseEvent()
+	if err != nil {
+		Warnf("pane %d: failed to create mouse event: %v", p.id, err)
+		return
+	}
+	defer event.Close()
+
+	switch input.Action {
+	case MouseActionPress:
+		event.SetAction(libghostty.MouseActionPress)
+		if tracksMouseButton(input.Button) {
+			p.mouseButtons[input.Button] = true
+		}
+	case MouseActionRelease:
+		event.SetAction(libghostty.MouseActionRelease)
+		delete(p.mouseButtons, input.Button)
+	case MouseActionMotion:
+		event.SetAction(libghostty.MouseActionMotion)
+		if tracksMouseButton(input.Button) {
+			p.mouseButtons[input.Button] = true
+		}
+	default:
+		return
+	}
+
+	if button, ok := ghosttyMouseButton(input.Button); ok {
+		event.SetButton(button)
+	} else {
+		event.ClearButton()
+	}
+	event.SetMods(ghosttyMods(input.Mods))
+	event.SetPosition(libghostty.MousePosition{X: float32(input.Col), Y: float32(input.Row)})
+
+	p.mouseEncoder.SetOptFromTerminal(p.term)
+	p.mouseEncoder.SetOptSize(libghostty.MouseEncoderSize{
+		ScreenWidth:  uint32(max(1, p.cols)),
+		ScreenHeight: uint32(max(1, p.rows)),
+		CellWidth:    1,
+		CellHeight:   1,
+	})
+	p.mouseEncoder.SetOptAnyButtonPressed(len(p.mouseButtons) > 0)
+
+	encoded, err := p.mouseEncoder.Encode(event)
+	if err != nil {
+		Warnf("pane %d: failed to encode mouse input: %v", p.id, err)
+		return
+	}
+	if len(encoded) == 0 {
+		return
+	}
+	p.writeToPTY(encoded)
+}
+
+func tracksMouseButton(button MouseButton) bool {
+	switch button {
+	case MouseButtonLeft, MouseButtonMiddle, MouseButtonRight, MouseButtonBackward, MouseButtonForward, MouseButtonButton10, MouseButtonButton11:
+		return true
+	default:
+		return false
+	}
+}
+
+func ghosttyMouseButton(button MouseButton) (libghostty.MouseButton, bool) {
+	switch button {
+	case MouseButtonLeft:
+		return libghostty.MouseButtonLeft, true
+	case MouseButtonMiddle:
+		return libghostty.MouseButtonMiddle, true
+	case MouseButtonRight:
+		return libghostty.MouseButtonRight, true
+	case MouseButtonWheelUp:
+		return libghostty.MouseButtonFour, true
+	case MouseButtonWheelDown:
+		return libghostty.MouseButtonFive, true
+	case MouseButtonWheelLeft:
+		return libghostty.MouseButtonSix, true
+	case MouseButtonWheelRight:
+		return libghostty.MouseButtonSeven, true
+	case MouseButtonBackward:
+		return libghostty.MouseButtonEight, true
+	case MouseButtonForward:
+		return libghostty.MouseButtonNine, true
+	case MouseButtonButton10:
+		return libghostty.MouseButtonTen, true
+	case MouseButtonButton11:
+		return libghostty.MouseButtonEleven, true
+	default:
+		return libghostty.MouseButtonUnknown, false
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

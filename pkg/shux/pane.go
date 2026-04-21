@@ -77,7 +77,9 @@ type Pane struct {
 	rowIterator   *libghostty.RenderStateRowIterator
 	rowCells      *libghostty.RenderStateRowCells
 	keyEncoder    *libghostty.KeyEncoder
+	mouseEncoder  *libghostty.MouseEncoder
 	pty           *PTY
+	mouseButtons  map[MouseButton]bool
 	rows          int
 	cols          int
 	shell         string
@@ -104,11 +106,12 @@ func NewPane(id uint32, rows, cols int, shell, cwd string) *Pane {
 		Warnf("pane: id=%d sanitize-size from=%dx%d to=%dx%d", id, originalRows, originalCols, rows, cols)
 	}
 	return &Pane{
-		id:    id,
-		rows:  rows,
-		cols:  cols,
-		shell: shell,
-		cwd:   cwd,
+		id:           id,
+		rows:         rows,
+		cols:         cols,
+		shell:        shell,
+		cwd:          cwd,
+		mouseButtons: make(map[MouseButton]bool),
 	}
 }
 
@@ -206,6 +209,17 @@ func (p *Pane) init() error {
 		return err
 	}
 
+	mouseEncoder, err := libghostty.NewMouseEncoder()
+	if err != nil {
+		keyEncoder.Close()
+		rowCells.Close()
+		rowIterator.Close()
+		renderState.Close()
+		ghosttyTerm.Close()
+		return err
+	}
+	mouseEncoder.SetOptTrackLastCell(true)
+
 	Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
 	cmd := exec.Command(p.shell)
 	env := os.Environ()
@@ -226,6 +240,7 @@ func (p *Pane) init() error {
 
 	pty, err := StartWithSize(cmd, p.rows, p.cols)
 	if err != nil {
+		mouseEncoder.Close()
 		keyEncoder.Close()
 		rowCells.Close()
 		rowIterator.Close()
@@ -240,6 +255,7 @@ func (p *Pane) init() error {
 	p.rowIterator = rowIterator
 	p.rowCells = rowCells
 	p.keyEncoder = keyEncoder
+	p.mouseEncoder = mouseEncoder
 	p.pty = pty
 	p.dirty = true
 
@@ -262,6 +278,9 @@ func (p *Pane) terminate(reason error) {
 	}
 	if p.keyEncoder != nil {
 		p.keyEncoder.Close()
+	}
+	if p.mouseEncoder != nil {
+		p.mouseEncoder.Close()
 	}
 	if p.rowCells != nil {
 		p.rowCells.Close()
@@ -335,6 +354,8 @@ func (p *Pane) receive(msg any) {
 		p.writeToPTY(m.Data)
 	case KeyInput:
 		p.handleKeyInput(m)
+	case MouseInput:
+		p.handleMouseInput(m)
 	case ResizeTerm:
 		Infof("pane: id=%d resize from=%dx%d to=%dx%d", p.id, p.rows, p.cols, m.Rows, m.Cols)
 		p.Resize(m.Rows, m.Cols)

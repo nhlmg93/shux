@@ -84,6 +84,15 @@ func TestResolveRunOptionsUsesDefaultsWhenConfigMissing(t *testing.T) {
 	if action, ok := opts.Keymap.ActionFor("up"); !ok || action != shux.ActionSelectPaneUp {
 		t.Fatalf("expected tmux default binding up -> select_pane_up, got %q (ok=%t)", action, ok)
 	}
+	if binding, ok := opts.Keymap.BindingFor("ctrl+left"); !ok || binding.Action != shux.ActionResizePaneLeft || binding.Amount != 1 {
+		t.Fatalf("expected tmux default binding ctrl+left -> resize left by 1, got %#v (ok=%t)", binding, ok)
+	}
+	if binding, ok := opts.Keymap.BindingFor("alt+right"); !ok || binding.Action != shux.ActionResizePaneRight || binding.Amount != 5 {
+		t.Fatalf("expected tmux default binding alt+right -> resize right by 5, got %#v (ok=%t)", binding, ok)
+	}
+	if !opts.MouseEnabled {
+		t.Fatal("expected mouse to be enabled by default")
+	}
 }
 
 func TestResolveRunOptionsSupportsGlobalShuxModule(t *testing.T) {
@@ -247,6 +256,7 @@ func TestResolveRunOptionsSupportsSetupKeymapsAndTmuxCommands(t *testing.T) {
 				prefix = {
 					["h"] = "select-pane -L",
 					["v"] = "split-window -h",
+					["C-Left"] = "resize-pane -L 3",
 					["n"] = false,
 				},
 			},
@@ -269,6 +279,9 @@ func TestResolveRunOptionsSupportsSetupKeymapsAndTmuxCommands(t *testing.T) {
 	}
 	if action, ok := opts.Keymap.ActionFor("v"); !ok || action != shux.ActionSplitVertical {
 		t.Fatalf("expected v -> split-window -h, got %q (ok=%t)", action, ok)
+	}
+	if binding, ok := opts.Keymap.BindingFor("ctrl+left"); !ok || binding.Action != shux.ActionResizePaneLeft || binding.Amount != 3 {
+		t.Fatalf("expected ctrl+left -> resize-pane -L 3, got %#v (ok=%t)", binding, ok)
 	}
 	if _, ok := opts.Keymap.ActionFor("n"); ok {
 		t.Fatal("expected n to be unbound by setup keymaps")
@@ -312,6 +325,27 @@ func TestResolveRunOptionsPluginCanModifyKeymap(t *testing.T) {
 	}
 	if _, ok := opts.Keymap.ActionFor("n"); ok {
 		t.Fatal("expected n to be unbound by plugin")
+	}
+}
+
+func TestResolveRunOptionsSupportsMouseOption(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "init.lua")
+	writeTestFile(t, configPath, `
+		shux.opt.mouse = false
+
+		shux.setup({
+			options = {
+				mouse = false,
+			},
+		})
+	`)
+
+	opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveRunOptions: %v", err)
+	}
+	if opts.MouseEnabled {
+		t.Fatal("expected mouse to be disabled by config")
 	}
 }
 

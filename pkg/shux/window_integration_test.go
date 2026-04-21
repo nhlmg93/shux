@@ -450,3 +450,102 @@ func TestWindowClosePaneCollapsesSplit(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowResizePaneAdjustsSplitRatio(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	win.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	widthAt := func(index int) int {
+		win.Send(SwitchToPane{Index: index})
+		time.Sleep(20 * time.Millisecond)
+		result := <-sessionRef.Ask(GetPaneContent{})
+		if result == nil {
+			return 0
+		}
+		content := result.(*PaneContent)
+		if len(content.Cells) == 0 {
+			return 0
+		}
+		return len(content.Cells[0])
+	}
+
+	beforeLeft := widthAt(0)
+	beforeRight := widthAt(1)
+
+	win.Send(SwitchToPane{Index: 0})
+	time.Sleep(20 * time.Millisecond)
+	win.Send(ResizePane{Dir: PaneNavRight, Amount: 5})
+	time.Sleep(50 * time.Millisecond)
+
+	afterLeft := widthAt(0)
+	afterRight := widthAt(1)
+
+	if afterLeft <= beforeLeft {
+		t.Fatalf("expected left pane width to grow, before=%d after=%d", beforeLeft, afterLeft)
+	}
+	if afterRight >= beforeRight {
+		t.Fatalf("expected right pane width to shrink, before=%d after=%d", beforeRight, afterRight)
+	}
+}
+
+func TestWindowMouseDragDividerResizesPanes(t *testing.T) {
+	sessionRef, super, cleanup := setupSession(t)
+	defer cleanup()
+
+	sessionRef.Send(CreateWindow{Rows: 24, Cols: 80})
+	win := requireWindow(t, sessionRef, super)
+
+	pollFor(100*time.Millisecond, func() bool {
+		result := <-win.Ask(GetActivePane{})
+		return result != nil
+	})
+
+	win.Send(Split{Dir: SplitV})
+	time.Sleep(50 * time.Millisecond)
+	sessionRef.Send(ResizeMsg{Rows: 24, Cols: 80})
+	super.waitContentUpdated(200 * time.Millisecond)
+
+	widthAt := func(index int) int {
+		win.Send(SwitchToPane{Index: index})
+		time.Sleep(20 * time.Millisecond)
+		result := <-sessionRef.Ask(GetPaneContent{})
+		if result == nil {
+			return 0
+		}
+		content := result.(*PaneContent)
+		if len(content.Cells) == 0 {
+			return 0
+		}
+		return len(content.Cells[0])
+	}
+
+	beforeLeft := widthAt(0)
+	beforeRight := widthAt(1)
+
+	win.Send(MouseInput{Action: MouseActionPress, Button: MouseButtonLeft, Row: 10, Col: 40})
+	win.Send(MouseInput{Action: MouseActionMotion, Button: MouseButtonLeft, Row: 10, Col: 45})
+	win.Send(MouseInput{Action: MouseActionRelease, Button: MouseButtonLeft, Row: 10, Col: 45})
+	time.Sleep(50 * time.Millisecond)
+
+	afterLeft := widthAt(0)
+	afterRight := widthAt(1)
+	if afterLeft <= beforeLeft {
+		t.Fatalf("expected left pane width to grow after mouse drag, before=%d after=%d", beforeLeft, afterLeft)
+	}
+	if afterRight >= beforeRight {
+		t.Fatalf("expected right pane width to shrink after mouse drag, before=%d after=%d", beforeRight, afterRight)
+	}
+}

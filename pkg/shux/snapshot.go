@@ -26,6 +26,7 @@ type SessionSnapshot struct {
 type SplitTreeSnapshot struct {
 	PaneID uint32
 	Dir    SplitDir
+	Ratio  float64
 	First  *SplitTreeSnapshot
 	Second *SplitTreeSnapshot
 }

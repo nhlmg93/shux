@@ -18,13 +18,15 @@ type Config struct {
 		Name string
 	}
 	Shell string
+	Mouse *bool
 	Keys  shux.KeymapConfig
 }
 
 type RunOptions struct {
-	SessionName string
-	Shell       string
-	Keymap      shux.Keymap
+	SessionName  string
+	Shell        string
+	MouseEnabled bool
+	Keymap       shux.Keymap
 }
 
 type cliOptions struct {
@@ -64,10 +66,16 @@ func resolveRunOptions(args []string, cli cliOptions) (RunOptions, error) {
 		return RunOptions{}, fmt.Errorf("resolve keymap: %w", err)
 	}
 
+	mouseEnabled := true
+	if cfg.Mouse != nil {
+		mouseEnabled = *cfg.Mouse
+	}
+
 	return RunOptions{
-		SessionName: sessionName,
-		Shell:       shell,
-		Keymap:      keymap,
+		SessionName:  sessionName,
+		Shell:        shell,
+		MouseEnabled: mouseEnabled,
+		Keymap:       keymap,
 	}, nil
 }
 

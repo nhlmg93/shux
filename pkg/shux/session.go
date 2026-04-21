@@ -207,6 +207,8 @@ func (s *Session) receive(msg any) {
 		s.forwardToActiveWindow(Split{Dir: m.Dir})
 	case NavigatePane:
 		s.forwardToActiveWindow(NavigatePane{Dir: m.Dir})
+	case ResizePane:
+		s.forwardToActiveWindow(ResizePane{Dir: m.Dir, Amount: m.Amount})
 	case WindowEmpty:
 		s.handleWindowEmpty(m.ID)
 	case PaneContentUpdated:
@@ -223,6 +225,8 @@ func (s *Session) receive(msg any) {
 		}
 	case WriteToPane, KeyInput:
 		s.forwardToActivePane(m)
+	case MouseInput:
+		s.forwardToActiveWindow(m)
 	case DetachSession:
 		if err := s.handleDetach(); err != nil {
 			Warnf("detach: session=%s id=%d failed err=%v", s.name, s.id, err)

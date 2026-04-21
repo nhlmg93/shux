@@ -3,6 +3,7 @@ package shux
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -21,6 +22,10 @@ const (
 	ActionSelectPaneDown  Action = "select_pane_down"
 	ActionSelectPaneUp    Action = "select_pane_up"
 	ActionSelectPaneRight Action = "select_pane_right"
+	ActionResizePaneLeft  Action = "resize_pane_left"
+	ActionResizePaneDown  Action = "resize_pane_down"
+	ActionResizePaneUp    Action = "resize_pane_up"
+	ActionResizePaneRight Action = "resize_pane_right"
 	ActionDetach          Action = "detach"
 )
 
@@ -35,7 +40,27 @@ var validActions = map[Action]struct{}{
 	ActionSelectPaneDown:  {},
 	ActionSelectPaneUp:    {},
 	ActionSelectPaneRight: {},
+	ActionResizePaneLeft:  {},
+	ActionResizePaneDown:  {},
+	ActionResizePaneUp:    {},
+	ActionResizePaneRight: {},
 	ActionDetach:          {},
+}
+
+// Binding describes a resolved key binding.
+type Binding struct {
+	Action Action
+	Amount int
+}
+
+func (b Binding) normalized() Binding {
+	if b.Amount <= 0 {
+		switch b.Action {
+		case ActionResizePaneLeft, ActionResizePaneDown, ActionResizePaneUp, ActionResizePaneRight:
+			b.Amount = 1
+		}
+	}
+	return b
 }
 
 // KeymapConfig describes user overrides applied on top of tmux-style defaults.
@@ -66,7 +91,7 @@ func (c *KeymapConfig) AddUnbind(spec string) {
 type Keymap struct {
 	prefix      string
 	prefixInput KeyInput
-	bindings    map[string]Action
+	bindings    map[string]Binding
 }
 
 func DefaultKeymap() Keymap {
@@ -88,13 +113,13 @@ func NewKeymap(cfg KeymapConfig) (Keymap, error) {
 		return Keymap{}, fmt.Errorf("prefix: %w", err)
 	}
 
-	bindings := map[string]Action{}
-	for spec, action := range tmuxDefaultBindingSpecs() {
+	bindings := map[string]Binding{}
+	for spec, binding := range tmuxDefaultBindingSpecs() {
 		key, _, err := parseKeySpec(spec)
 		if err != nil {
 			return Keymap{}, fmt.Errorf("default binding %q: %w", spec, err)
 		}
-		bindings[key] = action
+		bindings[key] = binding.normalized()
 	}
 
 	for _, spec := range cfg.Unbind {
@@ -106,7 +131,7 @@ func NewKeymap(cfg KeymapConfig) (Keymap, error) {
 	}
 
 	for spec, actionName := range cfg.Bind {
-		action, err := resolveAction(actionName)
+		binding, err := resolveBinding(actionName)
 		if err != nil {
 			return Keymap{}, fmt.Errorf("bind %q: %w", spec, err)
 		}
@@ -114,7 +139,7 @@ func NewKeymap(cfg KeymapConfig) (Keymap, error) {
 		if err != nil {
 			return Keymap{}, fmt.Errorf("bind %q: %w", spec, err)
 		}
-		bindings[key] = action
+		bindings[key] = binding.normalized()
 	}
 
 	if _, exists := bindings[prefix]; exists {
@@ -133,8 +158,16 @@ func (k Keymap) Prefix() string {
 }
 
 func (k Keymap) ActionFor(key string) (Action, bool) {
-	action, ok := k.bindings[key]
-	return action, ok
+	binding, ok := k.bindings[key]
+	if !ok {
+		return "", false
+	}
+	return binding.Action, true
+}
+
+func (k Keymap) BindingFor(key string) (Binding, bool) {
+	binding, ok := k.bindings[key]
+	return binding, ok
 }
 
 func (k Keymap) PrefixInput() KeyInput {
@@ -143,8 +176,8 @@ func (k Keymap) PrefixInput() KeyInput {
 
 func (k Keymap) Bindings() map[string]Action {
 	result := make(map[string]Action, len(k.bindings))
-	for key, action := range k.bindings {
-		result[key] = action
+	for key, binding := range k.bindings {
+		result[key] = binding.Action
 	}
 	return result
 }
@@ -158,18 +191,26 @@ func ValidActions() []Action {
 	return actions
 }
 
-func tmuxDefaultBindingSpecs() map[string]Action {
-	return map[string]Action{
-		"c":     ActionNewWindow,
-		"n":     ActionNextWindow,
-		"p":     ActionPrevWindow,
-		`"`:     ActionSplitHorizontal,
-		"%":     ActionSplitVertical,
-		"Left":  ActionSelectPaneLeft,
-		"Down":  ActionSelectPaneDown,
-		"Up":    ActionSelectPaneUp,
-		"Right": ActionSelectPaneRight,
-		"d":     ActionDetach,
+func tmuxDefaultBindingSpecs() map[string]Binding {
+	return map[string]Binding{
+		"c":       {Action: ActionNewWindow},
+		"n":       {Action: ActionNextWindow},
+		"p":       {Action: ActionPrevWindow},
+		`"`:       {Action: ActionSplitHorizontal},
+		"%":       {Action: ActionSplitVertical},
+		"Left":    {Action: ActionSelectPaneLeft},
+		"Down":    {Action: ActionSelectPaneDown},
+		"Up":      {Action: ActionSelectPaneUp},
+		"Right":   {Action: ActionSelectPaneRight},
+		"C-Left":  {Action: ActionResizePaneLeft, Amount: 1},
+		"C-Down":  {Action: ActionResizePaneDown, Amount: 1},
+		"C-Up":    {Action: ActionResizePaneUp, Amount: 1},
+		"C-Right": {Action: ActionResizePaneRight, Amount: 1},
+		"M-Left":  {Action: ActionResizePaneLeft, Amount: 5},
+		"M-Down":  {Action: ActionResizePaneDown, Amount: 5},
+		"M-Up":    {Action: ActionResizePaneUp, Amount: 5},
+		"M-Right": {Action: ActionResizePaneRight, Amount: 5},
+		"d":       {Action: ActionDetach},
 	}
 }
 
@@ -181,75 +222,105 @@ func parseAction(name string) (Action, error) {
 	return action, nil
 }
 
-func resolveAction(name string) (Action, error) {
+func resolveBinding(name string) (Binding, error) {
 	if action, err := parseAction(name); err == nil {
-		return action, nil
+		return Binding{Action: action}.normalized(), nil
 	}
 	return parseTmuxCommand(name)
 }
 
-func parseTmuxCommand(command string) (Action, error) {
+func parseTmuxCommand(command string) (Binding, error) {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
-		return "", fmt.Errorf("empty command")
+		return Binding{}, fmt.Errorf("empty command")
+	}
+
+	onlyCount := func(defaultAction Action) (Binding, error) {
+		binding := Binding{Action: defaultAction}
+		if len(fields) == 3 {
+			n, err := strconv.Atoi(fields[2])
+			if err != nil || n <= 0 {
+				return Binding{}, fmt.Errorf("unsupported command %q", command)
+			}
+			binding.Amount = n
+		} else if len(fields) != 2 {
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
+		}
+		return binding.normalized(), nil
 	}
 
 	switch fields[0] {
 	case "new-window":
 		if len(fields) != 1 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
-		return ActionNewWindow, nil
+		return Binding{Action: ActionNewWindow}, nil
 	case "next-window":
 		if len(fields) != 1 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
-		return ActionNextWindow, nil
+		return Binding{Action: ActionNextWindow}, nil
 	case "previous-window", "prev-window":
 		if len(fields) != 1 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
-		return ActionPrevWindow, nil
+		return Binding{Action: ActionPrevWindow}, nil
 	case "detach", "detach-client":
 		if len(fields) != 1 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
-		return ActionDetach, nil
+		return Binding{Action: ActionDetach}, nil
 	case "split-window":
 		if len(fields) != 2 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
 		switch fields[1] {
 		case "-h":
-			return ActionSplitVertical, nil
+			return Binding{Action: ActionSplitVertical}, nil
 		case "-v":
-			return ActionSplitHorizontal, nil
+			return Binding{Action: ActionSplitHorizontal}, nil
 		default:
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
 	case "select-pane":
 		if len(fields) != 2 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
 		switch fields[1] {
 		case "-L":
-			return ActionSelectPaneLeft, nil
+			return Binding{Action: ActionSelectPaneLeft}, nil
 		case "-D":
-			return ActionSelectPaneDown, nil
+			return Binding{Action: ActionSelectPaneDown}, nil
 		case "-U":
-			return ActionSelectPaneUp, nil
+			return Binding{Action: ActionSelectPaneUp}, nil
 		case "-R":
-			return ActionSelectPaneRight, nil
+			return Binding{Action: ActionSelectPaneRight}, nil
 		default:
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
+		}
+	case "resize-pane":
+		if len(fields) < 2 || len(fields) > 3 {
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
+		}
+		switch fields[1] {
+		case "-L":
+			return onlyCount(ActionResizePaneLeft)
+		case "-D":
+			return onlyCount(ActionResizePaneDown)
+		case "-U":
+			return onlyCount(ActionResizePaneUp)
+		case "-R":
+			return onlyCount(ActionResizePaneRight)
+		default:
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
 	case "quit":
 		if len(fields) != 1 {
-			return "", fmt.Errorf("unsupported command %q", command)
+			return Binding{}, fmt.Errorf("unsupported command %q", command)
 		}
-		return ActionQuit, nil
+		return Binding{Action: ActionQuit}, nil
 	default:
-		return "", fmt.Errorf("unknown action or command %q", command)
+		return Binding{}, fmt.Errorf("unknown action or command %q", command)
 	}
 }
 

@@ -7,13 +7,14 @@ import (
 )
 
 type Model struct {
-	session     *SessionRef
-	keymap      Keymap
-	width       int
-	height      int
-	prefixMode  bool
-	initialized bool
-	windowView  WindowView
+	session      *SessionRef
+	keymap       Keymap
+	mouseEnabled bool
+	width        int
+	height       int
+	prefixMode   bool
+	initialized  bool
+	windowView   WindowView
 }
 
 // SetUpdateChannel is kept as a compatibility no-op for older tests.
@@ -60,6 +61,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		m.handleMouse(msg)
+		return m, nil
+
 	case tea.PasteMsg:
 		m.session.Send(WriteToPane{Data: []byte(msg.Content)})
 		return m, nil
@@ -88,8 +93,8 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 
 	if m.prefixMode {
 		m.prefixMode = false
-		if action, ok := m.keymap.ActionFor(keystroke); ok {
-			return m.dispatchAction(action)
+		if binding, ok := m.keymap.BindingFor(keystroke); ok {
+			return m.dispatchBinding(binding)
 		}
 		m.sendKeyInput(m.keymap.PrefixInput())
 		m.sendKey(key)
@@ -105,8 +110,9 @@ func (m *Model) handleKey(key tea.KeyPressMsg) bool {
 	return false
 }
 
-func (m *Model) dispatchAction(action Action) bool {
-	switch action {
+func (m *Model) dispatchBinding(binding Binding) bool {
+	binding = binding.normalized()
+	switch binding.Action {
 	case ActionQuit:
 		return true
 	case ActionNewWindow:
@@ -136,6 +142,18 @@ func (m *Model) dispatchAction(action Action) bool {
 	case ActionSelectPaneRight:
 		m.session.Send(NavigatePane{Dir: PaneNavRight})
 		return false
+	case ActionResizePaneLeft:
+		m.session.Send(ResizePane{Dir: PaneNavLeft, Amount: binding.Amount})
+		return false
+	case ActionResizePaneDown:
+		m.session.Send(ResizePane{Dir: PaneNavDown, Amount: binding.Amount})
+		return false
+	case ActionResizePaneUp:
+		m.session.Send(ResizePane{Dir: PaneNavUp, Amount: binding.Amount})
+		return false
+	case ActionResizePaneRight:
+		m.session.Send(ResizePane{Dir: PaneNavRight, Amount: binding.Amount})
+		return false
 	case ActionDetach:
 		Infof("ui: detach requested")
 		result, ok := askValue(m.session, DetachSession{})
@@ -150,9 +168,21 @@ func (m *Model) dispatchAction(action Action) bool {
 		Infof("ui: detach completed")
 		return true
 	default:
-		Warnf("ui: unknown action %q", action)
+		Warnf("ui: unknown action %q", binding.Action)
 		return false
 	}
+}
+
+func (m *Model) handleMouse(msg tea.MouseMsg) {
+	if !m.mouseEnabled {
+		return
+	}
+	m.prefixMode = false
+	input, ok := normalizeMouseInput(msg)
+	if !ok {
+		return
+	}
+	m.session.Send(input)
 }
 
 func (m *Model) sendKey(key tea.KeyPressMsg) {
@@ -171,6 +201,9 @@ func (m Model) View() tea.View {
 	content := m.renderContent()
 	v := tea.NewView(content)
 	v.AltScreen = true
+	if m.mouseEnabled {
+		v.MouseMode = tea.MouseModeAllMotion
+	}
 
 	if m.windowView.Title != "" {
 		v.WindowTitle = m.windowView.Title
@@ -222,11 +255,15 @@ func (m Model) renderPrefix(lines []string) string {
 }
 
 func NewModel(session *SessionRef) Model {
-	return NewModelWithKeymap(session, DefaultKeymap())
+	return NewModelWithOptions(session, DefaultKeymap(), true)
 }
 
 func NewModelWithKeymap(session *SessionRef, keymap Keymap) Model {
-	return Model{session: session, keymap: keymap}
+	return NewModelWithOptions(session, keymap, true)
+}
+
+func NewModelWithOptions(session *SessionRef, keymap Keymap, mouseEnabled bool) Model {
+	return Model{session: session, keymap: keymap, mouseEnabled: mouseEnabled}
 }
 
 func normalizeKeyInput(msg tea.KeyPressMsg) (KeyInput, bool) {
@@ -319,4 +356,53 @@ func keyModsFromTea(mod tea.KeyMod) KeyMods {
 		result |= KeyModSuper
 	}
 	return result
+}
+
+func normalizeMouseInput(msg tea.MouseMsg) (MouseInput, bool) {
+	mouse := msg.Mouse()
+	input := MouseInput{
+		Row:    mouse.Y,
+		Col:    mouse.X,
+		Button: mouseButtonFromTea(mouse.Button),
+		Mods:   keyModsFromTea(mouse.Mod),
+	}
+
+	switch msg.(type) {
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		input.Action = MouseActionPress
+	case tea.MouseReleaseMsg:
+		input.Action = MouseActionRelease
+	case tea.MouseMotionMsg:
+		input.Action = MouseActionMotion
+	default:
+		return MouseInput{}, false
+	}
+	return input, true
+}
+
+func mouseButtonFromTea(button tea.MouseButton) MouseButton {
+	switch button {
+	case tea.MouseLeft:
+		return MouseButtonLeft
+	case tea.MouseMiddle:
+		return MouseButtonMiddle
+	case tea.MouseRight:
+		return MouseButtonRight
+	case tea.MouseWheelUp:
+		return MouseButtonWheelUp
+	case tea.MouseWheelDown:
+		return MouseButtonWheelDown
+	case tea.MouseWheelLeft:
+		return MouseButtonWheelLeft
+	case tea.MouseWheelRight:
+		return MouseButtonWheelRight
+	case tea.MouseBackward:
+		return MouseButtonBackward
+	case tea.MouseForward:
+		return MouseButtonForward
+	case tea.MouseButton10:
+		return MouseButtonButton10
+	default:
+		return MouseButtonNone
+	}
 }

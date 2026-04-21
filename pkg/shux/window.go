@@ -2,6 +2,7 @@ package shux
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/mitchellh/go-libghostty"
 )
@@ -47,9 +48,12 @@ type paneLayout struct {
 type splitNode struct {
 	paneID uint32
 	dir    SplitDir
+	ratio  float64
 	first  *splitNode
 	second *splitNode
 }
+
+const defaultSplitRatio = 0.5
 
 func leafNode(paneID uint32) *splitNode {
 	return &splitNode{paneID: paneID}
@@ -64,6 +68,25 @@ type dividerSegment struct {
 	row        int
 	col        int
 	length     int
+}
+
+type dividerHit struct {
+	node       *splitNode
+	horizontal bool
+	row        int
+	col        int
+	length     int
+	rectRow    int
+	rectCol    int
+	rectRows   int
+	rectCols   int
+}
+
+func (h dividerHit) contains(row, col int) bool {
+	if h.horizontal {
+		return row == h.row && col >= h.col && col < h.col+h.length
+	}
+	return col == h.col && row >= h.row && row < h.row+h.length
 }
 
 type borderState struct {
@@ -81,11 +104,13 @@ type Window struct {
 	active    uint32
 	paneID    uint32
 
-	root     *splitNode
-	layout   []paneLayout
-	splitDir SplitDir
-	rows     int
-	cols     int
+	root             *splitNode
+	layout           []paneLayout
+	splitDir         SplitDir
+	rows             int
+	cols             int
+	dividerDrag      *dividerHit
+	mouseCapturePane uint32
 }
 
 func NewWindow(id uint32) *Window {
@@ -147,6 +172,8 @@ func (w *Window) receive(msg any) {
 		w.splitPane(m.Dir)
 	case NavigatePane:
 		w.navigatePane(m.Dir)
+	case ResizePane:
+		w.resizePane(m.Dir, m.Amount)
 	case SwitchToPane:
 		w.switchToPane(m.Index)
 	case PaneExited:
@@ -159,6 +186,8 @@ func (w *Window) receive(msg any) {
 		}
 	case ResizeMsg:
 		w.resizeAllPanes(m.Rows, m.Cols)
+	case MouseInput:
+		w.handleMouseInput(m)
 	case WriteToPane, KeyInput:
 		if pane := w.activePane(); pane != nil {
 			pane.Send(m)
@@ -299,6 +328,7 @@ func splitAroundPane(node *splitNode, target uint32, dir SplitDir, newPaneID uin
 		}
 		return &splitNode{
 			dir:    dir,
+			ratio:  defaultSplitRatio,
 			first:  leafNode(target),
 			second: leafNode(newPaneID),
 		}, true
@@ -323,6 +353,7 @@ func snapshotSplitTree(node *splitNode) *SplitTreeSnapshot {
 	}
 	return &SplitTreeSnapshot{
 		Dir:    node.dir,
+		Ratio:  node.ratio,
 		First:  snapshotSplitTree(node.first),
 		Second: snapshotSplitTree(node.second),
 	}
@@ -335,8 +366,13 @@ func restoreSplitTree(node *SplitTreeSnapshot) *splitNode {
 	if node.First == nil && node.Second == nil {
 		return leafNode(node.PaneID)
 	}
+	ratio := node.Ratio
+	if ratio <= 0 || ratio >= 1 {
+		ratio = defaultSplitRatio
+	}
 	return &splitNode{
 		dir:    node.Dir,
+		ratio:  ratio,
 		first:  restoreSplitTree(node.First),
 		second: restoreSplitTree(node.Second),
 	}
@@ -436,6 +472,168 @@ func (w *Window) navigatePane(dir PaneNavDir) {
 	}
 }
 
+func (w *Window) resizePane(dir PaneNavDir, amount int) {
+	if w.root == nil || w.active == 0 || amount <= 0 {
+		return
+	}
+
+	path := make([]splitPathStep, 0, 8)
+	if !collectSplitPath(w.root, w.active, 0, 0, w.rows, w.cols, &path) {
+		return
+	}
+
+	for _, step := range path {
+		if !step.matches(dir) {
+			continue
+		}
+		if adjustSplitRatioByDelta(step.node, step.span(), step.delta(dir, amount)) {
+			w.syncLayout()
+			if w.parent != nil {
+				w.parent.Send(PaneContentUpdated{})
+			}
+		}
+		return
+	}
+}
+
+func (w *Window) handleMouseInput(input MouseInput) {
+	if w.root == nil || w.rows <= 0 || w.cols <= 0 {
+		return
+	}
+
+	if w.dividerDrag != nil {
+		if input.Action == MouseActionMotion || input.Action == MouseActionRelease {
+			if setSplitRatioFromHit(*w.dividerDrag, input.Row, input.Col) {
+				w.syncLayout()
+				if w.parent != nil {
+					w.parent.Send(PaneContentUpdated{})
+				}
+			}
+			if input.Action == MouseActionRelease {
+				w.dividerDrag = nil
+			}
+			return
+		}
+	}
+
+	if input.Action == MouseActionPress && input.Button == MouseButtonLeft {
+		if hit, ok := w.dividerHitAt(input.Row, input.Col); ok {
+			copied := hit
+			w.dividerDrag = &copied
+			setSplitRatioFromHit(hit, input.Row, input.Col)
+			w.syncLayout()
+			if w.parent != nil {
+				w.parent.Send(PaneContentUpdated{})
+			}
+			return
+		}
+	}
+
+	targetID := w.targetPaneForMouse(input)
+	if targetID == 0 {
+		return
+	}
+	if input.Action == MouseActionPress {
+		w.mouseCapturePane = targetID
+	}
+	if input.Action == MouseActionRelease {
+		defer func() { w.mouseCapturePane = 0 }()
+	}
+	w.sendMouseToPane(targetID, input)
+}
+
+type splitPathStep struct {
+	node   *splitNode
+	branch int
+	rows   int
+	cols   int
+}
+
+func (s splitPathStep) span() int {
+	if s.node == nil {
+		return 0
+	}
+	if s.node.dir == SplitH {
+		return s.rows
+	}
+	return s.cols
+}
+
+func (s splitPathStep) matches(dir PaneNavDir) bool {
+	if s.node == nil {
+		return false
+	}
+	switch dir {
+	case PaneNavLeft:
+		return s.node.dir == SplitV && s.branch == 1
+	case PaneNavRight:
+		return s.node.dir == SplitV && s.branch == 0
+	case PaneNavUp:
+		return s.node.dir == SplitH && s.branch == 1
+	case PaneNavDown:
+		return s.node.dir == SplitH && s.branch == 0
+	default:
+		return false
+	}
+}
+
+func (s splitPathStep) delta(dir PaneNavDir, amount int) float64 {
+	if amount <= 0 {
+		amount = 1
+	}
+	avail := s.span() - 1
+	if avail <= 0 {
+		return 0
+	}
+	delta := float64(amount) / float64(avail)
+	switch dir {
+	case PaneNavLeft, PaneNavUp:
+		return -delta
+	case PaneNavRight, PaneNavDown:
+		return delta
+	default:
+		return 0
+	}
+}
+
+func collectSplitPath(node *splitNode, target uint32, row, col, rows, cols int, out *[]splitPathStep) bool {
+	if node == nil {
+		return false
+	}
+	if node.isLeaf() {
+		return node.paneID == target
+	}
+	if node.dir == SplitH {
+		firstRows, secondRows, ok := splitSpanWithRatio(rows, node.ratio)
+		if !ok {
+			return collectSplitPath(node.first, target, row, col, rows, cols, out)
+		}
+		if collectSplitPath(node.first, target, row, col, firstRows, cols, out) {
+			*out = append(*out, splitPathStep{node: node, branch: 0, rows: rows, cols: cols})
+			return true
+		}
+		if collectSplitPath(node.second, target, row+firstRows+1, col, secondRows, cols, out) {
+			*out = append(*out, splitPathStep{node: node, branch: 1, rows: rows, cols: cols})
+			return true
+		}
+		return false
+	}
+
+	firstCols, secondCols, ok := splitSpanWithRatio(cols, node.ratio)
+	if !ok {
+		return collectSplitPath(node.first, target, row, col, rows, cols, out)
+	}
+	if collectSplitPath(node.first, target, row, col, rows, firstCols, out) {
+		*out = append(*out, splitPathStep{node: node, branch: 0, rows: rows, cols: cols})
+		return true
+	}
+	if collectSplitPath(node.second, target, row, col+firstCols+1, rows, secondCols, out) {
+		*out = append(*out, splitPathStep{node: node, branch: 1, rows: rows, cols: cols})
+		return true
+	}
+	return false
+}
+
 func paneNavMetrics(active, cand paneLayout, dir PaneNavDir) (primary int, orth int, overlaps bool, ok bool) {
 	aRow0, aRow1 := active.row, active.row+active.rows
 	aCol0, aCol1 := active.col, active.col+active.cols
@@ -486,6 +684,164 @@ func intervalGap(a0, a1, b0, b1 int) int {
 	return 0
 }
 
+func (w *Window) targetPaneForMouse(input MouseInput) uint32 {
+	if w.mouseCapturePane != 0 && input.Action != MouseActionPress {
+		if _, ok := w.panes[w.mouseCapturePane]; ok {
+			return w.mouseCapturePane
+		}
+	}
+	if layout, ok := w.paneAt(input.Row, input.Col); ok {
+		if input.Action == MouseActionPress && layout.paneID != w.active {
+			w.active = layout.paneID
+			if w.parent != nil {
+				w.parent.Send(PaneContentUpdated{})
+			}
+		}
+		return layout.paneID
+	}
+	return 0
+}
+
+func (w *Window) sendMouseToPane(paneID uint32, input MouseInput) {
+	layout, ok := findLayout(w.layout, paneID)
+	if !ok {
+		return
+	}
+	paneRef, ok := w.panes[paneID]
+	if !ok {
+		return
+	}
+	local := input
+	local.Row -= layout.row
+	local.Col -= layout.col
+	if local.Row < 0 {
+		local.Row = 0
+	}
+	if local.Col < 0 {
+		local.Col = 0
+	}
+	if local.Row >= layout.rows {
+		local.Row = layout.rows - 1
+	}
+	if local.Col >= layout.cols {
+		local.Col = layout.cols - 1
+	}
+	paneRef.Send(local)
+}
+
+func (w *Window) paneAt(row, col int) (paneLayout, bool) {
+	for _, pl := range w.layout {
+		if row >= pl.row && row < pl.row+pl.rows && col >= pl.col && col < pl.col+pl.cols {
+			return pl, true
+		}
+	}
+	return paneLayout{}, false
+}
+
+func (w *Window) dividerHitAt(row, col int) (dividerHit, bool) {
+	hits := make([]dividerHit, 0, len(w.paneOrder))
+	collectDividerHits(w.root, 0, 0, w.rows, w.cols, &hits)
+	for _, hit := range hits {
+		if hit.contains(row, col) {
+			return hit, true
+		}
+	}
+	return dividerHit{}, false
+}
+
+func collectDividerHits(node *splitNode, row, col, rows, cols int, out *[]dividerHit) {
+	if node == nil || node.isLeaf() {
+		return
+	}
+	if node.dir == SplitH {
+		firstRows, secondRows, ok := splitSpanWithRatio(rows, node.ratio)
+		if !ok {
+			return
+		}
+		*out = append(*out, dividerHit{node: node, horizontal: true, row: row + firstRows, col: col, length: cols, rectRow: row, rectCol: col, rectRows: rows, rectCols: cols})
+		collectDividerHits(node.first, row, col, firstRows, cols, out)
+		collectDividerHits(node.second, row+firstRows+1, col, secondRows, cols, out)
+		return
+	}
+	firstCols, secondCols, ok := splitSpanWithRatio(cols, node.ratio)
+	if !ok {
+		return
+	}
+	*out = append(*out, dividerHit{node: node, horizontal: false, row: row, col: col + firstCols, length: rows, rectRow: row, rectCol: col, rectRows: rows, rectCols: cols})
+	collectDividerHits(node.first, row, col, rows, firstCols, out)
+	collectDividerHits(node.second, row, col+firstCols+1, rows, secondCols, out)
+}
+
+func setSplitRatioFromHit(hit dividerHit, row, col int) bool {
+	if hit.node == nil {
+		return false
+	}
+	if hit.horizontal {
+		avail := hit.rectRows - 1
+		if avail <= 0 {
+			return false
+		}
+		first := row - hit.rectRow
+		return setSplitRatio(hit.node, float64(first)/float64(avail), avail)
+	}
+	avail := hit.rectCols - 1
+	if avail <= 0 {
+		return false
+	}
+	first := col - hit.rectCol
+	return setSplitRatio(hit.node, float64(first)/float64(avail), avail)
+}
+
+func setSplitRatio(node *splitNode, ratio float64, avail int) bool {
+	if node == nil {
+		return false
+	}
+	ratio = clampSplitRatio(ratio, avail)
+	if math.Abs(node.ratio-ratio) < 0.0001 {
+		return false
+	}
+	node.ratio = ratio
+	return true
+}
+
+func adjustSplitRatioByDelta(node *splitNode, span int, delta float64) bool {
+	if node == nil || delta == 0 {
+		return false
+	}
+	avail := span - 1
+	if avail <= 0 {
+		return false
+	}
+	return setSplitRatio(node, node.ratio+delta, avail)
+}
+
+func clampSplitRatio(ratio float64, avail int) float64 {
+	if avail <= 1 {
+		if ratio < 0 {
+			return 0
+		}
+		if ratio > 1 {
+			return 1
+		}
+		if ratio == 0 {
+			return 1
+		}
+		return ratio
+	}
+	minRatio := 1.0 / float64(avail)
+	maxRatio := float64(avail-1) / float64(avail)
+	if ratio < minRatio {
+		return minRatio
+	}
+	if ratio > maxRatio {
+		return maxRatio
+	}
+	if ratio <= 0 || ratio >= 1 {
+		return defaultSplitRatio
+	}
+	return ratio
+}
+
 func (w *Window) resizeAllPanes(rows, cols int) {
 	Infof("window %d: resizing to %dx%d (was %dx%d)", w.id, rows, cols, w.rows, w.cols)
 	w.rows = rows
@@ -498,6 +854,10 @@ func (w *Window) resizeAllPanes(rows, cols int) {
 
 func (w *Window) handlePaneExited(id uint32) {
 	currentIdx := w.activePaneIndex()
+	if w.mouseCapturePane == id {
+		w.mouseCapturePane = 0
+	}
+	w.dividerDrag = nil
 	delete(w.panes, id)
 	w.paneOrder = removeOrderedID(w.paneOrder, id)
 
@@ -596,7 +956,7 @@ func layoutSplitTree(node *splitNode, row, col, rows, cols int, out *[]paneLayou
 		return
 	}
 	if node.dir == SplitH {
-		firstRows, secondRows, ok := splitSpan(rows)
+		firstRows, secondRows, ok := splitSpanWithRatio(rows, node.ratio)
 		if !ok {
 			layoutSplitTree(node.first, row, col, rows, cols, out)
 			return
@@ -605,7 +965,7 @@ func layoutSplitTree(node *splitNode, row, col, rows, cols int, out *[]paneLayou
 		layoutSplitTree(node.second, row+firstRows+1, col, secondRows, cols, out)
 		return
 	}
-	firstCols, secondCols, ok := splitSpan(cols)
+	firstCols, secondCols, ok := splitSpanWithRatio(cols, node.ratio)
 	if !ok {
 		layoutSplitTree(node.first, row, col, rows, cols, out)
 		return
@@ -614,12 +974,21 @@ func layoutSplitTree(node *splitNode, row, col, rows, cols int, out *[]paneLayou
 	layoutSplitTree(node.second, row, col+firstCols+1, rows, secondCols, out)
 }
 
-func splitSpan(total int) (first, second int, ok bool) {
+func splitSpanWithRatio(total int, ratio float64) (first, second int, ok bool) {
 	if total <= 1 {
 		return total, 0, false
 	}
 	avail := total - 1
-	first = (avail + 1) / 2
+	if avail <= 1 {
+		return 1, avail - 1, true
+	}
+	first = int(math.Round(float64(avail) * clampSplitRatio(ratio, avail)))
+	if first < 1 {
+		first = 1
+	}
+	if first > avail-1 {
+		first = avail - 1
+	}
 	second = avail - first
 	return first, second, true
 }
@@ -638,7 +1007,7 @@ func collectDividerSegments(node *splitNode, row, col, rows, cols int, out *[]di
 		return
 	}
 	if node.dir == SplitH {
-		firstRows, secondRows, ok := splitSpan(rows)
+		firstRows, secondRows, ok := splitSpanWithRatio(rows, node.ratio)
 		if !ok {
 			return
 		}
@@ -647,7 +1016,7 @@ func collectDividerSegments(node *splitNode, row, col, rows, cols int, out *[]di
 		collectDividerSegments(node.second, row+firstRows+1, col, secondRows, cols, out)
 		return
 	}
-	firstCols, secondCols, ok := splitSpan(cols)
+	firstCols, secondCols, ok := splitSpanWithRatio(cols, node.ratio)
 	if !ok {
 		return
 	}

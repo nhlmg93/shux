@@ -155,6 +155,11 @@ func (r *luaConfigRuntime) applyConfigTable(L *lua.LState, tbl *lua.LTable) ([]l
 	} else if ok {
 		r.cfg.Shell = shell
 	}
+	if mouse, ok, err := luaBoolField(L, tbl, "mouse"); err != nil {
+		return nil, err
+	} else if ok {
+		r.cfg.Mouse = boolPtr(mouse)
+	}
 
 	keysValue := L.GetField(tbl, "keys")
 	if keysValue != lua.LNil {
@@ -209,12 +214,7 @@ func (r *luaConfigRuntime) applyOptionsTable(L *lua.LState, tbl *lua.LTable) err
 			return
 		}
 		name := strings.TrimSpace(string(keyStr))
-		str, ok := value.(lua.LString)
-		if !ok {
-			iterErr = fmt.Errorf("options.%s must be a string, got %s", name, value.Type().String())
-			return
-		}
-		if err := r.setOption(name, strings.TrimSpace(string(str))); err != nil {
+		if err := r.setOptionValue(name, value); err != nil {
 			iterErr = err
 		}
 	})
@@ -388,6 +388,7 @@ func (r *luaConfigRuntime) newModule(L *lua.LState) *lua.LTable {
 		"config":           r.luaConfig,
 		"config_dir":       r.luaConfigDir,
 		"config_file":      r.luaConfigFile,
+		"set_mouse":        r.luaSetMouse,
 		"set_prefix":       r.luaSetPrefix,
 		"set_shell":        r.luaSetShell,
 		"set_session_name": r.luaSetSessionName,
@@ -455,6 +456,12 @@ func (r *luaConfigRuntime) luaOptionsIndex(L *lua.LState) int {
 		}
 	case "shell":
 		L.Push(lua.LString(r.cfg.Shell))
+	case "mouse":
+		if r.cfg.Mouse == nil {
+			L.Push(lua.LBool(true))
+		} else {
+			L.Push(lua.LBool(*r.cfg.Mouse))
+		}
 	case "session_name":
 		L.Push(lua.LString(r.cfg.Session.Name))
 	default:
@@ -465,10 +472,16 @@ func (r *luaConfigRuntime) luaOptionsIndex(L *lua.LState) int {
 
 func (r *luaConfigRuntime) luaOptionsNewIndex(L *lua.LState) int {
 	name := strings.TrimSpace(L.CheckString(2))
-	value := strings.TrimSpace(L.CheckString(3))
-	if err := r.setOption(name, value); err != nil {
+	value := L.Get(3)
+	if err := r.setOptionValue(name, value); err != nil {
 		L.RaiseError("%s", err.Error())
 	}
+	return 0
+}
+
+func (r *luaConfigRuntime) luaSetMouse(L *lua.LState) int {
+	enabled := L.CheckBool(1)
+	r.cfg.Mouse = boolPtr(enabled)
 	return 0
 }
 
@@ -518,15 +531,38 @@ func (r *luaConfigRuntime) luaKeymapUnbind(L *lua.LState) int {
 }
 
 func (r *luaConfigRuntime) setOption(name, value string) error {
+	return r.setOptionValue(name, lua.LString(value))
+}
+
+func (r *luaConfigRuntime) setOptionValue(name string, value lua.LValue) error {
 	switch name {
 	case "prefix":
-		r.cfg.Keys.Prefix = value
+		str, ok := value.(lua.LString)
+		if !ok {
+			return fmt.Errorf("options.%s must be a string, got %s", name, value.Type().String())
+		}
+		r.cfg.Keys.Prefix = strings.TrimSpace(string(str))
 		return nil
 	case "shell":
-		r.cfg.Shell = value
+		str, ok := value.(lua.LString)
+		if !ok {
+			return fmt.Errorf("options.%s must be a string, got %s", name, value.Type().String())
+		}
+		r.cfg.Shell = strings.TrimSpace(string(str))
 		return nil
 	case "session_name":
-		r.cfg.Session.Name = value
+		str, ok := value.(lua.LString)
+		if !ok {
+			return fmt.Errorf("options.%s must be a string, got %s", name, value.Type().String())
+		}
+		r.cfg.Session.Name = strings.TrimSpace(string(str))
+		return nil
+	case "mouse":
+		b, ok := value.(lua.LBool)
+		if !ok {
+			return fmt.Errorf("options.%s must be a boolean, got %s", name, value.Type().String())
+		}
+		r.cfg.Mouse = boolPtr(bool(b))
 		return nil
 	default:
 		return fmt.Errorf("unknown option %q", name)
@@ -543,6 +579,22 @@ func luaStringField(L *lua.LState, tbl *lua.LTable, field string) (string, bool,
 		return "", false, fmt.Errorf("%s must be a string, got %s", field, value.Type().String())
 	}
 	return strings.TrimSpace(string(str)), true, nil
+}
+
+func luaBoolField(L *lua.LState, tbl *lua.LTable, field string) (bool, bool, error) {
+	value := L.GetField(tbl, field)
+	if value == lua.LNil {
+		return false, false, nil
+	}
+	b, ok := value.(lua.LBool)
+	if !ok {
+		return false, false, fmt.Errorf("%s must be a boolean, got %s", field, value.Type().String())
+	}
+	return bool(b), true, nil
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func luaStringMap(tbl *lua.LTable) (map[string]string, error) {
