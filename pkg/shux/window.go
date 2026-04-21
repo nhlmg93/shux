@@ -70,13 +70,34 @@ type borderState struct {
 	active bool
 }
 
+type renderedActivePane struct {
+	title    string
+	cursorOn bool
+	cursorR  int
+	cursorC  int
+}
+
+func newRenderedActivePane() renderedActivePane {
+	return renderedActivePane{cursorR: -1, cursorC: -1}
+}
+
+func (p renderedActivePane) toWindowView(content string) WindowView {
+	return WindowView{
+		Content:   content,
+		CursorRow: p.cursorR,
+		CursorCol: p.cursorC,
+		CursorOn:  p.cursorOn,
+		Title:     p.title,
+	}
+}
+
 type Window struct {
 	ref       *WindowRef
 	logger    ShuxLogger
 	parent    *SessionRef
 	id        uint32
 	panes     map[uint32]*PaneRef
-	paneOrder []uint32
+	paneOrder OrderedIDList
 	active    uint32
 	paneID    uint32
 
@@ -202,7 +223,7 @@ func (w *Window) gatherSnapshotData() WindowSnapshot {
 	snapshot := WindowSnapshot{
 		ID:         w.id,
 		ActivePane: w.active,
-		PaneOrder:  append([]uint32(nil), w.paneOrder...),
+		PaneOrder:  w.paneOrder.Clone(),
 		Panes:      make([]PaneSnapshot, 0, len(w.paneOrder)),
 		Layout:     snapshotSplitTree(w.root),
 	}
@@ -243,7 +264,7 @@ func (w *Window) createPane(cmd CreatePane) {
 
 	ref := StartPane(paneID, cmd.Rows, cmd.Cols, cmd.Shell, cmd.CWD, w.ref, w.logger)
 	w.panes[paneID] = ref
-	w.paneOrder = append(w.paneOrder, paneID)
+	w.paneOrder.Add(paneID)
 
 	if w.active == 0 {
 		w.active = paneID
@@ -285,7 +306,7 @@ func (w *Window) splitPane(dir SplitDir) {
 	newPaneID := w.paneID
 	newRef := StartPane(newPaneID, w.rows, w.cols, shell, cwd, w.ref, w.logger)
 	w.panes[newPaneID] = newRef
-	w.paneOrder = append(w.paneOrder, newPaneID)
+	w.paneOrder.Add(newPaneID)
 	w.root, _ = splitAroundPane(w.root, w.active, dir, newPaneID)
 	w.active = newPaneID
 
@@ -830,13 +851,13 @@ func (w *Window) resizeAllPanes(rows, cols int) {
 }
 
 func (w *Window) handlePaneExited(id uint32) {
-	currentIdx := w.activePaneIndex()
+	currentIdx := w.paneOrder.IndexOf(w.active)
 	if w.mouseCapturePane == id {
 		w.mouseCapturePane = 0
 	}
 	w.dividerDrag = nil
 	delete(w.panes, id)
-	w.paneOrder = removeOrderedID(w.paneOrder, id)
+	w.paneOrder.Remove(id)
 
 	w.root, _ = removePaneNode(w.root, id)
 
@@ -897,15 +918,6 @@ func removePaneNode(node *splitNode, target uint32) (*splitNode, bool) {
 		return node, true
 	}
 	return node, false
-}
-
-func (w *Window) activePaneIndex() int {
-	for i, id := range w.paneOrder {
-		if id == w.active {
-			return i
-		}
-	}
-	return -1
 }
 
 func (w *Window) syncLayout() {
@@ -1057,28 +1069,27 @@ func dividerGlyph(borders [][]borderState, row, col int) string {
 	}
 }
 
-func (w *Window) buildWindowView() WindowView {
-	if len(w.layout) == 0 || w.rows <= 0 || w.cols <= 0 {
-		return WindowView{}
-	}
-
-	screen := make([][]PaneCell, w.rows)
-	for r := 0; r < w.rows; r++ {
-		screen[r] = make([]PaneCell, w.cols)
-		for c := 0; c < w.cols; c++ {
+func newBlankScreen(rows, cols int) [][]PaneCell {
+	screen := make([][]PaneCell, rows)
+	for r := 0; r < rows; r++ {
+		screen[r] = make([]PaneCell, cols)
+		for c := 0; c < cols; c++ {
 			screen[r][c] = blankCell()
 		}
 	}
+	return screen
+}
 
-	var (
-		activeTitle    string
-		activeCursorOn bool
-		activeCursorR  = -1
-		activeCursorC  = -1
-	)
+func renderPanesToScreen(screen [][]PaneCell, layout []paneLayout, panes map[uint32]*PaneRef, activePaneID uint32) renderedActivePane {
+	activePane := newRenderedActivePane()
+	if len(screen) == 0 {
+		return activePane
+	}
+	rows := len(screen)
+	cols := len(screen[0])
 
-	for _, pl := range w.layout {
-		paneRef, ok := w.panes[pl.paneID]
+	for _, pl := range layout {
+		paneRef, ok := panes[pl.paneID]
 		if !ok {
 			continue
 		}
@@ -1088,63 +1099,95 @@ func (w *Window) buildWindowView() WindowView {
 			continue
 		}
 
-		for r := 0; r < pl.rows && pl.row+r < w.rows && r < len(content.Cells); r++ {
+		for r := 0; r < pl.rows && pl.row+r < rows && r < len(content.Cells); r++ {
 			row := content.Cells[r]
-			for c := 0; c < pl.cols && pl.col+c < w.cols && c < len(row); c++ {
+			for c := 0; c < pl.cols && pl.col+c < cols && c < len(row); c++ {
 				screen[pl.row+r][pl.col+c] = row[c]
 			}
 		}
 
-		if pl.paneID == w.active {
-			activeTitle = content.Title
-			activeCursorOn = !content.CursorHidden
-			if content.CursorRow >= 0 && content.CursorRow < pl.rows {
-				activeCursorR = pl.row + content.CursorRow
-			}
-			if content.CursorCol >= 0 && content.CursorCol < pl.cols {
-				activeCursorC = pl.col + content.CursorCol
-			}
+		if pl.paneID != activePaneID {
+			continue
+		}
+		activePane.title = content.Title
+		activePane.cursorOn = !content.CursorHidden
+		if content.CursorRow >= 0 && content.CursorRow < pl.rows {
+			activePane.cursorR = pl.row + content.CursorRow
+		}
+		if content.CursorCol >= 0 && content.CursorCol < pl.cols {
+			activePane.cursorC = pl.col + content.CursorCol
 		}
 	}
 
-	borders := make([][]borderState, w.rows)
-	for r := 0; r < w.rows; r++ {
-		borders[r] = make([]borderState, w.cols)
-	}
+	return activePane
+}
 
+func newBorderGrid(rows, cols int) [][]borderState {
+	borders := make([][]borderState, rows)
+	for r := 0; r < rows; r++ {
+		borders[r] = make([]borderState, cols)
+	}
+	return borders
+}
+
+func collectDividerSegmentsList(root *splitNode, rows, cols int) []dividerSegment {
 	segments := make([]dividerSegment, 0)
-	collectDividerSegments(w.root, 0, 0, w.rows, w.cols, &segments)
-	for _, seg := range segments {
-		if seg.horizontal {
-			if seg.row < 0 || seg.row >= w.rows {
-				continue
-			}
-			for c := 0; c < seg.length && seg.col+c < w.cols; c++ {
-				if seg.col+c >= 0 {
-					borders[seg.row][seg.col+c].h = true
-				}
-			}
-			continue
+	collectDividerSegments(root, 0, 0, rows, cols, &segments)
+	return segments
+}
+
+func applyDividerSegment(borders [][]borderState, seg dividerSegment) {
+	if len(borders) == 0 {
+		return
+	}
+	rows := len(borders)
+	cols := len(borders[0])
+
+	if seg.horizontal {
+		if seg.row < 0 || seg.row >= rows {
+			return
 		}
-		if seg.col < 0 || seg.col >= w.cols {
-			continue
-		}
-		for r := 0; r < seg.length && seg.row+r < w.rows; r++ {
-			if seg.row+r >= 0 {
-				borders[seg.row+r][seg.col].v = true
+		for c := 0; c < seg.length && seg.col+c < cols; c++ {
+			if seg.col+c >= 0 {
+				borders[seg.row][seg.col+c].h = true
 			}
 		}
+		return
 	}
 
-	// Stitch touching split segments into divider cells so nested splits render
-	// with connected intersections (e.g. ┼) instead of broken gaps.
-	for r := 0; r < w.rows; r++ {
-		for c := 0; c < w.cols; c++ {
+	if seg.col < 0 || seg.col >= cols {
+		return
+	}
+	for r := 0; r < seg.length && seg.row+r < rows; r++ {
+		if seg.row+r >= 0 {
+			borders[seg.row+r][seg.col].v = true
+		}
+	}
+}
+
+func buildDividerBorders(root *splitNode, rows, cols int) [][]borderState {
+	borders := newBorderGrid(rows, cols)
+	for _, seg := range collectDividerSegmentsList(root, rows, cols) {
+		applyDividerSegment(borders, seg)
+	}
+	stitchDividerBorders(borders)
+	return borders
+}
+
+func stitchDividerBorders(borders [][]borderState) {
+	rows := len(borders)
+	if rows == 0 {
+		return
+	}
+	cols := len(borders[0])
+
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
 			if borders[r][c].v {
 				if c > 0 && borders[r][c-1].h {
 					borders[r][c].h = true
 				}
-				if c+1 < w.cols && borders[r][c+1].h {
+				if c+1 < cols && borders[r][c+1].h {
 					borders[r][c].h = true
 				}
 			}
@@ -1152,42 +1195,57 @@ func (w *Window) buildWindowView() WindowView {
 				if r > 0 && borders[r-1][c].v {
 					borders[r][c].v = true
 				}
-				if r+1 < w.rows && borders[r+1][c].v {
+				if r+1 < rows && borders[r+1][c].v {
 					borders[r][c].v = true
 				}
 			}
 		}
 	}
+}
 
-	if activeLayout, ok := findLayout(w.layout, w.active); ok {
-		for c := 0; c < activeLayout.cols; c++ {
-			if row := activeLayout.row - 1; row >= 0 && row < w.rows {
-				if col := activeLayout.col + c; col >= 0 && col < w.cols && borders[row][col].h {
-					borders[row][col].active = true
-				}
-			}
-			if row := activeLayout.row + activeLayout.rows; row >= 0 && row < w.rows {
-				if col := activeLayout.col + c; col >= 0 && col < w.cols && borders[row][col].h {
-					borders[row][col].active = true
-				}
-			}
-		}
-		for r := 0; r < activeLayout.rows; r++ {
-			if col := activeLayout.col - 1; col >= 0 && col < w.cols {
-				if row := activeLayout.row + r; row >= 0 && row < w.rows && borders[row][col].v {
-					borders[row][col].active = true
-				}
-			}
-			if col := activeLayout.col + activeLayout.cols; col >= 0 && col < w.cols {
-				if row := activeLayout.row + r; row >= 0 && row < w.rows && borders[row][col].v {
-					borders[row][col].active = true
-				}
-			}
-		}
+func markActiveHorizontalBorder(borders [][]borderState, row, startCol, length int) {
+	if row < 0 || row >= len(borders) {
+		return
 	}
+	for offset := 0; offset < length; offset++ {
+		col := startCol + offset
+		if col < 0 || col >= len(borders[row]) || !borders[row][col].h {
+			continue
+		}
+		borders[row][col].active = true
+	}
+}
 
-	for r := 0; r < w.rows; r++ {
-		for c := 0; c < w.cols; c++ {
+func markActiveVerticalBorder(borders [][]borderState, startRow, col, length int) {
+	if len(borders) == 0 {
+		return
+	}
+	for offset := 0; offset < length; offset++ {
+		row := startRow + offset
+		if row < 0 || row >= len(borders) {
+			continue
+		}
+		if col < 0 || col >= len(borders[row]) || !borders[row][col].v {
+			continue
+		}
+		borders[row][col].active = true
+	}
+}
+
+func markActivePaneBorders(borders [][]borderState, layout []paneLayout, activePaneID uint32) {
+	activeLayout, ok := findLayout(layout, activePaneID)
+	if !ok {
+		return
+	}
+	markActiveHorizontalBorder(borders, activeLayout.row-1, activeLayout.col, activeLayout.cols)
+	markActiveHorizontalBorder(borders, activeLayout.row+activeLayout.rows, activeLayout.col, activeLayout.cols)
+	markActiveVerticalBorder(borders, activeLayout.row, activeLayout.col-1, activeLayout.rows)
+	markActiveVerticalBorder(borders, activeLayout.row, activeLayout.col+activeLayout.cols, activeLayout.rows)
+}
+
+func drawDividerBorders(screen [][]PaneCell, borders [][]borderState) {
+	for r := range borders {
+		for c := range borders[r] {
 			state := borders[r][c]
 			if !state.h && !state.v {
 				continue
@@ -1200,19 +1258,28 @@ func (w *Window) buildWindowView() WindowView {
 			}
 		}
 	}
+}
 
-	lines := make([]string, w.rows)
-	for r := 0; r < w.rows; r++ {
-		lines[r] = renderRow(screen[r], w.cols)
+func renderScreenLines(screen [][]PaneCell, cols int) []string {
+	lines := make([]string, len(screen))
+	for r := range screen {
+		lines[r] = renderRow(screen[r], cols)
+	}
+	return lines
+}
+
+func (w *Window) buildWindowView() WindowView {
+	if len(w.layout) == 0 || w.rows <= 0 || w.cols <= 0 {
+		return WindowView{}
 	}
 
-	return WindowView{
-		Content:   joinLines(lines),
-		CursorRow: activeCursorR,
-		CursorCol: activeCursorC,
-		CursorOn:  activeCursorOn,
-		Title:     activeTitle,
-	}
+	screen := newBlankScreen(w.rows, w.cols)
+	activePane := renderPanesToScreen(screen, w.layout, w.panes, w.active)
+	borders := buildDividerBorders(w.root, w.rows, w.cols)
+	markActivePaneBorders(borders, w.layout, w.active)
+	drawDividerBorders(screen, borders)
+
+	return activePane.toWindowView(joinLines(renderScreenLines(screen, w.cols)))
 }
 
 func joinLines(lines []string) string {

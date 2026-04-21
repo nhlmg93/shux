@@ -14,7 +14,7 @@ type Session struct {
 	id          uint32
 	name        string
 	windows     map[uint32]*WindowRef
-	windowOrder []uint32
+	windowOrder OrderedIDList
 	active      uint32
 	windowID    uint32
 	subscribers map[chan any]struct{}
@@ -120,59 +120,82 @@ func (s *Session) terminate(reason error) {
 func (s *Session) restoreFromSnapshot() {
 	s.logger.Infof("restore: session=%s id=%d windows=%d activeWindow=%d", s.name, s.id, len(s.snapshot.Windows), s.snapshot.ActiveWindow)
 
-	windowsByID := make(map[uint32]WindowSnapshot, len(s.snapshot.Windows))
-	var maxWindowID uint32
-	for _, winSnap := range s.snapshot.Windows {
-		windowsByID[winSnap.ID] = winSnap
-		if winSnap.ID > maxWindowID {
-			maxWindowID = winSnap.ID
-		}
-	}
-
+	windowsByID, maxWindowID := indexWindowSnapshots(s.snapshot.Windows)
 	for _, winID := range s.snapshot.WindowOrder {
 		winSnap, ok := windowsByID[winID]
 		if !ok {
 			continue
 		}
-
-		s.logger.Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
-		windowRef := StartWindow(winSnap.ID, s.ref, s.logger)
-		s.windows[winSnap.ID] = windowRef
-		s.windowOrder = append(s.windowOrder, winSnap.ID)
-
-		panesByID := make(map[uint32]PaneSnapshot, len(winSnap.Panes))
-		for _, paneSnap := range winSnap.Panes {
-			panesByID[paneSnap.ID] = paneSnap
-		}
-		for _, paneID := range winSnap.PaneOrder {
-			paneSnap, ok := panesByID[paneID]
-			if !ok {
-				continue
-			}
-			s.logger.Infof("restore: session=%s window=%d pane=%d shell=%s cwd=%s rows=%d cols=%d", s.name, winSnap.ID, paneSnap.ID, paneSnap.Shell, paneSnap.CWD, paneSnap.Rows, paneSnap.Cols)
-			windowRef.Send(CreatePane{
-				ID:    paneSnap.ID,
-				Rows:  paneSnap.Rows,
-				Cols:  paneSnap.Cols,
-				Shell: paneSnap.Shell,
-				CWD:   paneSnap.CWD,
-			})
-		}
-		if winSnap.Layout != nil {
-			windowRef.Send(RestoreWindowLayout{Root: winSnap.Layout, ActivePane: winSnap.ActivePane})
-		} else if activeIdx := indexOfOrderedID(winSnap.PaneOrder, winSnap.ActivePane); activeIdx > 0 {
-			windowRef.Send(SwitchToPane{Index: activeIdx})
-		}
+		s.restoreWindow(winSnap)
 	}
 
 	s.windowID = maxWindowID
-	if s.snapshot.ActiveWindow != 0 {
-		s.active = s.snapshot.ActiveWindow
-	} else if len(s.windowOrder) > 0 {
-		s.active = s.windowOrder[0]
-	}
+	s.restoreActiveWindow(s.snapshot.ActiveWindow)
 
 	s.logger.Infof("restore: session=%s id=%d complete windows=%d activeWindow=%d nextWindowID=%d", s.name, s.id, len(s.windows), s.active, s.windowID)
+}
+
+func indexWindowSnapshots(windows []WindowSnapshot) (map[uint32]WindowSnapshot, uint32) {
+	windowsByID := make(map[uint32]WindowSnapshot, len(windows))
+	var maxWindowID uint32
+	for _, winSnap := range windows {
+		windowsByID[winSnap.ID] = winSnap
+		if winSnap.ID > maxWindowID {
+			maxWindowID = winSnap.ID
+		}
+	}
+	return windowsByID, maxWindowID
+}
+
+func (s *Session) restoreWindow(winSnap WindowSnapshot) {
+	s.logger.Infof("restore: session=%s window=%d panes=%d activePane=%d", s.name, winSnap.ID, len(winSnap.PaneOrder), winSnap.ActivePane)
+
+	windowRef := StartWindow(winSnap.ID, s.ref, s.logger)
+	s.windows[winSnap.ID] = windowRef
+	s.windowOrder.Add(winSnap.ID)
+	s.restoreWindowPanes(windowRef, winSnap)
+
+	if winSnap.Layout != nil {
+		windowRef.Send(RestoreWindowLayout{Root: winSnap.Layout, ActivePane: winSnap.ActivePane})
+		return
+	}
+	if activeIdx := OrderedIDList(winSnap.PaneOrder).IndexOf(winSnap.ActivePane); activeIdx > 0 {
+		windowRef.Send(SwitchToPane{Index: activeIdx})
+	}
+}
+
+func (s *Session) restoreWindowPanes(windowRef *WindowRef, winSnap WindowSnapshot) {
+	panesByID := make(map[uint32]PaneSnapshot, len(winSnap.Panes))
+	for _, paneSnap := range winSnap.Panes {
+		panesByID[paneSnap.ID] = paneSnap
+	}
+
+	for _, paneID := range winSnap.PaneOrder {
+		paneSnap, ok := panesByID[paneID]
+		if !ok {
+			continue
+		}
+		s.logger.Infof("restore: session=%s window=%d pane=%d shell=%s cwd=%s rows=%d cols=%d", s.name, winSnap.ID, paneSnap.ID, paneSnap.Shell, paneSnap.CWD, paneSnap.Rows, paneSnap.Cols)
+		windowRef.Send(CreatePane{
+			ID:    paneSnap.ID,
+			Rows:  paneSnap.Rows,
+			Cols:  paneSnap.Cols,
+			Shell: paneSnap.Shell,
+			CWD:   paneSnap.CWD,
+		})
+	}
+}
+
+func (s *Session) restoreActiveWindow(activeWindow uint32) {
+	if activeWindow != 0 {
+		if _, ok := s.windows[activeWindow]; ok {
+			s.active = activeWindow
+			return
+		}
+	}
+	if firstWindow, ok := s.windowOrder.First(); ok {
+		s.active = firstWindow
+	}
 }
 
 func (s *Session) receive(msg any) {
@@ -248,7 +271,7 @@ func (s *Session) handleAsk(envelope askEnvelope) {
 			ID:           s.id,
 			Shell:        s.shell,
 			ActiveWindow: s.active,
-			WindowOrder:  append([]uint32(nil), s.windowOrder...),
+			WindowOrder:  s.windowOrder.Clone(),
 		}
 		envelope.reply <- data
 	case DetachSession:
@@ -284,7 +307,7 @@ func (s *Session) buildSnapshot() *SessionSnapshot {
 		ID:           s.id,
 		Shell:        s.shell,
 		ActiveWindow: s.active,
-		WindowOrder:  append([]uint32(nil), s.windowOrder...),
+		WindowOrder:  s.windowOrder.Clone(),
 		Windows:      make([]WindowSnapshot, 0, len(s.windowOrder)),
 	}
 
@@ -325,7 +348,7 @@ func (s *Session) createWindow(rows, cols int) {
 	s.logger.Infof("session: id=%d name=%s create-window window=%d rows=%d cols=%d shell=%s", s.id, s.name, s.windowID, rows, cols, s.shell)
 	ref := StartWindow(s.windowID, s.ref, s.logger)
 	s.windows[s.windowID] = ref
-	s.windowOrder = append(s.windowOrder, s.windowID)
+	s.windowOrder.Add(s.windowID)
 	ref.Send(CreatePane{Rows: rows, Cols: cols, Shell: s.shell})
 	if s.active == 0 {
 		s.active = s.windowID
@@ -337,7 +360,7 @@ func (s *Session) switchWindow(delta int) {
 		return
 	}
 
-	currentIdx := s.activeWindowIndex()
+	currentIdx := s.windowOrder.IndexOf(s.active)
 	if currentIdx < 0 {
 		currentIdx = 0
 	}
@@ -356,19 +379,10 @@ func (s *Session) switchWindow(delta int) {
 	s.forwardUpdate(PaneContentUpdated{})
 }
 
-func (s *Session) activeWindowIndex() int {
-	for i, id := range s.windowOrder {
-		if id == s.active {
-			return i
-		}
-	}
-	return -1
-}
-
 func (s *Session) handleWindowEmpty(id uint32) {
-	currentIdx := s.activeWindowIndex()
+	currentIdx := s.windowOrder.IndexOf(s.active)
 	delete(s.windows, id)
-	s.windowOrder = removeOrderedID(s.windowOrder, id)
+	s.windowOrder.Remove(id)
 
 	if len(s.windowOrder) == 0 {
 		s.active = 0
@@ -421,22 +435,4 @@ func (s *Session) notifySubscribers(msg any) {
 		default:
 		}
 	}
-}
-
-func removeOrderedID(ids []uint32, target uint32) []uint32 {
-	for i, id := range ids {
-		if id == target {
-			return append(ids[:i], ids[i+1:]...)
-		}
-	}
-	return ids
-}
-
-func indexOfOrderedID(ids []uint32, target uint32) int {
-	for i, id := range ids {
-		if id == target {
-			return i
-		}
-	}
-	return -1
 }

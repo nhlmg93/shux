@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/mitchellh/go-libghostty"
@@ -43,30 +44,119 @@ type PaneContent struct {
 	ScrollbackRows uint
 }
 
-type Pane struct {
-	ref           *PaneRef
-	logger        ShuxLogger
-	parent        *WindowRef
-	id            uint32
-	term          *libghostty.Terminal
-	renderState   *libghostty.RenderState
-	rowIterator   *libghostty.RenderStateRowIterator
-	rowCells      *libghostty.RenderStateRowCells
-	keyEncoder    *libghostty.KeyEncoder
-	mouseEncoder  *libghostty.MouseEncoder
-	pty           Pty
-	mouseButtons  map[MouseButton]bool
-	rows          int
-	cols          int
-	shell         string
-	cwd           string
-	windowTitle   string
-	bellCount     uint64
+type paneContentCache struct {
 	dirty         bool
-	cachedContent *PaneContent
+	cached        *PaneContent
 	updateTimer   *time.Timer
 	updatePending bool
-	stopped       bool
+}
+
+func (c *paneContentCache) Stop() {
+	if c.updateTimer != nil {
+		c.updateTimer.Stop()
+	}
+}
+
+func (c *paneContentCache) Invalidate() {
+	c.dirty = true
+	c.cached = nil
+}
+
+func (c *paneContentCache) ClearPending() {
+	c.updatePending = false
+}
+
+func (c *paneContentCache) Current() (*PaneContent, bool) {
+	if c.dirty || c.cached == nil {
+		return nil, false
+	}
+	return c.cached, true
+}
+
+func (c *paneContentCache) Store(content *PaneContent) *PaneContent {
+	c.cached = content
+	c.dirty = false
+	return content
+}
+
+func (c *paneContentCache) Schedule(ref *PaneRef, delay time.Duration) {
+	if ref == nil || c.updatePending {
+		return
+	}
+	c.updatePending = true
+	c.Stop()
+	c.updateTimer = time.AfterFunc(delay, func() {
+		if ref != nil {
+			ref.Send(paneFlushUpdate{})
+		}
+	})
+}
+
+type paneRuntime struct {
+	term         *libghostty.Terminal
+	renderState  *libghostty.RenderState
+	rowIterator  *libghostty.RenderStateRowIterator
+	rowCells     *libghostty.RenderStateRowCells
+	keyEncoder   *libghostty.KeyEncoder
+	mouseEncoder *libghostty.MouseEncoder
+	pty          Pty
+}
+
+func (r *paneRuntime) Close() {
+	if r.pty != nil {
+		_ = r.pty.Close()
+	}
+	if r.mouseEncoder != nil {
+		r.mouseEncoder.Close()
+	}
+	if r.keyEncoder != nil {
+		r.keyEncoder.Close()
+	}
+	if r.rowCells != nil {
+		r.rowCells.Close()
+	}
+	if r.rowIterator != nil {
+		r.rowIterator.Close()
+	}
+	if r.renderState != nil {
+		r.renderState.Close()
+	}
+	if r.term != nil {
+		r.term.Close()
+	}
+}
+
+func (r *paneRuntime) install(p *Pane) {
+	p.term = r.term
+	p.renderState = r.renderState
+	p.rowIterator = r.rowIterator
+	p.rowCells = r.rowCells
+	p.keyEncoder = r.keyEncoder
+	p.mouseEncoder = r.mouseEncoder
+	p.pty = r.pty
+}
+
+type Pane struct {
+	ref          *PaneRef
+	logger       ShuxLogger
+	parent       *WindowRef
+	id           uint32
+	term         *libghostty.Terminal
+	renderState  *libghostty.RenderState
+	rowIterator  *libghostty.RenderStateRowIterator
+	rowCells     *libghostty.RenderStateRowCells
+	keyEncoder   *libghostty.KeyEncoder
+	mouseEncoder *libghostty.MouseEncoder
+	pty          Pty
+	mouseButtons map[MouseButton]bool
+	rows         int
+	cols         int
+	shell        string
+	cwd          string
+	windowTitle  string
+	bellCount    uint64
+	contentCache paneContentCache
+	stopped      bool
 }
 
 type (
@@ -133,7 +223,65 @@ func (p *Pane) run() {
 func (p *Pane) init() error {
 	p.logger.Infof("pane: id=%d init shell=%s cwd=%s rows=%d cols=%d", p.id, p.shell, p.cwd, p.rows, p.cols)
 
-	ghosttyTerm, err := libghostty.NewTerminal(
+	runtime, cmd, err := p.newRuntime()
+	if err != nil {
+		return err
+	}
+
+	p.logger.Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, runtime.pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
+	runtime.install(p)
+	p.contentCache.Invalidate()
+
+	go p.readLoop()
+	p.contentCache.Schedule(p.ref, 0)
+	return nil
+}
+
+func (p *Pane) newRuntime() (_ *paneRuntime, cmd *exec.Cmd, err error) {
+	runtime := &paneRuntime{}
+	defer func() {
+		if err != nil {
+			runtime.Close()
+		}
+	}()
+
+	runtime.term, err = p.newTerminal()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.renderState, err = libghostty.NewRenderState()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.rowIterator, err = libghostty.NewRenderStateRowIterator()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.rowCells, err = libghostty.NewRenderStateRowCells()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.keyEncoder, err = libghostty.NewKeyEncoder()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.mouseEncoder, err = libghostty.NewMouseEncoder()
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.mouseEncoder.SetOptTrackLastCell(true)
+
+	p.logger.Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
+	cmd = p.newCommand()
+	runtime.pty, err = StartWithSize(cmd, p.rows, p.cols)
+	if err != nil {
+		return nil, nil, err
+	}
+	return runtime, cmd, nil
+}
+
+func (p *Pane) newTerminal() (*libghostty.Terminal, error) {
+	return libghostty.NewTerminal(
 		libghostty.WithSize(uint16(p.cols), uint16(p.rows)),
 		libghostty.WithMaxScrollback(10000),
 		libghostty.WithTitleChanged(func(t *libghostty.Terminal) {
@@ -152,93 +300,24 @@ func (p *Pane) init() error {
 			}
 		}),
 	)
-	if err != nil {
-		return err
-	}
+}
 
-	renderState, err := libghostty.NewRenderState()
-	if err != nil {
-		ghosttyTerm.Close()
-		return err
-	}
-
-	rowIterator, err := libghostty.NewRenderStateRowIterator()
-	if err != nil {
-		renderState.Close()
-		ghosttyTerm.Close()
-		return err
-	}
-
-	rowCells, err := libghostty.NewRenderStateRowCells()
-	if err != nil {
-		rowIterator.Close()
-		renderState.Close()
-		ghosttyTerm.Close()
-		return err
-	}
-
-	keyEncoder, err := libghostty.NewKeyEncoder()
-	if err != nil {
-		rowCells.Close()
-		rowIterator.Close()
-		renderState.Close()
-		ghosttyTerm.Close()
-		return err
-	}
-
-	mouseEncoder, err := libghostty.NewMouseEncoder()
-	if err != nil {
-		keyEncoder.Close()
-		rowCells.Close()
-		rowIterator.Close()
-		renderState.Close()
-		ghosttyTerm.Close()
-		return err
-	}
-	mouseEncoder.SetOptTrackLastCell(true)
-
-	p.logger.Infof("pane: id=%d spawn shell=%s cwd=%s", p.id, p.shell, p.cwd)
+func (p *Pane) newCommand() *exec.Cmd {
 	cmd := exec.Command(p.shell)
-	env := os.Environ()
-	termSet := false
-	for _, e := range env {
-		if len(e) > 5 && e[:5] == "TERM=" {
-			termSet = true
-			break
-		}
-	}
-	if !termSet {
-		env = append(env, "TERM=xterm-256color")
-	}
-	cmd.Env = env
+	cmd.Env = ensureTermEnv(os.Environ())
 	if p.cwd != "" {
 		cmd.Dir = ResolveCWD(p.cwd)
 	}
+	return cmd
+}
 
-	pty, err := StartWithSize(cmd, p.rows, p.cols)
-	if err != nil {
-		mouseEncoder.Close()
-		keyEncoder.Close()
-		rowCells.Close()
-		rowIterator.Close()
-		renderState.Close()
-		ghosttyTerm.Close()
-		return err
+func ensureTermEnv(env []string) []string {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TERM=") {
+			return env
+		}
 	}
-
-	p.logger.Infof("pane: id=%d started pid=%d shell=%s cwd=%s rows=%d cols=%d", p.id, pty.PID(), p.shell, cmd.Dir, p.rows, p.cols)
-	p.term = ghosttyTerm
-	p.renderState = renderState
-	p.rowIterator = rowIterator
-	p.rowCells = rowCells
-	p.keyEncoder = keyEncoder
-	p.mouseEncoder = mouseEncoder
-	p.pty = pty
-	p.dirty = true
-
-	go p.readLoop()
-	p.scheduleContentUpdate(0)
-	return nil
+	return append(env, "TERM=xterm-256color")
 }
 
 func (p *Pane) terminate(reason error) {
@@ -247,30 +326,16 @@ func (p *Pane) terminate(reason error) {
 	} else {
 		p.logger.Infof("pane: terminate id=%d pid=%d", p.id, p.pid())
 	}
-	if p.updateTimer != nil {
-		p.updateTimer.Stop()
-	}
-	if p.pty != nil {
-		_ = p.pty.Close()
-	}
-	if p.keyEncoder != nil {
-		p.keyEncoder.Close()
-	}
-	if p.mouseEncoder != nil {
-		p.mouseEncoder.Close()
-	}
-	if p.rowCells != nil {
-		p.rowCells.Close()
-	}
-	if p.rowIterator != nil {
-		p.rowIterator.Close()
-	}
-	if p.renderState != nil {
-		p.renderState.Close()
-	}
-	if p.term != nil {
-		p.term.Close()
-	}
+	p.contentCache.Stop()
+	(&paneRuntime{
+		term:         p.term,
+		renderState:  p.renderState,
+		rowIterator:  p.rowIterator,
+		rowCells:     p.rowCells,
+		keyEncoder:   p.keyEncoder,
+		mouseEncoder: p.mouseEncoder,
+		pty:          p.pty,
+	}).Close()
 }
 
 func (p *Pane) readLoop() {
@@ -313,7 +378,7 @@ func (p *Pane) receive(msg any) {
 		p.term.VTWrite(m.Data)
 		p.markDirty()
 	case paneFlushUpdate:
-		p.updatePending = false
+		p.contentCache.ClearPending()
 		if p.parent != nil {
 			p.parent.Send(PaneContentUpdated{ID: p.id})
 		}
@@ -363,14 +428,11 @@ func (p *Pane) handleAsk(envelope askEnvelope) {
 			CursorHidden: !p.IsCursorVisible(),
 		}
 	case GetPaneContent:
-		if !p.dirty && p.cachedContent != nil {
-			envelope.reply <- p.cachedContent
+		if content, ok := p.contentCache.Current(); ok {
+			envelope.reply <- content
 			return
 		}
-		content := p.buildContent()
-		p.cachedContent = content
-		p.dirty = false
-		envelope.reply <- content
+		envelope.reply <- p.contentCache.Store(p.buildContent())
 	case GetPaneShell:
 		envelope.reply <- p.shell
 	case GetPaneSnapshotData:
@@ -395,24 +457,8 @@ func (p *Pane) writeToPTY(data []byte) {
 }
 
 func (p *Pane) markDirty() {
-	p.dirty = true
-	p.cachedContent = nil
-	p.scheduleContentUpdate(16 * time.Millisecond)
-}
-
-func (p *Pane) scheduleContentUpdate(delay time.Duration) {
-	if p.ref == nil || p.updatePending {
-		return
-	}
-	p.updatePending = true
-	if p.updateTimer != nil {
-		p.updateTimer.Stop()
-	}
-	p.updateTimer = time.AfterFunc(delay, func() {
-		if p.ref != nil {
-			p.ref.Send(paneFlushUpdate{})
-		}
-	})
+	p.contentCache.Invalidate()
+	p.contentCache.Schedule(p.ref, 16*time.Millisecond)
 }
 
 func (p *Pane) Resize(rows, cols int) {
