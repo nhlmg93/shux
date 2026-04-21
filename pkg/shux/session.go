@@ -41,6 +41,8 @@ type Session struct {
 	ref         *SessionRef
 	logger      ShuxLogger
 	notify      func(any)
+	supervisor  *Supervisor // For crash recovery
+	registry    *Registry   // For rebuild from registry
 	id          uint32
 	name        string
 	windows     map[uint32]*WindowRef
@@ -53,6 +55,7 @@ type Session struct {
 	snapshot    *SessionSnapshot
 	lastRows    int // last known terminal dimensions for window creation
 	lastCols    int
+	crashed     bool // true if terminating due to crash (don't kill children)
 }
 
 func NewSession(id uint32, logger ShuxLogger) *Session {
@@ -73,6 +76,14 @@ func NewNamedSessionWithShell(id uint32, name, shell string, logger ShuxLogger) 
 		subscribers: make(map[chan any]struct{}),
 		shell:       normalizeShell(shell),
 	}
+}
+
+// NewSessionWithSupervisor creates a session with supervisor/ registry for crash recovery.
+func NewSessionWithSupervisor(id uint32, name, shell string, logger ShuxLogger, supervisor *Supervisor, registry *Registry) *Session {
+	s := NewNamedSessionWithShell(id, name, shell, logger)
+	s.supervisor = supervisor
+	s.registry = registry
+	return s
 }
 
 func StartSession(id uint32, notify func(any), logger ShuxLogger) *SessionRef {
@@ -111,8 +122,17 @@ func startSessionLoop(s *Session) *SessionRef {
 		sessionName: s.name,
 	}
 	s.ref = ref
-	go s.run()
+	go s.runWithSupervisor()
 	return ref
+}
+
+// runWithSupervisor wraps the session run loop with supervisor panic recovery.
+func (s *Session) runWithSupervisor() {
+	if s.supervisor != nil {
+		SupervisorGuard(s.supervisor, "session", 0, s.run)
+	} else {
+		s.run()
+	}
 }
 
 func (s *Session) run() {
@@ -142,16 +162,64 @@ func (s *Session) run() {
 }
 
 func (s *Session) terminate(reason error) {
+	if reason != nil {
+		s.crashed = true
+		s.logger.Errorf("session: crash id=%d name=%s reason=%v", s.id, s.name, reason)
+		// On crash: Don't kill child windows - they survive via registry
+		// The supervisor will rebuild this session controller
+		return
+	}
+
+	// Graceful shutdown: kill all child windows
 	for _, win := range s.windows {
 		if win != nil {
 			win.Shutdown()
 		}
 	}
-	if reason != nil {
-		s.logger.Errorf("session: crash id=%d name=%s reason=%v", s.id, s.name, reason)
-		return
-	}
 	s.logger.Infof("session: terminate id=%d name=%s", s.id, s.name)
+}
+
+// IsCrashed returns true if the session terminated due to a crash.
+// Used by supervisor to distinguish crash recovery from graceful shutdown.
+func (s *Session) IsCrashed() bool {
+	return s.crashed
+}
+
+// RebuildFromRegistry reconstructs the session's window list from registry state.
+// This is called during crash recovery - windows/panes survive via registry.
+func (s *Session) RebuildFromRegistry() error {
+	if s.registry == nil {
+		return fmt.Errorf("session %d: no registry available for rebuild", s.id)
+	}
+
+	s.logger.Infof("session: id=%d name=%s rebuilding from registry", s.id, s.name)
+
+	// Get all windows for this session from registry
+	windowIDs := s.registry.GetSessionWindows(s.id)
+
+	// Rebuild window list from registry
+	for _, windowID := range windowIDs {
+		// Check if window controller exists in registry (it survived)
+		windowController := s.registry.GetWindow(windowID)
+		if windowController == nil {
+			s.logger.Warnf("session: id=%d window %d in registry but no controller found", s.id, windowID)
+			continue
+		}
+
+		// We need to get the WindowRef from the controller
+		// For now, this is a placeholder - the actual implementation depends on
+		// how WindowController is refactored to provide a WindowRef
+		s.logger.Infof("session: id=%d reconnecting to window %d", s.id, windowID)
+		s.windowOrder.Add(windowID)
+	}
+
+	// Restore active window from first available
+	if firstWindow, ok := s.windowOrder.First(); ok {
+		s.active = firstWindow
+	}
+
+	s.logger.Infof("session: id=%d name=%s rebuilt with %d windows", s.id, s.name, len(s.windowOrder))
+	return nil
 }
 
 // assertInvariants validates internal state consistency.

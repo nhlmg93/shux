@@ -13,10 +13,11 @@ import (
 // It does NOT own the PTY/process - that belongs to PaneRuntime.
 // If the controller panics, it can be restarted without killing the shell.
 type PaneController struct {
-	ref     *PaneRef
-	runtime *PaneRuntime // The stable runtime (survives controller restarts)
-	parent  *WindowRef
-	id      uint32
+	ref        *PaneRef
+	runtime    *PaneRuntime // The stable runtime (survives controller restarts)
+	supervisor *Supervisor  // For panic recovery
+	parent     *WindowRef
+	id         uint32
 
 	// Controller-local state
 	mouseButtons map[MouseButton]bool
@@ -102,6 +103,13 @@ func NewPaneController(id uint32, runtime *PaneRuntime, parent *WindowRef, logge
 	}
 }
 
+// NewPaneControllerWithSupervisor creates a controller with supervisor for crash recovery.
+func NewPaneControllerWithSupervisor(id uint32, runtime *PaneRuntime, parent *WindowRef, logger ShuxLogger, supervisor *Supervisor) *PaneController {
+	p := NewPaneController(id, runtime, parent, logger)
+	p.supervisor = supervisor
+	return p
+}
+
 // StartPaneController starts a pane controller loop around an existing runtime.
 // This is used when creating new panes or restarting controllers.
 func StartPaneController(id uint32, runtime *PaneRuntime, parent *WindowRef, logger ShuxLogger) *PaneRef {
@@ -109,6 +117,15 @@ func StartPaneController(id uint32, runtime *PaneRuntime, parent *WindowRef, log
 	ref := &PaneRef{loopRef: newLoopRef(256)}
 	p.ref = ref
 	go p.run()
+	return ref
+}
+
+// StartPaneControllerWithSupervisor starts a pane controller with supervisor support.
+func StartPaneControllerWithSupervisor(id uint32, runtime *PaneRuntime, parent *WindowRef, logger ShuxLogger, supervisor *Supervisor) *PaneRef {
+	p := NewPaneControllerWithSupervisor(id, runtime, parent, logger, supervisor)
+	ref := &PaneRef{loopRef: newLoopRef(256)}
+	p.ref = ref
+	go p.runWithSupervisor()
 	return ref
 }
 
@@ -137,6 +154,15 @@ func (p *PaneController) run() {
 		case msg := <-p.ref.inbox:
 			p.receive(msg)
 		}
+	}
+}
+
+// runWithSupervisor wraps the controller run loop with supervisor panic recovery.
+func (p *PaneController) runWithSupervisor() {
+	if p.supervisor != nil {
+		SupervisorGuard(p.supervisor, "pane", p.id, p.run)
+	} else {
+		p.run()
 	}
 }
 
