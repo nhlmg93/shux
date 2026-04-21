@@ -322,9 +322,9 @@ func TestPersistenceDetachFailureLeavesSessionAlive(t *testing.T) {
 		t.Fatalf("CreateTemp: %v", err)
 	}
 	_ = homeFile.Close()
-	defer os.Remove(homeFile.Name())
+	defer func() { _ = os.Remove(homeFile.Name()) }()
 	oldHome := os.Getenv("HOME")
-	defer os.Setenv("HOME", oldHome)
+	defer func() { _ = os.Setenv("HOME", oldHome) }()
 	if err := os.Setenv("HOME", homeFile.Name()); err != nil {
 		t.Fatalf("set HOME: %v", err)
 	}

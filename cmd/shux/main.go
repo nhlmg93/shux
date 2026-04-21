@@ -221,37 +221,31 @@ func runOwner(opts OwnerOptions) error {
 	shux.Infof("owner: session=%s ready socket=%s", sessionName, socketPath)
 
 	// Main owner loop: handle session updates and forward to clients
-	for {
-		select {
-		case msg := <-updates:
-			switch m := msg.(type) {
-			case shux.SessionEmpty:
-				shux.Infof("owner: session=%s empty, shutting down", sessionName)
-				// Clear live status
-				shux.MarkSnapshotDead(snapshot)
-				_ = shux.SaveSnapshot(snapshotPath, snapshot, logger)
-				// Notify clients and cleanup
-				ipcServer.BroadcastUpdate(shux.IPCSessionEmpty{ID: m.ID})
-				ipcServer.Stop()
-				sessionRef.Shutdown()
-				return nil
-			case shux.PaneContentUpdated:
-				// Forward content update to all clients
-				ipcServer.BroadcastUpdate(shux.IPCPaneContentUpdated{ID: m.ID})
-			}
+	for msg := range updates {
+		switch m := msg.(type) {
+		case shux.SessionEmpty:
+			shux.Infof("owner: session=%s empty, shutting down", sessionName)
+			// Clear live status
+			shux.MarkSnapshotDead(snapshot)
+			_ = shux.SaveSnapshot(snapshotPath, snapshot, logger)
+			// Notify clients and cleanup
+			ipcServer.BroadcastUpdate(shux.IPCSessionEmpty(m))
+			ipcServer.Stop()
+			sessionRef.Shutdown()
+			return nil
+		case shux.PaneContentUpdated:
+			// Forward content update to all clients
+			ipcServer.BroadcastUpdate(shux.IPCPaneContentUpdated(m))
 		}
 	}
+	return nil
 }
 
 // handleOwnerIPC handles IPC messages from clients.
 func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcServer *shux.IPCServer, logger shux.ShuxLogger) {
 	switch m := msg.(type) {
 	case shux.IPCActionMsg:
-		result := sessionRef.Ask(shux.ActionMsg{
-			Action: m.Action,
-			Args:   m.Args,
-			Amount: m.Amount,
-		})
+		result := sessionRef.Ask(shux.ActionMsg(m))
 		if r, ok := <-result; ok && r != nil {
 			if ar, ok := r.(shux.ActionResult); ok {
 				var errStr string
@@ -265,49 +259,30 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 		reply(shux.IPCActionResult{})
 
 	case shux.IPCKeyInput:
-		sessionRef.Send(shux.KeyInput{
-			Code:        m.Code,
-			Text:        m.Text,
-			ShiftedCode: m.ShiftedCode,
-			BaseCode:    m.BaseCode,
-			Mods:        m.Mods,
-			IsRepeat:    m.IsRepeat,
-		})
+		sessionRef.Send(shux.KeyInput(m))
 		return
 
 	case shux.IPCMouseInput:
-		sessionRef.Send(shux.MouseInput{
-			Row:    m.Row,
-			Col:    m.Col,
-			Button: m.Button,
-			Mods:   m.Mods,
-			Action: m.Action,
-		})
+		sessionRef.Send(shux.MouseInput(m))
 		return
 
 	case shux.IPCWriteToPane:
-		sessionRef.Send(shux.WriteToPane{Data: m.Data})
+		sessionRef.Send(shux.WriteToPane(m))
 		return
 
 	case shux.IPCResizeMsg:
-		sessionRef.Send(shux.ResizeMsg{Rows: m.Rows, Cols: m.Cols})
+		sessionRef.Send(shux.ResizeMsg(m))
 		return
 
 	case shux.IPCCreateWindow:
-		sessionRef.Send(shux.CreateWindow{Rows: m.Rows, Cols: m.Cols})
+		sessionRef.Send(shux.CreateWindow(m))
 		return
 
 	case shux.IPCGetWindowView:
 		result := sessionRef.Ask(shux.GetWindowView{})
 		if r, ok := <-result; ok && r != nil {
 			if view, ok := r.(shux.WindowView); ok {
-				reply(shux.IPCWindowView{
-					Content:   view.Content,
-					CursorRow: view.CursorRow,
-					CursorCol: view.CursorCol,
-					CursorOn:  view.CursorOn,
-					Title:     view.Title,
-				})
+				reply(shux.IPCWindowView(view))
 				return
 			}
 		}
@@ -333,7 +308,7 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 		reply(shux.SessionSnapshot{})
 
 	case shux.IPCExecuteCommandMsg:
-		result := sessionRef.Ask(shux.ExecuteCommandMsg{Command: m.Command})
+		result := sessionRef.Ask(shux.ExecuteCommandMsg(m))
 		if r, ok := <-result; ok && r != nil {
 			if cr, ok := r.(shux.CommandResult); ok {
 				var errStr string
@@ -445,65 +420,6 @@ func runSessionRemote(sessionName string, remoteRef *shux.RemoteSessionRef, keym
 	updates := make(chan any, 32)
 	remoteRef.Send(shux.SubscribeUpdates{Subscriber: updates})
 	defer remoteRef.Send(shux.UnsubscribeUpdates{Subscriber: updates})
-
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case msg := <-updates:
-				switch msg.(type) {
-				case shux.PaneContentUpdated, shux.SessionEmpty:
-					p.Send(shux.UpdateMsg{})
-				}
-			}
-		}
-	}()
-	go func() {
-		delays := []time.Duration{0, 50 * time.Millisecond, 150 * time.Millisecond, 400 * time.Millisecond}
-		for _, delay := range delays {
-			if delay > 0 {
-				time.Sleep(delay)
-			}
-			p.Send(shux.UpdateMsg{})
-		}
-	}()
-
-	_, err := p.Run()
-	if err != nil {
-		shux.Warnf("ui: session=%s program exited with err=%v", sessionName, err)
-	} else {
-		shux.Infof("ui: session=%s program exited cleanly", sessionName)
-	}
-	return err
-}
-
-func runSession(sessionName string, sessionRef *shux.SessionRef, keymap shux.Keymap, mouseEnabled bool, startupWarnings []string) error {
-	shux.Infof("ui: session=%s starting program", sessionName)
-	model := shux.NewModelWithStartupWarnings(sessionRef, keymap, mouseEnabled, startupWarnings)
-	opts := []tea.ProgramOption{}
-	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" {
-		opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
-	}
-	if width, height, ok := detectTerminalSize(); ok {
-		shux.Infof("ui: bootstrap terminal size %dx%d", width, height)
-		model.SetInitialSize(width, height)
-		opts = append(opts, tea.WithWindowSize(width, height))
-		if existing := <-sessionRef.Ask(shux.GetActiveWindow{}); existing == nil {
-			shux.Infof("ui: bootstrap creating initial window %dx%d", height, width)
-			sessionRef.Send(shux.CreateWindow{Rows: height, Cols: width})
-		} else {
-			shux.Infof("ui: bootstrap resizing existing session to %dx%d", height, width)
-			sessionRef.Send(shux.ResizeMsg{Rows: height, Cols: width})
-		}
-	}
-	p := tea.NewProgram(model, opts...)
-
-	updates := make(chan any, 32)
-	sessionRef.Send(shux.SubscribeUpdates{Subscriber: updates})
-	defer sessionRef.Send(shux.UnsubscribeUpdates{Subscriber: updates})
 
 	done := make(chan struct{})
 	defer close(done)

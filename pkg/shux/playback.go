@@ -209,17 +209,17 @@ func (pm *PlaybackManager) writeSnapshot(path string, snapshot *PaneVisualSnapsh
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Use gob encoding for now (can be optimized later)
 	encoder := gob.NewEncoder(file)
 	if err := encoder.Encode(snapshot); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
 	if err := file.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 

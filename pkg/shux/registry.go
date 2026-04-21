@@ -232,7 +232,5 @@ type WindowController struct {
 // WARNING: This is a Phase 1 placeholder. SessionController functionality
 // is incomplete and will be fully implemented in Phase 2.
 type SessionController struct {
-	id   uint32
-	name string
 	// TODO(Phase 2): Add session controller fields when implementing
 }

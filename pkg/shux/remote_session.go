@@ -194,7 +194,7 @@ func (r *RemoteSessionRef) Ask(msg any) chan any {
 			}
 			reply <- ActionResult{Quit: v.Quit, Err: askErr}
 		case IPCCommandResult:
-			reply <- CommandResult{Success: v.Success, Error: v.Error, Quit: v.Quit}
+			reply <- CommandResult(v)
 		case IPCSessionDetached:
 			reply <- nil
 		case bool:

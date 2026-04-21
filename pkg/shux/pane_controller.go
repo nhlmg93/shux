@@ -86,7 +86,6 @@ type PaneRef struct {
 
 // Internal message types for the pane controller.
 type (
-	panePTYData       struct{ Data []byte }
 	paneFlushUpdate   struct{}
 	paneProcessExited struct{ Err error }
 )
@@ -223,6 +222,7 @@ func (p *PaneController) receive(msg any) {
 		}
 	case paneProcessExited:
 		if p.stopped {
+			p.ref.Stop()
 			return
 		}
 		p.logger.Infof("pane_controller: id=%d process-exited", p.id)
@@ -240,7 +240,9 @@ func (p *PaneController) receive(msg any) {
 	case ResizeTerm:
 		oldRows, oldCols := p.runtime.GetSize()
 		p.logger.Infof("pane_controller: id=%d resize from=%dx%d to=%dx%d", p.id, oldRows, oldCols, m.Rows, m.Cols)
-		p.runtime.Resize(m.Rows, m.Cols)
+		if err := p.runtime.Resize(m.Rows, m.Cols); err != nil {
+			p.logger.Warnf("pane_controller: id=%d resize failed: %v", p.id, err)
+		}
 		p.markDirty()
 	case KillPane:
 		if p.stopped {
@@ -248,12 +250,15 @@ func (p *PaneController) receive(msg any) {
 		}
 		p.logger.Infof("pane_controller: id=%d kill requested", p.id)
 		p.stopped = true
-		// Explicit kill: destroy the runtime
-		p.runtime.Kill()
 		if p.parent != nil {
 			p.parent.Send(PaneExited{ID: p.id})
 		}
-		p.ref.Stop()
+		go func() {
+			if err := p.runtime.Kill(); err != nil {
+				p.logger.Warnf("pane_controller: id=%d kill failed: %v", p.id, err)
+			}
+			p.ref.Stop()
+		}()
 	case askEnvelope:
 		p.handleAsk(m)
 	}

@@ -145,7 +145,7 @@ func (s *IPCServer) Start(handler func(msg any, reply func(any))) {
 // Stop shuts down the server and closes all connections.
 func (s *IPCServer) Stop() {
 	close(s.stop)
-	s.listener.Close()
+	_ = s.listener.Close()
 
 	s.mu.Lock()
 	for client := range s.clients {
@@ -266,7 +266,6 @@ func (s *IPCServer) removeClient(c *IPCConn) {
 // IPCClient connects to a session owner's IPC server.
 type IPCClient struct {
 	conn    *IPCConn
-	mu      sync.RWMutex
 	handler func(any)
 	stop    chan struct{}
 	wg      sync.WaitGroup
@@ -316,7 +315,7 @@ func (c *IPCClient) Start(handler func(any)) {
 // Stop disconnects from the server.
 func (c *IPCClient) Stop() {
 	close(c.stop)
-	c.conn.Close()
+	_ = c.conn.Close()
 	c.wg.Wait()
 }
 
