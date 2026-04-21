@@ -43,6 +43,12 @@ type (
 		Cols int
 	}
 
+	// IPCCreateWindow requests creation of a new window.
+	IPCCreateWindow struct {
+		Rows int
+		Cols int
+	}
+
 	// IPCSubscribeUpdates requests subscription to window updates.
 	IPCSubscribeUpdates struct{}
 
@@ -51,6 +57,9 @@ type (
 
 	// IPCGetWindowView requests current window view.
 	IPCGetWindowView struct{}
+
+	// IPCGetActiveWindow reports whether an active window exists.
+	IPCGetActiveWindow struct{}
 
 	// IPCExecuteCommandMsg executes a command.
 	IPCExecuteCommandMsg struct {

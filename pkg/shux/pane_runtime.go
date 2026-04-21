@@ -45,6 +45,7 @@ type PaneRuntime struct {
 	// Callbacks for events
 	onTitleChanged func(title string)
 	onBell         func()
+	onOutput       func()
 	onProcessExit  func(error)
 
 	logger ShuxLogger
@@ -60,6 +61,7 @@ type PaneRuntimeConfig struct {
 	Logger         ShuxLogger
 	OnTitleChanged func(title string)
 	OnBell         func()
+	OnOutput       func()
 	OnProcessExit  func(err error)
 }
 
@@ -81,6 +83,7 @@ func NewPaneRuntime(cfg PaneRuntimeConfig) (*PaneRuntime, error) {
 		logger:         cfg.Logger,
 		onTitleChanged: cfg.OnTitleChanged,
 		onBell:         cfg.OnBell,
+		onOutput:       cfg.OnOutput,
 		onProcessExit:  cfg.OnProcessExit,
 		stopCh:         make(chan struct{}),
 		readDone:       make(chan struct{}),
@@ -302,9 +305,13 @@ func (pr *PaneRuntime) readLoop() {
 			if n > 0 {
 				pr.mu.RLock()
 				term := pr.term
+				onOutput := pr.onOutput
 				pr.mu.RUnlock()
 				if term != nil {
 					term.VTWrite(buf[:n])
+				}
+				if onOutput != nil {
+					onOutput()
 				}
 			}
 			if err != nil {

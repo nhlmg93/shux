@@ -9,7 +9,10 @@ import (
 	"shux/pkg/shux"
 )
 
-const defaultSessionName = "default"
+const (
+	defaultSessionName  = "default"
+	defaultMouseEnabled = false
+)
 
 var userConfigDir = os.UserConfigDir
 
@@ -23,10 +26,11 @@ type Config struct {
 }
 
 type RunOptions struct {
-	SessionName  string
-	Shell        string
-	MouseEnabled bool
-	Keymap       shux.Keymap
+	SessionName     string
+	Shell           string
+	MouseEnabled    bool
+	Keymap          shux.Keymap
+	StartupWarnings []string
 }
 
 type cliOptions struct {
@@ -40,9 +44,18 @@ func resolveRunOptions(args []string, cli cliOptions) (RunOptions, error) {
 		return RunOptions{}, err
 	}
 
+	startupWarnings := []string{}
+
 	cfg, err := loadConfig(configPath, explicit)
 	if err != nil {
-		return RunOptions{}, err
+		if explicit {
+			shux.Errorf("config error: failed to load %q: %v", configPath, err)
+			return RunOptions{}, err
+		}
+		warning := fmt.Sprintf("config error in %s; using tmux-style defaults (%v)", configPath, err)
+		shux.Errorf("config error: failed to load %q; falling back to tmux-style defaults: %v", configPath, err)
+		startupWarnings = append(startupWarnings, warning)
+		cfg = Config{}
 	}
 
 	sessionName := strings.TrimSpace(cfg.Session.Name)
@@ -63,19 +76,27 @@ func resolveRunOptions(args []string, cli cliOptions) (RunOptions, error) {
 
 	keymap, err := shux.NewKeymap(cfg.Keys)
 	if err != nil {
-		return RunOptions{}, fmt.Errorf("resolve keymap: %w", err)
+		if explicit {
+			shux.Errorf("config error: invalid keymap in %q: %v", configPath, err)
+			return RunOptions{}, fmt.Errorf("resolve keymap: %w", err)
+		}
+		warning := fmt.Sprintf("invalid keymap in %s; using tmux-style key bindings (%v)", configPath, err)
+		shux.Errorf("config error: invalid keymap in %q; falling back to tmux-style defaults: %v", configPath, err)
+		startupWarnings = append(startupWarnings, warning)
+		keymap = shux.DefaultKeymap()
 	}
 
-	mouseEnabled := true
+	mouseEnabled := defaultMouseEnabled
 	if cfg.Mouse != nil {
 		mouseEnabled = *cfg.Mouse
 	}
 
 	return RunOptions{
-		SessionName:  sessionName,
-		Shell:        shell,
-		MouseEnabled: mouseEnabled,
-		Keymap:       keymap,
+		SessionName:     sessionName,
+		Shell:           shell,
+		MouseEnabled:    mouseEnabled,
+		Keymap:          keymap,
+		StartupWarnings: startupWarnings,
 	}, nil
 }
 

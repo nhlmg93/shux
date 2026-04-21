@@ -163,6 +163,15 @@ func (p *PaneController) setupRuntimeCallbacks() {
 		}
 		p.markDirty()
 	}
+	p.runtime.onOutput = func() {
+		p.callbackMu.RLock()
+		done := p.callbacksDone
+		p.callbackMu.RUnlock()
+		if done {
+			return
+		}
+		p.markDirty()
+	}
 	p.runtime.onProcessExit = func(err error) {
 		p.callbackMu.RLock()
 		done := p.callbacksDone
@@ -181,6 +190,7 @@ func (p *PaneController) detachRuntimeCallbacks() {
 	}
 	p.runtime.onTitleChanged = nil
 	p.runtime.onBell = nil
+	p.runtime.onOutput = nil
 	p.runtime.onProcessExit = nil
 }
 

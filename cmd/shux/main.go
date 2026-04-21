@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
+	"golang.org/x/sys/unix"
 	"shux/pkg/shux"
 )
 
@@ -134,7 +135,7 @@ func runClient(sessionName, socketPath string, opts RunOptions) error {
 	defer remoteRef.Shutdown()
 
 	shux.Infof("client: session=%s connected", sessionName)
-	return runSessionRemote(sessionName, remoteRef, opts.Keymap, opts.MouseEnabled)
+	return runSessionRemote(sessionName, remoteRef, opts.Keymap, opts.MouseEnabled, opts.StartupWarnings)
 }
 
 // runOwner runs the owner process (hidden mode).
@@ -272,7 +273,7 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 			Mods:        m.Mods,
 			IsRepeat:    m.IsRepeat,
 		})
-		reply(nil)
+		return
 
 	case shux.IPCMouseInput:
 		sessionRef.Send(shux.MouseInput{
@@ -282,15 +283,19 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 			Mods:   m.Mods,
 			Action: m.Action,
 		})
-		reply(nil)
+		return
 
 	case shux.IPCWriteToPane:
 		sessionRef.Send(shux.WriteToPane{Data: m.Data})
-		reply(nil)
+		return
 
 	case shux.IPCResizeMsg:
 		sessionRef.Send(shux.ResizeMsg{Rows: m.Rows, Cols: m.Cols})
-		reply(nil)
+		return
+
+	case shux.IPCCreateWindow:
+		sessionRef.Send(shux.CreateWindow{Rows: m.Rows, Cols: m.Cols})
+		return
 
 	case shux.IPCGetWindowView:
 		result := sessionRef.Ask(shux.GetWindowView{})
@@ -307,6 +312,14 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 			}
 		}
 		reply(shux.IPCWindowView{})
+
+	case shux.IPCGetActiveWindow:
+		result := sessionRef.Ask(shux.GetActiveWindow{})
+		if r, ok := <-result; ok && r != nil {
+			reply(true)
+			return
+		}
+		reply(false)
 
 	case shux.GetFullSessionSnapshot:
 		// Owner-only: return complete snapshot with all windows
@@ -351,12 +364,10 @@ func handleOwnerIPC(sessionRef *shux.SessionRef, msg any, reply func(any), ipcSe
 		reply(shux.IPCSessionKilled{})
 
 	case shux.IPCSubscribeUpdates:
-		// Client wants updates - they'll get them via the broadcast mechanism
-		reply(nil)
+		return
 
 	case shux.IPCUnsubscribeUpdates:
-		// Client unsubscribing
-		reply(nil)
+		return
 
 	default:
 		if logger != nil {
@@ -397,13 +408,37 @@ func handleOwnerKill(sessionRef *shux.SessionRef, ipcServer *shux.IPCServer, log
 	// Server will detect session empty and clean up
 }
 
+func detectTerminalSize() (width, height int, ok bool) {
+	fds := []uintptr{os.Stdout.Fd(), os.Stdin.Fd()}
+	for _, fd := range fds {
+		ws, err := unix.IoctlGetWinsize(int(fd), unix.TIOCGWINSZ)
+		if err != nil || ws == nil || ws.Col == 0 || ws.Row == 0 {
+			continue
+		}
+		return int(ws.Col), int(ws.Row), true
+	}
+	return 0, 0, false
+}
+
 // runSessionRemote runs the UI with a remote session reference.
-func runSessionRemote(sessionName string, remoteRef *shux.RemoteSessionRef, keymap shux.Keymap, mouseEnabled bool) error {
+func runSessionRemote(sessionName string, remoteRef *shux.RemoteSessionRef, keymap shux.Keymap, mouseEnabled bool, startupWarnings []string) error {
 	shux.Infof("ui: session=%s starting remote program", sessionName)
-	model := shux.NewModelWithOptions(remoteRef, keymap, mouseEnabled)
+	model := shux.NewModelWithStartupWarnings(remoteRef, keymap, mouseEnabled, startupWarnings)
 	opts := []tea.ProgramOption{}
 	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" {
 		opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
+	}
+	if width, height, ok := detectTerminalSize(); ok {
+		shux.Infof("ui: bootstrap terminal size %dx%d", width, height)
+		model.SetInitialSize(width, height)
+		opts = append(opts, tea.WithWindowSize(width, height))
+		if existing := <-remoteRef.Ask(shux.GetActiveWindow{}); existing == nil {
+			shux.Infof("ui: bootstrap creating initial window %dx%d", height, width)
+			remoteRef.Send(shux.CreateWindow{Rows: height, Cols: width})
+		} else {
+			shux.Infof("ui: bootstrap resizing existing session to %dx%d", height, width)
+			remoteRef.Send(shux.ResizeMsg{Rows: height, Cols: width})
+		}
 	}
 	p := tea.NewProgram(model, opts...)
 
@@ -426,6 +461,15 @@ func runSessionRemote(sessionName string, remoteRef *shux.RemoteSessionRef, keym
 			}
 		}
 	}()
+	go func() {
+		delays := []time.Duration{0, 50 * time.Millisecond, 150 * time.Millisecond, 400 * time.Millisecond}
+		for _, delay := range delays {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			p.Send(shux.UpdateMsg{})
+		}
+	}()
 
 	_, err := p.Run()
 	if err != nil {
@@ -436,12 +480,24 @@ func runSessionRemote(sessionName string, remoteRef *shux.RemoteSessionRef, keym
 	return err
 }
 
-func runSession(sessionName string, sessionRef *shux.SessionRef, keymap shux.Keymap, mouseEnabled bool) error {
+func runSession(sessionName string, sessionRef *shux.SessionRef, keymap shux.Keymap, mouseEnabled bool, startupWarnings []string) error {
 	shux.Infof("ui: session=%s starting program", sessionName)
-	model := shux.NewModelWithOptions(sessionRef, keymap, mouseEnabled)
+	model := shux.NewModelWithStartupWarnings(sessionRef, keymap, mouseEnabled, startupWarnings)
 	opts := []tea.ProgramOption{}
 	if os.Getenv("COLORTERM") == "truecolor" || os.Getenv("COLORTERM") == "24bit" {
 		opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
+	}
+	if width, height, ok := detectTerminalSize(); ok {
+		shux.Infof("ui: bootstrap terminal size %dx%d", width, height)
+		model.SetInitialSize(width, height)
+		opts = append(opts, tea.WithWindowSize(width, height))
+		if existing := <-sessionRef.Ask(shux.GetActiveWindow{}); existing == nil {
+			shux.Infof("ui: bootstrap creating initial window %dx%d", height, width)
+			sessionRef.Send(shux.CreateWindow{Rows: height, Cols: width})
+		} else {
+			shux.Infof("ui: bootstrap resizing existing session to %dx%d", height, width)
+			sessionRef.Send(shux.ResizeMsg{Rows: height, Cols: width})
+		}
 	}
 	p := tea.NewProgram(model, opts...)
 
@@ -462,6 +518,15 @@ func runSession(sessionName string, sessionRef *shux.SessionRef, keymap shux.Key
 					p.Send(shux.UpdateMsg{})
 				}
 			}
+		}
+	}()
+	go func() {
+		delays := []time.Duration{0, 50 * time.Millisecond, 150 * time.Millisecond, 400 * time.Millisecond}
+		for _, delay := range delays {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			p.Send(shux.UpdateMsg{})
 		}
 	}()
 

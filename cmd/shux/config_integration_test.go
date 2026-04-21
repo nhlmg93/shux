@@ -21,28 +21,19 @@ func TestDefaultLuaConfigBootstrapsSessionLifecycle(t *testing.T) {
 
 		mustWriteFile(t, pluginPath, `
 			local M = {}
-			function M.setup(shux)
-				shux.bind_key("k", "kill-pane")
-				shux.set_session_name("lua-bootstrap")
+			function M.setup()
+				shux.keymap.set("prefix", "k", "kill_pane")
+				shux.opts.session_name = "lua-bootstrap"
 			end
 			return M
 		`)
 		mustWriteFile(t, configPath, `
-			local shux = require("shux")
-			return shux.config({
-				session = { name = "config-name" },
-				shell = "/bin/sh",
-				mouse = false,
-				keys = {
-					prefix = "C-a",
-					bind = {
-						x = "split_vertical",
-					},
-				},
-				plugins = {
-					"plugins.bootstrap",
-				},
-			})
+			shux.opts.session_name = "config-name"
+			shux.opts.shell = "/bin/sh"
+			shux.opts.mouse = false
+			shux.opts.prefix = "C-a"
+			shux.keymap.set("prefix", "x", "split_vertical")
+			require("plugins.bootstrap").setup()
 		`)
 
 		prev := userConfigDir
@@ -81,7 +72,7 @@ func TestDefaultLuaConfigBootstrapsSessionLifecycle(t *testing.T) {
 		testutil.WaitSessionWindowCount(t, sessionRef, 1, time.Second)
 
 		model = sendKey(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
-		model = sendKey(t, model, tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}))
+		_ = sendKey(t, model, tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}))
 		activeWin := <-sessionRef.Ask(shux.GetActiveWindow{})
 		testutil.WaitWindowPaneCount(t, activeWin.(*shux.WindowRef), 2, time.Second)
 
@@ -130,25 +121,18 @@ func TestExplicitLuaConfigPluginOverrideRestoresWorkflow(t *testing.T) {
 		configPath := filepath.Join(configDir, "init.lua")
 
 		mustWriteFile(t, pluginPath, `
-			return {
-				setup = function(shux)
-					shux.set_session_name("workflow-plugin")
-					shux.set_shell("/bin/sh")
-					shux.bind_key("w", "split_horizontal")
-				end,
-			}
+			local M = {}
+			function M.setup()
+				shux.opts.session_name = "workflow-plugin"
+				shux.opts.shell = "/bin/sh"
+				shux.keymap.set("prefix", "w", "split_horizontal")
+			end
+			return M
 		`)
 		mustWriteFile(t, configPath, `
-			local shux = require("shux")
-			shux.setup({
-				options = {
-					prefix = "C-g",
-					session_name = "workflow-config",
-				},
-				plugins = {
-					require("plugins.workflow"),
-				},
-			})
+			shux.opts.prefix = "C-g"
+			shux.opts.session_name = "workflow-config"
+			require("plugins.workflow").setup()
 		`)
 
 		opts, err := resolveRunOptions(nil, cliOptions{ConfigPath: configPath})
@@ -175,7 +159,7 @@ func TestExplicitLuaConfigPluginOverrideRestoresWorkflow(t *testing.T) {
 		model := shux.NewModelWithOptions(sessionRef, opts.Keymap, opts.MouseEnabled)
 		model = sendWindowSize(t, model, 160, 48)
 		model = sendKey(t, model, tea.KeyPressMsg(tea.Key{Code: 'g', Mod: tea.ModCtrl}))
-		model = sendKey(t, model, tea.KeyPressMsg(tea.Key{Text: "w", Code: 'w'}))
+		_ = sendKey(t, model, tea.KeyPressMsg(tea.Key{Text: "w", Code: 'w'}))
 		activeWindow := <-sessionRef.Ask(shux.GetActiveWindow{})
 		postKeymap := testutil.WaitWindowPaneCount(t, activeWindow.(*shux.WindowRef), 5, time.Second)
 		if postKeymap.ActivePane == 0 {
@@ -206,6 +190,178 @@ func TestExplicitLuaConfigPluginOverrideRestoresWorkflow(t *testing.T) {
 		}
 		testutil.AssertPersistenceInvariant(t, pre.(*shux.SessionSnapshot), post.(*shux.SessionSnapshot))
 	})
+}
+
+func TestMissingDefaultLuaConfigFallsBackToTmuxStyleDefaults(t *testing.T) {
+	testutil.WithTempHome(t, func(home string) {
+		configRoot := filepath.Join(home, ".config")
+		if err := os.MkdirAll(configRoot, 0o750); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", configRoot, err)
+		}
+
+		prev := userConfigDir
+		userConfigDir = func() (string, error) { return configRoot, nil }
+		defer func() { userConfigDir = prev }()
+
+		t.Setenv("SHELL", "/bin/bash")
+
+		opts, err := resolveRunOptions(nil, cliOptions{})
+		if err != nil {
+			t.Fatalf("resolveRunOptions: %v", err)
+		}
+		if opts.SessionName != defaultSessionName {
+			t.Fatalf("session name = %q, want %q", opts.SessionName, defaultSessionName)
+		}
+		if opts.Shell != "/bin/bash" {
+			t.Fatalf("shell = %q, want /bin/bash", opts.Shell)
+		}
+		if opts.MouseEnabled {
+			t.Fatal("mouse should be disabled by default to match tmux")
+		}
+		if got := opts.Keymap.Prefix(); got != "ctrl+b" {
+			t.Fatalf("prefix = %q, want ctrl+b", got)
+		}
+		if len(opts.StartupWarnings) != 0 {
+			t.Fatalf("startup warnings = %v, want none", opts.StartupWarnings)
+		}
+	})
+}
+
+func TestInvalidDefaultLuaConfigFallsBackToTmuxStyleDefaults(t *testing.T) {
+	testutil.WithTempHome(t, func(home string) {
+		configRoot := filepath.Join(home, ".config")
+		configDir := filepath.Join(configRoot, "shux")
+		configPath := filepath.Join(configDir, "init.lua")
+		mustWriteFile(t, configPath, `this is not valid lua`)
+
+		prev := userConfigDir
+		userConfigDir = func() (string, error) { return configRoot, nil }
+		defer func() { userConfigDir = prev }()
+
+		t.Setenv("SHELL", "/bin/bash")
+
+		opts, err := resolveRunOptions(nil, cliOptions{})
+		if err != nil {
+			t.Fatalf("resolveRunOptions: %v", err)
+		}
+		if opts.SessionName != defaultSessionName {
+			t.Fatalf("session name = %q, want %q", opts.SessionName, defaultSessionName)
+		}
+		if opts.Shell != "/bin/bash" {
+			t.Fatalf("shell = %q, want /bin/bash", opts.Shell)
+		}
+		if opts.MouseEnabled {
+			t.Fatal("mouse should be disabled by default to match tmux")
+		}
+		if got := opts.Keymap.Prefix(); got != "ctrl+b" {
+			t.Fatalf("prefix = %q, want ctrl+b", got)
+		}
+		if len(opts.StartupWarnings) == 0 {
+			t.Fatal("expected startup warning for invalid config")
+		}
+	})
+}
+
+func TestLuaOptionDefaultsMatchTmuxStyleDefaults(t *testing.T) {
+	testutil.WithTempHome(t, func(home string) {
+		configRoot := filepath.Join(home, ".config")
+		configDir := filepath.Join(configRoot, "shux")
+		configPath := filepath.Join(configDir, "init.lua")
+		mustWriteFile(t, configPath, `
+			if shux.opts.prefix ~= "C-b" then
+				error("expected default prefix C-b, got " .. tostring(shux.opts.prefix))
+			end
+			if shux.opts.mouse ~= false then
+				error("expected default mouse false, got " .. tostring(shux.opts.mouse))
+			end
+		`)
+
+		prev := userConfigDir
+		userConfigDir = func() (string, error) { return configRoot, nil }
+		defer func() { userConfigDir = prev }()
+
+		opts, err := resolveRunOptions(nil, cliOptions{})
+		if err != nil {
+			t.Fatalf("resolveRunOptions: %v", err)
+		}
+		if got := opts.Keymap.Prefix(); got != "ctrl+b" {
+			t.Fatalf("prefix = %q, want ctrl+b", got)
+		}
+		if opts.MouseEnabled {
+			t.Fatal("mouse should be disabled by default to match tmux")
+		}
+	})
+}
+
+func TestLuaOptsRuntimeShapeWorks(t *testing.T) {
+	testutil.WithTempHome(t, func(home string) {
+		configRoot := filepath.Join(home, ".config")
+		configDir := filepath.Join(configRoot, "shux")
+		configPath := filepath.Join(configDir, "init.lua")
+		mustWriteFile(t, configPath, `
+			shux.opts.session_name = "main-runtime"
+			shux.opts.shell = "/bin/bash"
+			shux.opts.mouse = false
+			shux.keymap.set("prefix", "v", "split_vertical")
+		`)
+
+		prev := userConfigDir
+		userConfigDir = func() (string, error) { return configRoot, nil }
+		defer func() { userConfigDir = prev }()
+
+		opts, err := resolveRunOptions(nil, cliOptions{})
+		if err != nil {
+			t.Fatalf("resolveRunOptions: %v", err)
+		}
+		if opts.SessionName != "main-runtime" {
+			t.Fatalf("session name = %q, want main-runtime", opts.SessionName)
+		}
+		if opts.Shell != "/bin/bash" {
+			t.Fatalf("shell = %q, want /bin/bash", opts.Shell)
+		}
+		if opts.MouseEnabled {
+			t.Fatal("mouse should be disabled by config")
+		}
+		if binding, ok := opts.Keymap.BindingFor("v"); !ok || binding.Action != shux.ActionSplitVertical {
+			t.Fatalf("expected v -> split_vertical, got %#v (ok=%t)", binding, ok)
+		}
+	})
+}
+
+func TestRemoteSessionResizeCreatesInitialWindow(t *testing.T) {
+	super := testutil.NewTestSupervisor()
+	sessionRef := shux.StartNamedSessionWithShell(1, "remote-start", "/bin/sh", super.Handle, testutil.TestLogger())
+	defer sessionRef.Shutdown()
+
+	socketPath := filepath.Join(t.TempDir(), "session.sock")
+	ipcServer, err := shux.NewIPCServer(socketPath, testutil.TestLogger())
+	if err != nil {
+		t.Fatalf("NewIPCServer: %v", err)
+	}
+	defer ipcServer.Stop()
+
+	ipcServer.Start(func(msg any, reply func(any)) {
+		handleOwnerIPC(sessionRef, msg, reply, ipcServer, testutil.TestLogger())
+	})
+
+	remoteRef, err := shux.NewRemoteSessionRef(socketPath, "remote-start", testutil.TestLogger())
+	if err != nil {
+		t.Fatalf("NewRemoteSessionRef: %v", err)
+	}
+	defer remoteRef.Shutdown()
+
+	model := shux.NewModelWithOptions(remoteRef, shux.DefaultKeymap(), false)
+	model = sendWindowSize(t, model, 120, 40)
+
+	testutil.WaitSessionWindowCount(t, sessionRef, 1, time.Second)
+	active := <-sessionRef.Ask(shux.GetActiveWindow{})
+	if active == nil {
+		t.Fatal("expected active window after remote initial resize")
+	}
+
+	model = sendWindowSize(t, model, 160, 48)
+	testutil.WaitSessionWindowCount(t, sessionRef, 1, time.Second)
+	_ = model
 }
 
 func mustWriteFile(t *testing.T, path, content string) {

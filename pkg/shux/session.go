@@ -623,7 +623,10 @@ func (s *Session) resizeActiveWindow(rows, cols int) {
 	s.lastRows, s.lastCols = rows, cols
 	if win := s.activeWindow(); win != nil {
 		win.Send(ResizeMsg{Rows: rows, Cols: cols})
+		return
 	}
+	s.logger.Infof("session: id=%d name=%s no active window; creating initial window on resize", s.id, s.name)
+	s.createWindow(rows, cols)
 }
 
 func (s *Session) createWindow(rows, cols int) {

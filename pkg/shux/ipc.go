@@ -17,9 +17,11 @@ func init() {
 	gob.Register(IPCMouseInput{})
 	gob.Register(IPCWriteToPane{})
 	gob.Register(IPCResizeMsg{})
+	gob.Register(IPCCreateWindow{})
 	gob.Register(IPCSubscribeUpdates{})
 	gob.Register(IPCUnsubscribeUpdates{})
 	gob.Register(IPCGetWindowView{})
+	gob.Register(IPCGetActiveWindow{})
 	gob.Register(IPCExecuteCommandMsg{})
 	gob.Register(IPCDetachSession{})
 	gob.Register(IPCKillSession{})
@@ -100,15 +102,16 @@ func (c *IPCConn) Close() error {
 
 // IPCServer serves IPC connections for the session owner.
 type IPCServer struct {
-	listener   net.Listener
-	socketPath string
-	handler    func(msg any, reply func(any))
-	updates    chan any
-	mu         sync.RWMutex
-	clients    map[*IPCConn]struct{}
-	stop       chan struct{}
-	wg         sync.WaitGroup
-	logger     ShuxLogger
+	listener    net.Listener
+	socketPath  string
+	handler     func(msg any, reply func(any))
+	updates     chan any
+	mu          sync.RWMutex
+	clients     map[*IPCConn]struct{}
+	subscribers map[*IPCConn]struct{}
+	stop        chan struct{}
+	wg          sync.WaitGroup
+	logger      ShuxLogger
 }
 
 // NewIPCServer creates a new IPC server bound to the given socket path.
@@ -122,12 +125,13 @@ func NewIPCServer(socketPath string, logger ShuxLogger) (*IPCServer, error) {
 	}
 
 	return &IPCServer{
-		listener:   listener,
-		socketPath: socketPath,
-		clients:    make(map[*IPCConn]struct{}),
-		updates:    make(chan any, 32),
-		stop:       make(chan struct{}),
-		logger:     logger,
+		listener:    listener,
+		socketPath:  socketPath,
+		clients:     make(map[*IPCConn]struct{}),
+		subscribers: make(map[*IPCConn]struct{}),
+		updates:     make(chan any, 32),
+		stop:        make(chan struct{}),
+		logger:      logger,
 	}, nil
 }
 
@@ -145,20 +149,21 @@ func (s *IPCServer) Stop() {
 
 	s.mu.Lock()
 	for client := range s.clients {
-		client.Close()
+		_ = client.Close()
 	}
 	s.clients = make(map[*IPCConn]struct{})
+	s.subscribers = make(map[*IPCConn]struct{})
 	s.mu.Unlock()
 
 	s.wg.Wait()
 	_ = os.Remove(s.socketPath)
 }
 
-// BroadcastUpdate sends an update message to all connected clients.
+// BroadcastUpdate sends an update message to subscribed clients only.
 func (s *IPCServer) BroadcastUpdate(msg any) {
 	s.mu.RLock()
-	clients := make([]*IPCConn, 0, len(s.clients))
-	for c := range s.clients {
+	clients := make([]*IPCConn, 0, len(s.subscribers))
+	for c := range s.subscribers {
 		clients = append(clients, c)
 	}
 	s.mu.RUnlock()
@@ -210,17 +215,8 @@ func (s *IPCServer) handleClient(conn net.Conn) {
 
 	defer func() {
 		s.removeClient(ipcConn)
-		ipcConn.Close()
+		_ = ipcConn.Close()
 	}()
-
-	// Send initial window view
-	if s.handler != nil {
-		s.handler(IPCGetWindowView{}, func(reply any) {
-			if err := ipcConn.Send(reply); err != nil && s.logger != nil {
-				s.logger.Warnf("ipc: failed to send initial view: %v", err)
-			}
-		})
-	}
 
 	for {
 		select {
@@ -237,6 +233,19 @@ func (s *IPCServer) handleClient(conn net.Conn) {
 			return
 		}
 
+		switch msg.(type) {
+		case IPCSubscribeUpdates:
+			s.mu.Lock()
+			s.subscribers[ipcConn] = struct{}{}
+			s.mu.Unlock()
+			continue
+		case IPCUnsubscribeUpdates:
+			s.mu.Lock()
+			delete(s.subscribers, ipcConn)
+			s.mu.Unlock()
+			continue
+		}
+
 		if s.handler != nil {
 			s.handler(msg, func(reply any) {
 				if err := ipcConn.Send(reply); err != nil && s.logger != nil {
@@ -250,6 +259,7 @@ func (s *IPCServer) handleClient(conn net.Conn) {
 func (s *IPCServer) removeClient(c *IPCConn) {
 	s.mu.Lock()
 	delete(s.clients, c)
+	delete(s.subscribers, c)
 	s.mu.Unlock()
 }
 
