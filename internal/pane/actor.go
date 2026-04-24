@@ -3,21 +3,28 @@ package pane
 import (
 	"context"
 
+	"github.com/mitchellh/go-libghostty"
 	"shux-dev/internal/actor"
 	"shux-dev/internal/protocol"
 )
 
-type LibghosttyVT struct{}
-
+// Actor runs a single pane. VT is a libghostty handle; it is nil until
+// a follow-up creates the terminal with known dimensions (WithSize).
 type Actor struct {
-	VT *LibghosttyVT
+	VT *libghostty.Terminal
 }
 
+// NewActor returns a pane actor. VT is nil until dimensions are wired.
 func NewActor() *Actor {
-	return &Actor{}
+	return &Actor{VT: nil}
 }
 
 func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+	defer func() {
+		if a.VT != nil {
+			a.VT.Close()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():

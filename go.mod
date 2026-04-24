@@ -6,6 +6,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/wish/v2 v2.0.1
 	github.com/charmbracelet/ssh v0.0.0-20250826160808-ebfa259c7309
+	github.com/mitchellh/go-libghostty v0.0.0-20260422203129-542c76ff595a
 	github.com/spf13/cobra v1.9.1
 )
 
