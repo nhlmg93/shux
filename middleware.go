@@ -5,7 +5,7 @@ import (
 	"github.com/charmbracelet/ssh"
 )
 
-func ShuxUiMiddleware(logger *Logger) wish.Middleware {
+func ShuxUiMiddleware(_ *Logger) wish.Middleware {
 	return func(next ssh.Handler) ssh.Handler {
 		return next
 	}

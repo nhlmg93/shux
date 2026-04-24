@@ -22,7 +22,7 @@ func NewActor() *Actor {
 	}
 }
 
-func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
 	for {
 		select {
 		case <-ctx.Done():

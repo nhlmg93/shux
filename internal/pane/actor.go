@@ -16,10 +16,10 @@ type Actor struct {
 
 // NewActor returns a pane actor. VT is nil until dimensions are wired.
 func NewActor() *Actor {
-	return &Actor{VT: nil}
+	return &Actor{}
 }
 
-func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
 	defer func() {
 		if a.VT != nil {
 			a.VT.Close()

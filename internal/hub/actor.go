@@ -19,7 +19,7 @@ func NewActor() *Actor {
 	}
 }
 
-func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Event], inbox <-chan protocol.Event) {
+func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-chan protocol.Event) {
 	for {
 		select {
 		case <-ctx.Done():
