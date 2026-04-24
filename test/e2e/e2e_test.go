@@ -1,4 +1,4 @@
-package main
+package e2e
 
 import (
 	"bytes"
@@ -8,13 +8,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"shux-dev/internal/shux"
 )
 
 // ctrlC is ETX (ASCII 3), what a TTY sends for ctrl+c.
 const ctrlC = 0x03
 
 func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
-	shux, err := NewShux()
+	s, err := shux.NewShux()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	err = shux.Run(
+	err = s.Run(
 		tea.WithContext(ctx),
 		tea.WithInput(r),
 		tea.WithOutput(&out),
@@ -39,8 +40,6 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Full renderer writes mostly cursor/screen control codes; upstream tests
-	// only assert non-empty output. See internal/ui for the literal title string.
 	if out.Len() == 0 {
 		t.Fatal("expected some terminal output from the program")
 	}

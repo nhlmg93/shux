@@ -1,0 +1,24 @@
+# Git and metadata
+.git
+.gitignore
+.gitattributes
+
+# Local Ghostty build (rebuilt in the test image)
+.deps
+
+# Built binary (from host)
+shux-dev
+
+# Editor and tooling noise
+.cursor
+.vscode
+*.swp
+*~
+.idea
+
+# If present
+dist/
+bin/
+
+# Keep context small: tests use repo sources, not prebuilt host caches
+# (allow test/, internal/, go.mod, etc.)
