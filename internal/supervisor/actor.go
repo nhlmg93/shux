@@ -8,7 +8,6 @@ import (
 	"shux-dev/internal/protocol"
 )
 
-// Sessions is keyed session lifecycle bookkeeping (Init / Delete / Must on command refs).
 type Sessions = *actor.Lifecycle[protocol.SessionID, protocol.Command]
 
 type Actor struct {

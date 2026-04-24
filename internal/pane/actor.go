@@ -1,3 +1,5 @@
+//go:build libghostty
+
 package pane
 
 import (

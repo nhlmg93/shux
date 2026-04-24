@@ -24,7 +24,7 @@ func NewShux() (*Shux, error) {
 	}, nil
 }
 
-func (a *Shux) Run() error {
+func (a *Shux) Run(opts ...tea.ProgramOption) error {
 	defer a.Logger.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -32,7 +32,7 @@ func (a *Shux) Run() error {
 
 	_ = supervisor.Start(ctx)
 
-	_, err := tea.NewProgram(ui.NewModel()).Run()
+	_, err := tea.NewProgram(ui.NewModel(), opts...).Run()
 	if err != nil {
 		return fmt.Errorf("failed to run ui: %w", err)
 	}
