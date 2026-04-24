@@ -8,16 +8,26 @@ import (
 	"shux-dev/internal/protocol"
 )
 
-// Subscribers is keyed client lifecycle bookkeeping (Init / Delete / Must on event refs).
-type Subscribers = *actor.Lifecycle[protocol.ClientID, protocol.Event]
-
+// Actor fans out events to registered EventSinks. Only Run touches sinks.
 type Actor struct {
-	Subscribers
+	sinks map[protocol.ClientID]protocol.EventSink
 }
 
 func NewActor() *Actor {
 	return &Actor{
-		Subscribers: actor.NewLifecycle[protocol.ClientID, protocol.Event]("hub", "subscriber"),
+		sinks: make(map[protocol.ClientID]protocol.EventSink),
+	}
+}
+
+func (a *Actor) fanout(ctx context.Context, e protocol.Event) {
+	var failed []protocol.ClientID
+	for id, sk := range a.sinks {
+		if err := sk.DeliverEvent(ctx, e); err != nil {
+			failed = append(failed, id)
+		}
+	}
+	for _, id := range failed {
+		delete(a.sinks, id)
 	}
 }
 
@@ -27,8 +37,21 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
-			switch msg.(type) {
+			switch m := msg.(type) {
 			case protocol.EventNoop:
+			case protocol.EventRegisterSubscriber:
+				if _, ok := a.sinks[m.ClientID]; ok {
+					panic("hub: duplicate EventRegisterSubscriber for client")
+				}
+				a.sinks[m.ClientID] = m.Sink
+			case protocol.EventUnregisterSubscriber:
+				delete(a.sinks, m.ClientID)
+			case protocol.EventSessionCreated:
+				a.fanout(ctx, m)
+			case protocol.EventWindowCreated:
+				a.fanout(ctx, m)
+			case protocol.EventPaneCreated:
+				a.fanout(ctx, m)
 			default:
 				panic(fmt.Sprintf("hub: unhandled event type %T", msg))
 			}

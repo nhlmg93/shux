@@ -3,20 +3,25 @@ package supervisor
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"shux-dev/internal/actor"
 	"shux-dev/internal/protocol"
+	"shux-dev/internal/session"
 )
 
 type Sessions = *actor.Lifecycle[protocol.SessionID, protocol.Command]
 
 type Actor struct {
 	Sessions
+	seq uint64
+	hub actor.EventRef // optional lifecycle event sink (best-effort publish)
 }
 
-func NewActor() *Actor {
+func NewActor(hub actor.EventRef) *Actor {
 	return &Actor{
 		Sessions: actor.NewLifecycle[protocol.SessionID, protocol.Command]("supervisor", "session"),
+		hub:      hub,
 	}
 }
 
@@ -26,8 +31,19 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
-			switch msg.(type) {
+			switch m := msg.(type) {
 			case protocol.CommandNoop:
+			case protocol.CommandCreateSession:
+				a.seq++
+				sid := protocol.SessionID("s-" + strconv.FormatUint(a.seq, 10))
+				a.Init(sid, session.StartWithHub(ctx, a.hub))
+				if a.hub != nil {
+					_ = a.hub.Send(ctx, protocol.EventSessionCreated{SessionID: sid})
+				}
+			case protocol.CommandCreateWindow:
+				a.Sessions.Must(m.SessionID).Send(ctx, m)
+			case protocol.CommandCreatePane:
+				a.Sessions.Must(m.SessionID).Send(ctx, m)
 			default:
 				panic(fmt.Sprintf("supervisor: unhandled command type %T", msg))
 			}
@@ -36,5 +52,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 }
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActor().Run)
+	return StartWithHub(ctx, nil)
+}
+
+// StartWithHub is [Start] with optional hub; lifecycle events are best-effort when hub is non-nil.
+func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
 }

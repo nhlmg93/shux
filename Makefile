@@ -14,8 +14,8 @@ PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PREFIX)/share/pkgconfig
 
 ZIG_FLAGS ?= --summary none
 
-# Real libghostty: tests use -tags libghostty and cgo; requires make libghostty first.
-GO_TEST_FLAGS := -count=1 -shuffle=off -tags libghostty
+# Pane and sim tests link go-libghostty (CGO); requires make libghostty first.
+GO_TEST_FLAGS := -count=1 -shuffle=off
 GO_TEST := CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go test $(GO_TEST_FLAGS)
 
 QUIET := @
@@ -33,7 +33,7 @@ help:
 	@echo "make go           — go build (needs .deps/prefix from libghostty)"
 	@echo "make libghostty   — clone + zig build install -Demit-lib-vt"
 	@echo "make libghostty-clean, V=1"
-	@echo "make test         — sim + integration + e2e (go test, -tags libghostty; needs libghostty)"
+	@echo "make test         — sim + integration + e2e (go test with CGO; needs libghostty)"
 	@echo "make test-sim, test-integration, test-e2e  (test/{sim,integration,e2e}/...)"
 	@echo "make test-docker  — build dockerfile.sim.env, run make test, remove container (see --rm)"
 
