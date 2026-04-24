@@ -4,7 +4,8 @@
 MAKEFLAGS += --no-print-directory
 
 GHOSTTY_REPO ?= https://github.com/ghostty-org/ghostty.git
-GHOSTTY_REF  ?= v1.3.0
+# Newer than v1.3.0: go-libghostty expects headers like ghostty/vt/sys.h from lib-vt.
+GHOSTTY_REF  ?= main
 
 DEPS_DIR     := .deps
 GHOSTTY_SRC  := $(DEPS_DIR)/ghostty
@@ -30,7 +31,7 @@ all: build
 help:
 	@echo "make              — libghostty + go build"
 	@echo "make go           — go build (needs .deps/prefix from libghostty)"
-	@echo "make libghostty   — clone + zig build lib-vt"
+	@echo "make libghostty   — clone + zig build install -Demit-lib-vt"
 	@echo "make libghostty-clean, V=1"
 	@echo "make test         — sim + integration + e2e (go test, -tags libghostty; needs libghostty)"
 	@echo "make test-sim, test-integration, test-e2e  (test/{sim,integration,e2e}/...)"
@@ -44,7 +45,7 @@ $(GHOSTTY_SRC)/.git:
 	$(QUIET)git clone --depth 1 --branch $(GHOSTTY_REF) $(GHOSTTY_REPO) $(GHOSTTY_SRC)
 
 libghostty: $(GHOSTTY_SRC)/.git
-	$(QUIET)cd $(GHOSTTY_SRC) && zig build lib-vt -p $(PREFIX) -Doptimize=ReleaseFast $(ZIG_FLAGS)
+	$(QUIET)cd $(GHOSTTY_SRC) && zig build install -p $(PREFIX) -Doptimize=ReleaseFast -Demit-lib-vt=true $(ZIG_FLAGS)
 
 libghostty-clean:
 	rm -rf $(GHOSTTY_SRC) $(DEPS_DIR)/prefix
