@@ -2,20 +2,22 @@ package hub
 
 import (
 	"context"
+	"fmt"
 
 	"shux-dev/internal/actor"
 	"shux-dev/internal/protocol"
 )
 
-type Subscribers map[protocol.ClientID]actor.Ref[protocol.Event]
+// Subscribers is keyed client lifecycle bookkeeping (Init / Delete / Must on event refs).
+type Subscribers = *actor.Lifecycle[protocol.ClientID, protocol.Event]
 
 type Actor struct {
-	Subscribers Subscribers
+	Subscribers
 }
 
 func NewActor() *Actor {
 	return &Actor{
-		Subscribers: make(Subscribers),
+		Subscribers: actor.NewLifecycle[protocol.ClientID, protocol.Event]("hub", "subscriber"),
 	}
 }
 
@@ -24,7 +26,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 		select {
 		case <-ctx.Done():
 			return
-		case <-inbox:
+		case msg := <-inbox:
+			switch msg.(type) {
+			case protocol.EventNoop:
+			default:
+				panic(fmt.Sprintf("hub: unhandled event type %T", msg))
+			}
 		}
 	}
 }

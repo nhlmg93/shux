@@ -2,20 +2,22 @@ package supervisor
 
 import (
 	"context"
+	"fmt"
 
 	"shux-dev/internal/actor"
 	"shux-dev/internal/protocol"
 )
 
-type Sessions map[protocol.SessionID]actor.Ref[protocol.Command]
+// Sessions is keyed session lifecycle bookkeeping (Init / Delete / Must on command refs).
+type Sessions = *actor.Lifecycle[protocol.SessionID, protocol.Command]
 
 type Actor struct {
-	Sessions Sessions
+	Sessions
 }
 
 func NewActor() *Actor {
 	return &Actor{
-		Sessions: make(Sessions),
+		Sessions: actor.NewLifecycle[protocol.SessionID, protocol.Command]("supervisor", "session"),
 	}
 }
 
@@ -24,7 +26,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		select {
 		case <-ctx.Done():
 			return
-		case <-inbox:
+		case msg := <-inbox:
+			switch msg.(type) {
+			case protocol.CommandNoop:
+			default:
+				panic(fmt.Sprintf("supervisor: unhandled command type %T", msg))
+			}
 		}
 	}
 }

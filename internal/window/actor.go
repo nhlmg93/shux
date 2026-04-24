@@ -2,23 +2,25 @@ package window
 
 import (
 	"context"
+	"fmt"
 
 	"shux-dev/internal/actor"
 	"shux-dev/internal/protocol"
 )
 
-type Panes map[protocol.PaneID]actor.Ref[protocol.Command]
-
 type Layout struct{}
 
+// Panes is keyed pane lifecycle bookkeeping (Init / Delete / Must on command refs).
+type Panes = *actor.Lifecycle[protocol.PaneID, protocol.Command]
+
 type Actor struct {
-	Panes  Panes
+	Panes
 	Layout Layout
 }
 
 func NewActor() *Actor {
 	return &Actor{
-		Panes: make(Panes),
+		Panes: actor.NewLifecycle[protocol.PaneID, protocol.Command]("window", "pane"),
 	}
 }
 
@@ -27,7 +29,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		select {
 		case <-ctx.Done():
 			return
-		case <-inbox:
+		case msg := <-inbox:
+			switch msg.(type) {
+			case protocol.CommandNoop:
+			default:
+				panic(fmt.Sprintf("window: unhandled command type %T", msg))
+			}
 		}
 	}
 }
