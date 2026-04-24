@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"shux-dev/internal/actor"
-	"shux-dev/internal/protocol"
-	"shux-dev/internal/window"
+	"shux/internal/actor"
+	"shux/internal/protocol"
+	"shux/internal/window"
 )
 
 // Windows is keyed window lifecycle bookkeeping (Init / Delete / Must on command refs).
@@ -15,7 +15,7 @@ type Windows = *actor.Lifecycle[protocol.WindowID, protocol.Command]
 
 type Actor struct {
 	Windows
-	seq uint64                     // next window id suffix; only touched from Run goroutine
+	seq uint64         // next window id suffix; only touched from Run goroutine
 	hub actor.EventRef // optional lifecycle event sink (best-effort publish)
 }
 

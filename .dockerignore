@@ -7,7 +7,7 @@
 .deps
 
 # Built binary (from host)
-shux-dev
+shux
 
 # Editor and tooling noise
 .cursor

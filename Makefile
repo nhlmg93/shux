@@ -52,7 +52,7 @@ libghostty-clean:
 
 go:
 	@test -d "$(PREFIX)/lib" || (echo "Missing $(PREFIX). Run: make libghostty" && exit 1)
-	$(QUIET)PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux-dev .
+	$(QUIET)PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux .
 
 test: test-sim test-integration test-e2e
 

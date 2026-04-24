@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"shux-dev/internal/actor"
-	"shux-dev/internal/pane"
-	"shux-dev/internal/protocol"
+	"shux/internal/actor"
+	"shux/internal/pane"
+	"shux/internal/protocol"
 )
 
 type Layout struct{}
@@ -18,8 +18,8 @@ type Panes = *actor.Lifecycle[protocol.PaneID, protocol.Command]
 type Actor struct {
 	Panes
 	Layout Layout
-	hub actor.EventRef // optional lifecycle event sink (best-effort publish)
-	seq uint64 // next pane id suffix; only touched from Run goroutine
+	hub    actor.EventRef // optional lifecycle event sink (best-effort publish)
+	seq    uint64         // next pane id suffix; only touched from Run goroutine
 }
 
 func NewActor(hub actor.EventRef) *Actor {

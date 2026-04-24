@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
-	"shux-dev/internal/supervisor"
-	"shux-dev/internal/ui"
+	"shux/internal/supervisor"
+	"shux/internal/ui"
 )
 
 type Shux struct {

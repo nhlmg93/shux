@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"shux-dev/internal/shux"
+	"shux/internal/shux"
 )
 
 // ctrlC is ETX (ASCII 3), what a TTY sends for ctrl+c.

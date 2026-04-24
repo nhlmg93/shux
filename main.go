@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/spf13/cobra"
-	"shux-dev/internal/shux"
+	"shux/internal/shux"
 )
 
 var rootCmd = &cobra.Command{

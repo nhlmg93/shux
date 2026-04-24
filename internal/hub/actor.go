@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"shux-dev/internal/actor"
-	"shux-dev/internal/protocol"
+	"shux/internal/actor"
+	"shux/internal/protocol"
 )
 
 // Actor fans out events to registered EventSinks. Only Run touches sinks.

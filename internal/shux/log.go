@@ -19,7 +19,7 @@ func appDataDir() (string, error) {
 		return "", err
 	}
 
-	dir := filepath.Join(home, ".local", "share", "shux-dev")
+	dir := filepath.Join(home, ".local", "share", "shux")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

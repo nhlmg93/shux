@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"shux-dev/internal/actor"
-	"shux-dev/internal/protocol"
-	"shux-dev/internal/session"
+	"shux/internal/actor"
+	"shux/internal/protocol"
+	"shux/internal/session"
 )
 
 type Sessions = *actor.Lifecycle[protocol.SessionID, protocol.Command]

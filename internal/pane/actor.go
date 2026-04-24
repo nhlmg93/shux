@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/mitchellh/go-libghostty"
-	"shux-dev/internal/actor"
-	"shux-dev/internal/protocol"
+	"shux/internal/actor"
+	"shux/internal/protocol"
 )
 
 // Actor runs a single pane. VT is a libghostty handle; it is nil until

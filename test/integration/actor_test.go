@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"shux-dev/internal/hub"
-	"shux-dev/internal/protocol"
-	"shux-dev/internal/supervisor"
+	"shux/internal/hub"
+	"shux/internal/protocol"
+	"shux/internal/supervisor"
 )
 
 // ID suffixes match supervisor/session/window counters: first create in each actor is "1".
