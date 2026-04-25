@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"shux/internal/protocol"
 	"shux/internal/shux"
 )
 
@@ -25,7 +26,7 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 
 	r, w := io.Pipe()
 	go func() {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		_, _ = w.Write([]byte{ctrlC})
 		_ = w.Close()
 	}()
@@ -42,5 +43,8 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 
 	if out.Len() == 0 {
 		t.Fatal("expected some terminal output from the program")
+	}
+	if s.SessionID != protocol.SessionID("s-1") || s.WindowID != protocol.WindowID("w-1") || s.PaneID != protocol.PaneID("p-1") {
+		t.Fatalf("ids = %q %q %q", s.SessionID, s.WindowID, s.PaneID)
 	}
 }

@@ -1,14 +1,23 @@
 package ui
 
-import tea "charm.land/bubbletea/v2"
+import (
+	tea "charm.land/bubbletea/v2"
+	"shux/internal/protocol"
+)
 
 type Model struct {
-	Title string
+	Title     string
+	SessionID protocol.SessionID
+	WindowID  protocol.WindowID
+	PaneID    protocol.PaneID
 }
 
-func NewModel() Model {
+func NewModel(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) Model {
 	return Model{
-		Title: "shux",
+		Title:     "shux",
+		SessionID: sessionID,
+		WindowID:  windowID,
+		PaneID:    paneID,
 	}
 }
 
@@ -28,5 +37,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() tea.View {
-	return tea.NewView(m.Title + "\n")
+	return tea.NewView(m.Title + "\n" +
+		"session: " + string(m.SessionID) + "\n" +
+		"window: " + string(m.WindowID) + "\n" +
+		"pane: " + string(m.PaneID) + "\n")
 }
