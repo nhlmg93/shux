@@ -37,6 +37,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if err := protocol.ValidateEvent(msg); err != nil {
+				panic(err)
+			}
 			switch m := msg.(type) {
 			case protocol.EventNoop:
 			case protocol.EventRegisterSubscriber:
@@ -45,6 +48,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 				}
 				a.sinks[m.ClientID] = m.Sink
 			case protocol.EventUnregisterSubscriber:
+				if _, ok := a.sinks[m.ClientID]; !ok {
+					panic("hub: EventUnregisterSubscriber for unknown client")
+				}
 				delete(a.sinks, m.ClientID)
 			case protocol.EventSessionCreated:
 				a.fanout(ctx, m)

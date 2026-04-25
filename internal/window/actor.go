@@ -23,8 +23,11 @@ type Actor struct {
 }
 
 func NewActor(hub actor.EventRef) *Actor {
+	if hub != nil && !hub.Valid() {
+		panic("window: NewActor: invalid hub ref")
+	}
 	return &Actor{
-		Panes: actor.NewLifecycle[protocol.PaneID, protocol.Command]("window", "pane"),
+		Panes: actor.NewLifecycle[protocol.PaneID, protocol.Command]("window", "pane", protocol.PaneID.Valid),
 		hub:   hub,
 	}
 }
@@ -35,6 +38,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if err := protocol.ValidateCommand(msg); err != nil {
+				panic(err)
+			}
 			switch m := msg.(type) {
 			case protocol.CommandNoop:
 			case protocol.CommandCreatePane:

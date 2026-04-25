@@ -1,6 +1,37 @@
 package protocol
 
+import "fmt"
+
 type Command any
+
+func ValidateCommand(cmd Command) error {
+	switch c := cmd.(type) {
+	case CommandNoop:
+		return nil
+	case CommandCreateSession:
+		return nil
+	case CommandCreateWindow:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandCreateWindow: invalid SessionID")
+		}
+		return nil
+	case CommandCreatePane:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandCreatePane: invalid SessionID")
+		}
+		if !c.WindowID.Valid() {
+			return fmt.Errorf("protocol: CommandCreatePane: invalid WindowID")
+		}
+		return nil
+	case CommandPaneInit:
+		if c.Cols == 0 || c.Rows == 0 {
+			return fmt.Errorf("protocol: CommandPaneInit: invalid size %dx%d", c.Cols, c.Rows)
+		}
+		return nil
+	default:
+		return fmt.Errorf("protocol: unknown command type %T", cmd)
+	}
+}
 
 type CommandNoop struct{}
 

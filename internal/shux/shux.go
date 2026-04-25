@@ -12,6 +12,14 @@ import (
 	"shux/internal/ui"
 )
 
+type machine uint8
+
+const (
+	new machine = iota
+	started
+	closed
+)
+
 type Shux struct {
 	Logger *Logger
 
@@ -19,9 +27,11 @@ type Shux struct {
 	WindowID  protocol.WindowID
 	PaneID    protocol.PaneID
 
-	hub        actor.Ref[protocol.Event]
-	supervisor actor.Ref[protocol.Command]
-	started    bool
+	hub          actor.Ref[protocol.Event]
+	supervisor   actor.Ref[protocol.Command]
+	actorCancel context.CancelFunc
+	bootstrapSeq uint64
+	state        machine
 }
 
 func NewShux() (*Shux, error) {
@@ -36,34 +46,54 @@ func NewShux() (*Shux, error) {
 }
 
 func (a *Shux) Close() error {
+	if a.state == closed {
+		return nil
+	}
+	if a.actorCancel != nil {
+		a.actorCancel()
+		a.actorCancel = nil
+	}
+	a.state = closed
 	return a.Logger.Close()
 }
 
 func (a *Shux) Run(opts ...tea.ProgramOption) error {
+	if a.state == closed {
+		return fmt.Errorf("shux: run after close")
+	}
+	a.Logger.Info("shux: run starting")
 	defer a.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if err := a.BootstrapDefaultSession(ctx); err != nil {
+		a.Logger.Error(fmt.Sprintf("shux: bootstrap failed: %v", err))
 		return fmt.Errorf("failed to bootstrap default session: %w", err)
 	}
 
 	_, err := tea.NewProgram(ui.NewModel(a.SessionID, a.WindowID, a.PaneID), opts...).Run()
 	if err != nil {
+		a.Logger.Error(fmt.Sprintf("shux: ui failed: %v", err))
 		return fmt.Errorf("failed to run ui: %w", err)
 	}
 
+	a.Logger.Info("shux: run stopped")
 	return nil
 }
 
 func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
-	if !a.started {
+	a.Logger.Info("shux: bootstrap default session starting")
+	if a.state == closed {
+		return fmt.Errorf("shux: bootstrap after close")
+	}
+	if a.state == new {
 		a.startActors(ctx)
 	}
 
 	events := make(eventChanSink, 3)
-	clientID := protocol.ClientID("bootstrap")
+	a.bootstrapSeq++
+	clientID := protocol.ClientID(fmt.Sprintf("bootstrap-%d", a.bootstrapSeq))
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: events}); err != nil {
 		return err
 	}
@@ -96,17 +126,21 @@ func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
 	a.SessionID = session.SessionID
 	a.WindowID = window.WindowID
 	a.PaneID = pane.PaneID
+	a.Logger.Info("shux: bootstrap default session ready")
 	return nil
 }
 
 func (a *Shux) startActors(ctx context.Context) {
-	if a.started {
+	if a.state != new {
 		panic("shux: actors already started")
 	}
-	hubRef := hub.Start(ctx)
+	a.Logger.Info("shux: starting actors")
+	actorCtx, cancel := context.WithCancel(ctx)
+	hubRef := hub.Start(actorCtx)
 	a.hub = hubRef
-	a.supervisor = supervisor.StartWithHub(ctx, &hubRef)
-	a.started = true
+	a.supervisor = supervisor.StartWithHub(actorCtx, &hubRef)
+	a.actorCancel = cancel
+	a.state = started
 }
 
 type eventChanSink chan protocol.Event

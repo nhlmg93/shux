@@ -48,6 +48,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if err := protocol.ValidateCommand(msg); err != nil {
+				panic(err)
+			}
 			switch msg := msg.(type) {
 			case protocol.CommandNoop:
 			case protocol.CommandPaneInit:

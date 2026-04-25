@@ -1,8 +1,54 @@
 package protocol
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type Event any
+
+func ValidateEvent(event Event) error {
+	switch e := event.(type) {
+	case EventNoop:
+		return nil
+	case EventRegisterSubscriber:
+		if !e.ClientID.Valid() {
+			return fmt.Errorf("protocol: EventRegisterSubscriber: invalid ClientID")
+		}
+		if e.Sink == nil {
+			return fmt.Errorf("protocol: EventRegisterSubscriber: nil Sink")
+		}
+		return nil
+	case EventUnregisterSubscriber:
+		if !e.ClientID.Valid() {
+			return fmt.Errorf("protocol: EventUnregisterSubscriber: invalid ClientID")
+		}
+		return nil
+	case EventSessionCreated:
+		if !e.SessionID.Valid() {
+			return fmt.Errorf("protocol: EventSessionCreated: invalid SessionID")
+		}
+		return nil
+	case EventWindowCreated:
+		if !e.SessionID.Valid() {
+			return fmt.Errorf("protocol: EventWindowCreated: invalid SessionID")
+		}
+		if !e.WindowID.Valid() {
+			return fmt.Errorf("protocol: EventWindowCreated: invalid WindowID")
+		}
+		return nil
+	case EventPaneCreated:
+		if !e.WindowID.Valid() {
+			return fmt.Errorf("protocol: EventPaneCreated: invalid WindowID")
+		}
+		if !e.PaneID.Valid() {
+			return fmt.Errorf("protocol: EventPaneCreated: invalid PaneID")
+		}
+		return nil
+	default:
+		return fmt.Errorf("protocol: unknown event type %T", event)
+	}
+}
 
 // EventSink receives fanout copies of events from the hub (e.g. actor.Ref[Event] in internal/actor).
 type EventSink interface {
