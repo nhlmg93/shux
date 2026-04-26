@@ -29,7 +29,7 @@ type Shux struct {
 
 	hub          actor.Ref[protocol.Event]
 	supervisor   actor.Ref[protocol.Command]
-	actorCancel context.CancelFunc
+	actorCancel  context.CancelFunc
 	bootstrapSeq uint64
 	state        machine
 }
@@ -72,8 +72,15 @@ func (a *Shux) Run(opts ...tea.ProgramOption) error {
 		return fmt.Errorf("failed to bootstrap default session: %w", err)
 	}
 
-	_, err := tea.NewProgram(ui.NewModelWithSupervisor(a.SessionID, a.WindowID, a.PaneID, a.supervisor, ctx), opts...).Run()
-	if err != nil {
+	p := tea.NewProgram(ui.NewModelWithSupervisor(a.SessionID, a.WindowID, a.PaneID, a.supervisor, ctx), opts...)
+	uiID := protocol.ClientID("shux-ui")
+	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: uiID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
+		a.Logger.Error(fmt.Sprintf("shux: ui hub register failed: %v", err))
+		return fmt.Errorf("shux: register ui hub: %w", err)
+	}
+	defer func() { _ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: uiID}) }()
+
+	if _, err := p.Run(); err != nil {
 		a.Logger.Error(fmt.Sprintf("shux: ui failed: %v", err))
 		return fmt.Errorf("failed to run ui: %w", err)
 	}
@@ -91,7 +98,7 @@ func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
 		a.startActors(ctx)
 	}
 
-	events := make(eventChanSink, 3)
+	events := make(eventChanSink, 8)
 	a.bootstrapSeq++
 	clientID := protocol.ClientID(fmt.Sprintf("bootstrap-%d", a.bootstrapSeq))
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: events}); err != nil {

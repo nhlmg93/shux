@@ -11,6 +11,24 @@ import (
 	"shux/internal/protocol"
 )
 
+// HubEvent carries a hub fanout event into the Bubble Tea update loop.
+type HubEvent struct {
+	E protocol.Event
+}
+
+// ProgramEventSink implements protocol.EventSink and forwards to [tea.Program.Send].
+type ProgramEventSink struct {
+	P *tea.Program
+}
+
+func (s *ProgramEventSink) DeliverEvent(_ context.Context, e protocol.Event) error {
+	if s == nil || s.P == nil {
+		return nil
+	}
+	s.P.Send(HubEvent{E: e})
+	return nil
+}
+
 type Model struct {
 	Title      string
 	SessionID  protocol.SessionID
@@ -23,11 +41,11 @@ type Model struct {
 
 func NewModel(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) Model {
 	return Model{
-		Title:      "shux",
-		SessionID:  sessionID,
-		WindowID:   windowID,
-		PaneID:     paneID,
-		Layout:     EmptyLayoutSnapshot(sessionID, windowID),
+		Title:     "shux",
+		SessionID: sessionID,
+		WindowID:  windowID,
+		PaneID:    paneID,
+		Layout:    EmptyLayoutSnapshot(sessionID, windowID),
 	}
 }
 
@@ -46,6 +64,18 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case HubEvent:
+		switch e := msg.E.(type) {
+		case protocol.EventWindowLayoutChanged:
+			snap := LayoutSnapshotFromEvent(e)
+			snap.Title = m.Layout.Title
+			snap.Status = m.Layout.Status
+			if snap.Title == "" {
+				snap.Title = m.Title
+			}
+			m.Layout = snap
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		// Invariant: resize forwarding is all-or-nothing. Partial wiring is a bug.
 		switch {
@@ -71,6 +101,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+		if m.Supervisor.Valid() && m.Ctx != nil {
+			switch msg.String() {
+			case "tab":
+				return m, m.sendWindowCycleFocus()
+			case "ctrl+1":
+				return m, m.sendPaneSplit(protocol.SplitVertical)
+			case "ctrl+2":
+				return m, m.sendPaneSplit(protocol.SplitHorizontal)
+			}
+		}
 	}
 
 	return m, nil
@@ -88,12 +128,34 @@ func (m Model) sendWindowResize(cols, rows uint16) tea.Cmd {
 	}
 }
 
+func (m Model) sendPaneSplit(dir protocol.SplitDirection) tea.Cmd {
+	return func() tea.Msg {
+		_ = m.Supervisor.Send(m.Ctx, protocol.CommandPaneSplit{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+			Direction: dir,
+		})
+		return nil
+	}
+}
+
+func (m Model) sendWindowCycleFocus() tea.Cmd {
+	return func() tea.Msg {
+		_ = m.Supervisor.Send(m.Ctx, protocol.CommandWindowCycleFocus{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+		})
+		return nil
+	}
+}
+
 func (m Model) View() tea.View {
 	return tea.NewView(m.viewString())
 }
 
 // viewString builds terminal output: Lip Gloss borders/styles; content driven by LayoutSnapshot
-// (Bubble Tea still owns the program loop and View contract).
+// (Bubble Tea still owns the program loop and View contract). Pane lines are a logical preview
+// of cell geometry, not a pixel-matched terminal partition.
 func (m Model) viewString() string {
 	w := m.Layout.WindowCols
 	if w < 1 {

@@ -55,6 +55,17 @@ func ValidateEvent(event Event) error {
 		if e.Cols <= 0 || e.Rows <= 0 {
 			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid size %dx%d", e.Cols, e.Rows)
 		}
+		if e.ActivePane != "" && !e.ActivePane.Valid() {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid ActivePane")
+		}
+		for i, p := range e.Panes {
+			if !p.PaneID.Valid() {
+				return fmt.Errorf("protocol: EventWindowLayoutChanged: Panes[%d]: invalid PaneID", i)
+			}
+			if p.Cols <= 0 || p.Rows <= 0 {
+				return fmt.Errorf("protocol: EventWindowLayoutChanged: Panes[%d]: invalid size", i)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("protocol: unknown event type %T", event)
@@ -96,11 +107,22 @@ type EventPaneCreated struct {
 	PaneID   PaneID
 }
 
+// EventLayoutPane is one pane’s placement in window cell space for UI snapshots.
+type EventLayoutPane struct {
+	PaneID PaneID
+	Col    int
+	Row    int
+	Cols   int
+	Rows   int
+}
+
 // EventWindowLayoutChanged is emitted when a window’s cell geometry changes
 // (e.g. after resize or split). Hub fanout and publishers are wired separately.
 type EventWindowLayoutChanged struct {
-	SessionID SessionID
-	WindowID  WindowID
-	Cols      int
-	Rows      int
+	SessionID  SessionID
+	WindowID   WindowID
+	Cols       int
+	Rows       int
+	ActivePane PaneID
+	Panes      []EventLayoutPane
 }

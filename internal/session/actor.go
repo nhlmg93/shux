@@ -55,6 +55,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.Windows.Must(m.WindowID).Send(ctx, m)
 			case protocol.CommandPaneResize:
 				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandWindowCycleFocus:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
 			default:
 				panic(fmt.Sprintf("session: unhandled command type %T", msg))
 			}

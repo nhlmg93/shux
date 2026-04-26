@@ -64,6 +64,14 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Direction %d", int(c.Direction))
 		}
 		return nil
+	case CommandWindowCycleFocus:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandWindowCycleFocus: invalid SessionID")
+		}
+		if !c.WindowID.Valid() {
+			return fmt.Errorf("protocol: CommandWindowCycleFocus: invalid WindowID")
+		}
+		return nil
 	default:
 		return fmt.Errorf("protocol: unknown command type %T", cmd)
 	}
@@ -139,4 +147,10 @@ type CommandPaneSplit struct {
 	SessionID SessionID
 	WindowID  WindowID
 	Direction SplitDirection
+}
+
+// CommandWindowCycleFocus moves focus to the other pane in a 2-pane split (no-op if single pane).
+type CommandWindowCycleFocus struct {
+	SessionID SessionID
+	WindowID  WindowID
 }
