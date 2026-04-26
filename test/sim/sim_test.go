@@ -59,7 +59,7 @@ func TestSim_emits_default_window_layout_on_pane_create(t *testing.T) {
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(eventChanSink, 4)
+	events := make(protocol.EventChanAdapter, 4)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-layout", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,17 +93,6 @@ func TestSim_emits_default_window_layout_on_pane_create(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-type eventChanSink chan protocol.Event
-
-func (s eventChanSink) DeliverEvent(ctx context.Context, e protocol.Event) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case s <- e:
-		return nil
-	}
-}
-
 func assertSimEvent(t *testing.T, events <-chan protocol.Event, want protocol.Event) {
 	t.Helper()
 	select {
@@ -122,7 +111,7 @@ func TestSim_split_and_resize(t *testing.T) {
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(eventChanSink, 12)
+	events := make(protocol.EventChanAdapter, 12)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-split", Sink: events}); err != nil {
 		t.Fatal(err)
 	}

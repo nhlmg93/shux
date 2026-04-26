@@ -4,14 +4,6 @@
 
 Building shux to replace tmux with a simpler, modern, reliable architecture.
 
-## Current feature target
-
-Next focus: **tmux-style split-pane/window layout and resize propagation**. Use **Bubble Tea** as the terminal UI event/render loop and **Lip Gloss** for pane framing and styling. Keep a backend layout authority (`internal/window` plus explicit protocol messages); expose read-only layout snapshots to the UI instead of reaching into mutable actor state.
-
-**In code today:** 2‑pane vertical/horizontal split, proportional refit on window resize, `EventWindowLayoutChanged` with per‑pane cell rects, hub → Bubble Tea updates, and minimal keys (`tab` = cycle focus, `ctrl+1` / `ctrl+2` = split vertical/horizontal) via the supervisor.
-
-**Deferred (until basic split, resize, and render flow are stable):** tmux layout presets, N‑way/arborescent pane trees beyond the current 2‑pane model, pane zoom, advanced pane focus / navigation, persistence and recovery of layouts, and heavy visual/theming work (status bar, fancy borders, themes). Recovery and plugin/config layers stay the long-term test focus but not part of this milestone.
-
 ## Development Guidelines
 
 ### Documentation Boundaries

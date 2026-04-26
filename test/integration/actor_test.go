@@ -53,23 +53,12 @@ func TestCreate_session_window_pane(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-type eventChanSink chan protocol.Event
-
-func (s eventChanSink) DeliverEvent(ctx context.Context, e protocol.Event) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case s <- e:
-		return nil
-	}
-}
-
 func TestHub_fansOutLifecycleEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(eventChanSink, 4)
+	events := make(protocol.EventChanAdapter, 4)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-client", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +97,7 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(eventChanSink, 12)
+	events := make(protocol.EventChanAdapter, 12)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-split", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
