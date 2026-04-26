@@ -37,6 +37,8 @@ type Shux struct {
 	bootstrapped bool
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
+	clientsMu    sync.Mutex
+	clients      map[protocol.ClientID]*tea.Program
 }
 
 func NewShux() (*Shux, error) {
@@ -48,6 +50,7 @@ func NewShux() (*Shux, error) {
 	return &Shux{
 		Logger:   logger,
 		shutdown: make(chan struct{}),
+		clients:  make(map[protocol.ClientID]*tea.Program),
 	}, nil
 }
 
@@ -57,6 +60,20 @@ func (a *Shux) Done() <-chan struct{} {
 
 func (a *Shux) RequestShutdown() {
 	a.shutdownOnce.Do(func() { close(a.shutdown) })
+}
+
+func (a *Shux) DetachAllClients() int {
+	a.clientsMu.Lock()
+	programs := make([]*tea.Program, 0, len(a.clients))
+	for _, p := range a.clients {
+		programs = append(programs, p)
+	}
+	a.clientsMu.Unlock()
+
+	for _, p := range programs {
+		p.Quit()
+	}
+	return len(programs)
 }
 
 func (a *Shux) Close() error {
@@ -126,7 +143,21 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
 		return nil, nil, fmt.Errorf("shux: register ui hub: %w", err)
 	}
-	cleanup := func() { _ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID}) }
+	a.clientsMu.Lock()
+	if _, exists := a.clients[clientID]; exists {
+		a.clientsMu.Unlock()
+		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
+		return nil, nil, fmt.Errorf("shux: duplicate client id %q", clientID)
+	}
+	a.clients[clientID] = p
+	a.clientsMu.Unlock()
+
+	cleanup := func() {
+		a.clientsMu.Lock()
+		delete(a.clients, clientID)
+		a.clientsMu.Unlock()
+		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
+	}
 	return p, cleanup, nil
 }
 

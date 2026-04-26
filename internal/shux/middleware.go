@@ -33,6 +33,18 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 	}
 	return func(next ssh.Handler) ssh.Handler {
 		return func(sess ssh.Session) {
+			if command := sess.Command(); len(command) > 0 {
+				switch command[0] {
+				case "detach", "detach-client":
+					n := app.DetachAllClients()
+					_, _ = fmt.Fprintf(sess, "detached %d client(s)\n", n)
+					return
+				default:
+					wish.Fatalln(sess, "shux: unknown command")
+					return
+				}
+			}
+
 			_, windowChanges, ok := sess.Pty()
 			if !ok {
 				wish.Fatalln(sess, "shux requires an interactive PTY")

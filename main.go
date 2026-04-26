@@ -13,47 +13,59 @@ import (
 
 const defaultAddr = "127.0.0.1:23234"
 
-type processRole uint8
-
-const (
-	roleClient processRole = iota
-	roleDaemonCandidate
-	roleInvalid
-)
-
 var rootCmd = &cobra.Command{
 	Use:     "shux",
 	Short:   "shux / \"you shouldn't have\" /",
 	Version: "0.1.0",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-		switch detectProcessRole() {
-		case roleClient:
-			return client.AttachOrSpawn(ctx, defaultAddr)
-		case roleDaemonCandidate:
-			return daemon.Run(ctx, defaultAddr)
-		case roleInvalid:
-			return fmt.Errorf("shux requires both stdin and stdout to be interactive terminals")
-		default:
-			panic("shux: unknown process role")
-		}
+		return runRoot(cmd.Context())
 	},
+}
+
+var attachCmd = &cobra.Command{
+	Use:     "attach",
+	Aliases: []string{"a", "attach-session"},
+	Short:   "Attach to the shux session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return client.AttachOrSpawn(cmd.Context(), defaultAddr)
+	},
+}
+
+var detachCmd = &cobra.Command{
+	Use:     "detach",
+	Aliases: []string{"detach-client"},
+	Short:   "Detach shux clients",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return client.Detach(cmd.Context(), defaultAddr)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(attachCmd, detachCmd)
 }
 
 func main() {
 	cobra.CheckErr(rootCmd.Execute())
 }
 
-func detectProcessRole() processRole {
-	stdinTTY := term.IsTerminal(int(os.Stdin.Fd()))
-	stdoutTTY := term.IsTerminal(int(os.Stdout.Fd()))
-
-	switch {
-	case stdinTTY && stdoutTTY:
-		return roleClient
-	case !stdinTTY && !stdoutTTY:
-		return roleDaemonCandidate
-	default:
-		return roleInvalid
+func runRoot(ctx context.Context) error {
+	if isInteractiveTerminal() {
+		return client.AttachOrSpawn(ctx, defaultAddr)
 	}
+
+	if isDaemonChild() {
+		return daemon.Run(ctx, defaultAddr)
+	}
+
+	return fmt.Errorf("shux requires an interactive terminal")
+}
+
+func isInteractiveTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) &&
+		term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func isDaemonChild() bool {
+	return !term.IsTerminal(int(os.Stdin.Fd())) &&
+		!term.IsTerminal(int(os.Stdout.Fd()))
 }

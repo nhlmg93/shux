@@ -89,7 +89,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
-		// Invariant: resize forwarding is all-or-nothing. Partial wiring is a bug.
 		switch {
 		case m.Supervisor.Valid() && m.Ctx == nil:
 			panic("ui: nil context with valid supervisor ref")
@@ -98,7 +97,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case !m.Supervisor.Valid():
 			return m, nil
 		}
-		// Below: untrusted TTY/WM input; bound by ignoring rather than panicking.
 		if msg.Width <= 0 || msg.Height <= 0 {
 			return m, nil
 		}

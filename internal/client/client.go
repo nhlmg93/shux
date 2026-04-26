@@ -25,7 +25,7 @@ func AttachOrSpawn(ctx context.Context, addr string) error {
 	if available {
 		return Attach(ctx, addr)
 	}
-	if err := SpawnDetached(); err != nil {
+	if err := spawnDetached(); err != nil {
 		return err
 	}
 	if err := WaitReady(ctx, addr, 2*time.Second); err != nil {
@@ -83,6 +83,29 @@ func Attach(ctx context.Context, addr string) error {
 	}
 }
 
+func Detach(ctx context.Context, addr string) error {
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput("detach-client")
+	if err != nil {
+		return fmt.Errorf("client: detach: %w: %s", err, out)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
 func ServerAvailable(ctx context.Context, addr string) (bool, error) {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
@@ -102,7 +125,7 @@ func ServerAvailable(ctx context.Context, addr string) (bool, error) {
 	return true, nil
 }
 
-func SpawnDetached() error {
+func spawnDetached() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("client: executable path: %w", err)
