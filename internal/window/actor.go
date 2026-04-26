@@ -124,6 +124,11 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				}
 				a.emitLayout(ctx, m.SessionID, m.WindowID)
 			case protocol.CommandPaneSplit:
+				// Current layout supports one split only. Extra split requests are user input,
+				// so bound them as no-ops instead of crashing the multiplexer.
+				if len(a.paneIDs) >= 2 {
+					continue
+				}
 				if len(a.paneIDs) != 1 {
 					panic("window: CommandPaneSplit: need exactly one pane before split")
 				}

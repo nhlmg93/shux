@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -105,9 +104,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "tab":
 				return m, m.sendWindowCycleFocus()
-			case "ctrl+1":
+			case "v", "ctrl+1":
 				return m, m.sendPaneSplit(protocol.SplitVertical)
-			case "ctrl+2":
+			case "s", "ctrl+2":
 				return m, m.sendPaneSplit(protocol.SplitHorizontal)
 			}
 		}
@@ -150,7 +149,9 @@ func (m Model) sendWindowCycleFocus() tea.Cmd {
 }
 
 func (m Model) View() tea.View {
-	return tea.NewView(m.viewString())
+	v := tea.NewView(m.viewString())
+	v.AltScreen = true
+	return v
 }
 
 // viewString builds terminal output: Lip Gloss borders/styles; content driven by LayoutSnapshot
@@ -161,20 +162,11 @@ func (m Model) viewString() string {
 	if w < 1 {
 		w = 80
 	}
-	titleText := m.Layout.Title
-	if titleText == "" {
-		titleText = m.Title
-	}
-	titleBar := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Width(w).Render(titleText)
 	var body string
 	if len(m.Layout.Panes) == 0 {
 		bordered := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("8"))
-		inner := strings.Join([]string{
-			fmt.Sprintf("session: %s", m.SessionID),
-			fmt.Sprintf("window: %s", m.WindowID),
-			fmt.Sprintf("pane: %s", m.PaneID),
-		}, "\n")
-		body = bordered.Width(w).Render(inner)
+		inner := fmt.Sprintf("%s  waiting for layout", m.PaneID)
+		body = bordered.Width(w).Height(max(1, m.Layout.WindowRows)).Render(inner)
 	} else {
 		blocks := make([]string, 0, len(m.Layout.Panes))
 		for i, p := range m.Layout.Panes {
@@ -182,16 +174,20 @@ func (m Model) viewString() string {
 			if m.Layout.ActivePane == "" && i == 0 {
 				active = true
 			}
-			st := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
+			st := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Width(max(1, p.Cols)).Height(max(1, p.Rows))
 			if active {
 				st = st.BorderForeground(lipgloss.Color("205"))
 			} else {
 				st = st.BorderForeground(lipgloss.Color("8"))
 			}
 			inner := fmt.Sprintf("%s  %d×%d  @%d,%d", p.PaneID, p.Cols, p.Rows, p.Col, p.Row)
-			blocks = append(blocks, st.Width(w).Render(inner))
+			blocks = append(blocks, st.Render(inner))
 		}
-		body = lipgloss.JoinVertical(lipgloss.Left, blocks...)
+		if len(m.Layout.Panes) == 2 && m.Layout.Panes[0].Row == m.Layout.Panes[1].Row {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, blocks...)
+		} else {
+			body = lipgloss.JoinVertical(lipgloss.Left, blocks...)
+		}
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, titleBar, body)
+	return body
 }
