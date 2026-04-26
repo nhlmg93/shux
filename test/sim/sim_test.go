@@ -34,8 +34,8 @@ func TestShux_bootstrapsDefaultSession(t *testing.T) {
 	if err := app.BootstrapDefaultSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if app.SessionID != protocol.SessionID("s-1") || app.WindowID != protocol.WindowID("w-1") || app.PaneID != protocol.PaneID("p-1") {
-		t.Fatalf("ids = %q %q %q", app.SessionID, app.WindowID, app.PaneID)
+	if app.DefaultSessionID != protocol.SessionID("s-1") || app.DefaultWindowID != protocol.WindowID("w-1") || app.DefaultPaneID != protocol.PaneID("p-1") {
+		t.Fatalf("ids = %q %q %q", app.DefaultSessionID, app.DefaultWindowID, app.DefaultPaneID)
 	}
 }
 

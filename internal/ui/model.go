@@ -10,6 +10,8 @@ import (
 	"shux/internal/protocol"
 )
 
+type initialRenderMsg struct{}
+
 // HubEvent carries a hub fanout event into the Bubble Tea update loop.
 type HubEvent struct {
 	E protocol.Event
@@ -36,6 +38,8 @@ type Model struct {
 	Layout     LayoutSnapshot
 	Supervisor actor.Ref[protocol.Command]
 	Ctx        context.Context
+	Shutdown   func()
+	Prefix     bool
 }
 
 func NewModel(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) Model {
@@ -57,8 +61,14 @@ func NewModelWithSupervisor(sessionID protocol.SessionID, windowID protocol.Wind
 	return m
 }
 
+func NewModelWithSupervisorAndShutdown(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, sup actor.Ref[protocol.Command], ctx context.Context, shutdown func()) Model {
+	m := NewModelWithSupervisor(sessionID, windowID, paneID, sup, ctx)
+	m.Shutdown = shutdown
+	return m
+}
+
 func (m Model) Init() tea.Cmd {
-	return nil
+	return func() tea.Msg { return initialRenderMsg{} }
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -66,6 +76,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case HubEvent:
 		switch e := msg.E.(type) {
 		case protocol.EventWindowLayoutChanged:
+			if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
+				return m, nil
+			}
 			snap := LayoutSnapshotFromEvent(e)
 			snap.Title = m.Layout.Title
 			snap.Status = m.Layout.Status
@@ -97,17 +110,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cols, rows := uint16(msg.Width), uint16(msg.Height)
 		return m, m.sendWindowResize(cols, rows)
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
+		key := msg.String()
+		if !m.Prefix {
+			if key == "ctrl+b" {
+				m.Prefix = true
+			}
+			return m, nil
 		}
+		m.Prefix = false
 		if m.Supervisor.Valid() && m.Ctx != nil {
-			switch msg.String() {
-			case "tab":
-				return m, m.sendWindowCycleFocus()
-			case "v", "ctrl+1":
+			switch key {
+			case "d":
+				return m, tea.Quit
+			case "%":
 				return m, m.sendPaneSplit(protocol.SplitVertical)
-			case "s", "ctrl+2":
+			case "\"":
 				return m, m.sendPaneSplit(protocol.SplitHorizontal)
+			case "o":
+				return m, m.sendWindowCycleFocus()
+			case "q":
+				if m.Shutdown == nil {
+					panic("ui: shutdown not wired")
+				}
+				return m, m.sendShutdown()
+			case "c":
+				panic("ui: create window not implemented")
+			case "n":
+				panic("ui: next window not implemented")
+			case "p":
+				panic("ui: previous window not implemented")
+			case "?":
+				panic("ui: list key bindings not implemented")
+			case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				panic("ui: select window by index not implemented")
 			}
 		}
 	}
@@ -145,6 +180,13 @@ func (m Model) sendWindowCycleFocus() tea.Cmd {
 			WindowID:  m.WindowID,
 		})
 		return nil
+	}
+}
+
+func (m Model) sendShutdown() tea.Cmd {
+	return func() tea.Msg {
+		m.Shutdown()
+		return tea.Quit()
 	}
 }
 

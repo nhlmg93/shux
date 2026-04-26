@@ -12,10 +12,10 @@ import (
 	"shux/internal/shux"
 )
 
-// ctrlC is ETX (ASCII 3), what a TTY sends for ctrl+c.
-const ctrlC = 0x03
+// ctrlB is STX (ASCII 2), what a TTY sends for ctrl+b.
+const ctrlB = 0x02
 
-func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
+func TestShuxRun_rendersTitleAndDetachesOnPrefixD(t *testing.T) {
 	s, err := shux.NewShux()
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 	r, w := io.Pipe()
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		_, _ = w.Write([]byte{ctrlC})
+		_, _ = w.Write([]byte{ctrlB, 'd'})
 		_ = w.Close()
 	}()
 
@@ -44,7 +44,7 @@ func TestShuxRun_rendersTitleAndQuitsOnCtrlC(t *testing.T) {
 	if out.Len() == 0 {
 		t.Fatal("expected some terminal output from the program")
 	}
-	if s.SessionID != protocol.SessionID("s-1") || s.WindowID != protocol.WindowID("w-1") || s.PaneID != protocol.PaneID("p-1") {
-		t.Fatalf("ids = %q %q %q", s.SessionID, s.WindowID, s.PaneID)
+	if s.DefaultSessionID != protocol.SessionID("s-1") || s.DefaultWindowID != protocol.WindowID("w-1") || s.DefaultPaneID != protocol.PaneID("p-1") {
+		t.Fatalf("ids = %q %q %q", s.DefaultSessionID, s.DefaultWindowID, s.DefaultPaneID)
 	}
 }
