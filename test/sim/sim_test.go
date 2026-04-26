@@ -19,6 +19,7 @@ const (
 	simWindowID  = protocol.WindowID("w-1")
 	simPaneID    = protocol.PaneID("p-1")
 	simPane2ID   = protocol.PaneID("p-2")
+	simClientID  = protocol.ClientID("sim-client")
 )
 
 func TestShux_bootstrapsDefaultSession(t *testing.T) {
@@ -79,11 +80,11 @@ func TestSim_emits_default_window_layout_on_pane_create(t *testing.T) {
 	assertSimEvent(t, events, protocol.EventWindowCreated{SessionID: simSessionID, WindowID: simWindowID})
 	assertSimEvent(t, events, protocol.EventPaneCreated{WindowID: simWindowID, PaneID: simPaneID})
 	assertSimEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  simSessionID,
-		WindowID:   simWindowID,
-		Cols:       80,
-		Rows:       24,
-		ActivePane: simPaneID,
+		SessionID: simSessionID,
+		WindowID:  simWindowID,
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
 		Panes: []protocol.EventLayoutPane{
 			{PaneID: simPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
 		},
@@ -128,23 +129,34 @@ func TestSim_split_and_resize(t *testing.T) {
 	}
 	drain4(t, events)
 	if err := ref.Send(ctx, protocol.CommandPaneSplit{
-		SessionID: simSessionID,
-		WindowID:  simWindowID,
-		Direction: protocol.SplitVertical,
+		Meta:         protocol.CommandMeta{ClientID: simClientID, RequestID: 1},
+		SessionID:    simSessionID,
+		WindowID:     simWindowID,
+		TargetPaneID: simPaneID,
+		Direction:    protocol.SplitVertical,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	assertSimEvent(t, events, protocol.EventPaneCreated{WindowID: simWindowID, PaneID: simPane2ID})
 	assertSimEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  simSessionID,
-		WindowID:   simWindowID,
-		Cols:       80,
-		Rows:       24,
-		ActivePane: simPane2ID,
+		SessionID: simSessionID,
+		WindowID:  simWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
 		Panes: []protocol.EventLayoutPane{
 			{PaneID: simPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
 			{PaneID: simPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
 		},
+	})
+	assertSimEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     simClientID,
+		RequestID:    1,
+		SessionID:    simSessionID,
+		WindowID:     simWindowID,
+		TargetPaneID: simPaneID,
+		NewPaneID:    simPane2ID,
+		Revision:     2,
 	})
 	cancel()
 	time.Sleep(50 * time.Millisecond)

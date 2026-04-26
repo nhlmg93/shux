@@ -52,11 +52,11 @@ func ValidateEvent(event Event) error {
 		if !e.WindowID.Valid() {
 			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid WindowID")
 		}
+		if e.Revision == 0 {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid Revision")
+		}
 		if e.Cols <= 0 || e.Rows <= 0 {
 			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid size %dx%d", e.Cols, e.Rows)
-		}
-		if e.ActivePane != "" && !e.ActivePane.Valid() {
-			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid ActivePane")
 		}
 		for i, p := range e.Panes {
 			if !p.PaneID.Valid() {
@@ -65,6 +65,49 @@ func ValidateEvent(event Event) error {
 			if p.Cols <= 0 || p.Rows <= 0 {
 				return fmt.Errorf("protocol: EventWindowLayoutChanged: Panes[%d]: invalid size", i)
 			}
+		}
+		return nil
+	case EventPaneSplitCompleted:
+		if !e.ClientID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid ClientID")
+		}
+		if !e.RequestID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid RequestID")
+		}
+		if !e.SessionID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid SessionID")
+		}
+		if !e.WindowID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid WindowID")
+		}
+		if !e.TargetPaneID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid TargetPaneID")
+		}
+		if !e.NewPaneID.Valid() {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid NewPaneID")
+		}
+		if e.Revision == 0 {
+			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid Revision")
+		}
+		return nil
+	case EventCommandRejected:
+		if !e.ClientID.Valid() {
+			return fmt.Errorf("protocol: EventCommandRejected: invalid ClientID")
+		}
+		if !e.RequestID.Valid() {
+			return fmt.Errorf("protocol: EventCommandRejected: invalid RequestID")
+		}
+		if !e.SessionID.Valid() {
+			return fmt.Errorf("protocol: EventCommandRejected: invalid SessionID")
+		}
+		if !e.WindowID.Valid() {
+			return fmt.Errorf("protocol: EventCommandRejected: invalid WindowID")
+		}
+		if e.Command == "" {
+			return fmt.Errorf("protocol: EventCommandRejected: empty Command")
+		}
+		if e.Reason == "" {
+			return fmt.Errorf("protocol: EventCommandRejected: empty Reason")
 		}
 		return nil
 	default:
@@ -119,10 +162,32 @@ type EventLayoutPane struct {
 // EventWindowLayoutChanged is emitted when a window’s cell geometry changes
 // (e.g. after resize or split). Hub fanout and publishers are wired separately.
 type EventWindowLayoutChanged struct {
-	SessionID  SessionID
-	WindowID   WindowID
-	Cols       int
-	Rows       int
-	ActivePane PaneID
-	Panes      []EventLayoutPane
+	SessionID SessionID
+	WindowID  WindowID
+	Revision  uint64
+	Cols      int
+	Rows      int
+	Panes     []EventLayoutPane
+}
+
+// EventPaneSplitCompleted correlates an accepted pane split back to the client
+// that requested it. Geometry is still published through EventWindowLayoutChanged.
+type EventPaneSplitCompleted struct {
+	ClientID     ClientID
+	RequestID    RequestID
+	SessionID    SessionID
+	WindowID     WindowID
+	TargetPaneID PaneID
+	NewPaneID    PaneID
+	Revision     uint64
+}
+
+// EventCommandRejected reports a bounded command failure without crashing actors.
+type EventCommandRejected struct {
+	ClientID  ClientID
+	RequestID RequestID
+	SessionID SessionID
+	WindowID  WindowID
+	Command   string
+	Reason    string
 }

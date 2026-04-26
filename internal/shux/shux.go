@@ -20,8 +20,48 @@ const (
 	started
 	closed
 
-	bootstrapClientID = protocol.ClientID("bootstrap")
+	bootstrapClientID   = protocol.ClientID("bootstrap")
+	layoutCacheClientID = protocol.ClientID("layout-cache")
 )
+
+type layoutCache struct {
+	mu      sync.Mutex
+	layouts map[protocol.SessionID]map[protocol.WindowID]protocol.EventWindowLayoutChanged
+}
+
+func newLayoutCache() *layoutCache {
+	return &layoutCache{layouts: make(map[protocol.SessionID]map[protocol.WindowID]protocol.EventWindowLayoutChanged)}
+}
+
+func (c *layoutCache) DeliverEvent(_ context.Context, e protocol.Event) error {
+	layout, ok := e.(protocol.EventWindowLayoutChanged)
+	if !ok {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	windows := c.layouts[layout.SessionID]
+	if windows == nil {
+		windows = make(map[protocol.WindowID]protocol.EventWindowLayoutChanged)
+		c.layouts[layout.SessionID] = windows
+	}
+	windows[layout.WindowID] = layout
+	return nil
+}
+
+func (c *layoutCache) Snapshot(sessionID protocol.SessionID, windowID protocol.WindowID) (protocol.EventWindowLayoutChanged, bool) {
+	if c == nil {
+		return protocol.EventWindowLayoutChanged{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	windows := c.layouts[sessionID]
+	if windows == nil {
+		return protocol.EventWindowLayoutChanged{}, false
+	}
+	layout, ok := windows[windowID]
+	return layout, ok
+}
 
 type Shux struct {
 	Logger *Logger
@@ -39,6 +79,7 @@ type Shux struct {
 	shutdownOnce sync.Once
 	clientsMu    sync.Mutex
 	clients      map[protocol.ClientID]*tea.Program
+	layouts      *layoutCache
 }
 
 func NewShux() (*Shux, error) {
@@ -139,7 +180,18 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 	}
 
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
-	p := tea.NewProgram(ui.NewModelWithSupervisorAndShutdown(a.DefaultSessionID, a.DefaultWindowID, a.DefaultPaneID, a.supervisor, ctx, a.RequestShutdown), opts...)
+	exitIntent := ui.ExitDetach
+	exitIntentMu := sync.Mutex{}
+	setExitIntent := func(intent ui.ExitIntent) {
+		exitIntentMu.Lock()
+		exitIntent = intent
+		exitIntentMu.Unlock()
+	}
+	model := ui.NewModelWithSupervisorAndExit(clientID, a.DefaultSessionID, a.DefaultWindowID, a.DefaultPaneID, a.supervisor, ctx, setExitIntent)
+	if layout, ok := a.layouts.Snapshot(a.DefaultSessionID, a.DefaultWindowID); ok {
+		model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
+	}
+	p := tea.NewProgram(model, opts...)
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
 		return nil, nil, fmt.Errorf("shux: register ui hub: %w", err)
 	}
@@ -153,10 +205,18 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 	a.clientsMu.Unlock()
 
 	cleanup := func() {
+		exitIntentMu.Lock()
+		intent := exitIntent
+		exitIntentMu.Unlock()
+
 		a.clientsMu.Lock()
 		delete(a.clients, clientID)
+		remaining := len(a.clients)
 		a.clientsMu.Unlock()
 		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
+		if intent == ui.ExitQuit && remaining == 0 {
+			a.RequestShutdown()
+		}
 	}
 	return p, cleanup, nil
 }
@@ -225,6 +285,11 @@ func (a *Shux) Start(ctx context.Context) error {
 	actorCtx, cancel := context.WithCancel(ctx)
 	hubRef := hub.Start(actorCtx)
 	a.hub = hubRef
+	a.layouts = newLayoutCache()
+	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: layoutCacheClientID, Sink: a.layouts}); err != nil {
+		cancel()
+		return err
+	}
 	a.supervisor = supervisor.StartWithHub(actorCtx, &hubRef)
 	a.actorCancel = cancel
 	a.state = started

@@ -15,10 +15,11 @@ type Panes = *actor.Lifecycle[protocol.PaneID, protocol.Command]
 
 type Actor struct {
 	Panes
-	Layout  Layout
-	paneIDs []protocol.PaneID
-	hub     actor.EventRef
-	seq     uint64
+	Layout   Layout
+	paneIDs  []protocol.PaneID
+	hub      actor.EventRef
+	seq      uint64
+	revision uint64
 }
 
 func NewActor(hub actor.EventRef) *Actor {
@@ -36,10 +37,6 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 	if a.hub == nil {
 		return
 	}
-	act, ok := a.Layout.ActivePane()
-	if !ok {
-		act = ""
-	}
 	ids := a.Layout.PaneIDs()
 	panes := make([]protocol.EventLayoutPane, 0, len(ids))
 	for _, pid := range ids {
@@ -54,12 +51,26 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 		})
 	}
 	_ = a.hub.Send(ctx, protocol.EventWindowLayoutChanged{
-		SessionID:  sid,
-		WindowID:   wid,
-		Cols:       int(a.Layout.WindowCols),
-		Rows:       int(a.Layout.WindowRows),
-		ActivePane: act,
-		Panes:      panes,
+		SessionID: sid,
+		WindowID:  wid,
+		Revision:  a.revision,
+		Cols:      int(a.Layout.WindowCols),
+		Rows:      int(a.Layout.WindowRows),
+		Panes:     panes,
+	})
+}
+
+func (a *Actor) reject(ctx context.Context, m protocol.CommandPaneSplit, reason string) {
+	if a.hub == nil {
+		return
+	}
+	_ = a.hub.Send(ctx, protocol.EventCommandRejected{
+		ClientID:  m.Meta.ClientID,
+		RequestID: m.Meta.RequestID,
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Command:   "pane-split",
+		Reason:    reason,
 	})
 }
 
@@ -101,6 +112,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 					_ = a.hub.Send(ctx, protocol.EventPaneCreated{WindowID: m.WindowID, PaneID: pid})
 				}
 				a.Layout.SetSinglePane(pid)
+				a.revision++
 				if r, ok := a.Layout.Rect(pid); !ok {
 					panic("window: layout: missing rect after SetSinglePane")
 				} else {
@@ -109,6 +121,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.emitLayout(ctx, m.SessionID, m.WindowID)
 			case protocol.CommandWindowResize:
 				a.Layout.SetWindowSize(m.Cols, m.Rows)
+				a.revision++
 				for _, pid := range a.Layout.PaneIDs() {
 					r, ok := a.Layout.Rect(pid)
 					if !ok {
@@ -124,41 +137,44 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				}
 				a.emitLayout(ctx, m.SessionID, m.WindowID)
 			case protocol.CommandPaneSplit:
-				// Current layout supports one split only. Extra split requests are user input,
-				// so bound them as no-ops instead of crashing the multiplexer.
-				if len(a.paneIDs) >= 2 {
+				if err := a.Layout.CanSplitPane(m.TargetPaneID, m.Direction); err != nil {
+					a.reject(ctx, m, err.Error())
 					continue
-				}
-				if len(a.paneIDs) != 1 {
-					panic("window: CommandPaneSplit: need exactly one pane before split")
 				}
 				a.seq++
 				newID := protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
+				if err := a.Layout.SplitPane(m.TargetPaneID, m.Direction, newID); err != nil {
+					a.reject(ctx, m, err.Error())
+					continue
+				}
+				a.revision++
 				a.paneIDs = append(a.paneIDs, newID)
 				a.Init(newID, pane.Start(ctx))
 				if a.hub != nil {
 					_ = a.hub.Send(ctx, protocol.EventPaneCreated{WindowID: m.WindowID, PaneID: newID})
 				}
-				a.Layout.SplitActive(m.Direction, newID)
-				for i, pid := range a.Layout.PaneIDs() {
+				for _, pid := range a.Layout.PaneIDs() {
 					r, ok := a.Layout.Rect(pid)
 					if !ok {
 						panic("window: layout: missing rect after split")
 					}
-					init := i == len(a.Layout.PaneIDs())-1
-					if init {
+					if pid == newID {
 						a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, true)
 					} else {
 						a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, false)
 					}
 				}
 				a.emitLayout(ctx, m.SessionID, m.WindowID)
-			case protocol.CommandWindowCycleFocus:
-				before, _ := a.Layout.ActivePane()
-				a.Layout.CycleActive()
-				after, _ := a.Layout.ActivePane()
-				if before != after {
-					a.emitLayout(ctx, m.SessionID, m.WindowID)
+				if a.hub != nil {
+					_ = a.hub.Send(ctx, protocol.EventPaneSplitCompleted{
+						ClientID:     m.Meta.ClientID,
+						RequestID:    m.Meta.RequestID,
+						SessionID:    m.SessionID,
+						WindowID:     m.WindowID,
+						TargetPaneID: m.TargetPaneID,
+						NewPaneID:    newID,
+						Revision:     a.revision,
+					})
 				}
 			case protocol.CommandPaneResize:
 				a.Panes.Must(m.PaneID).Send(ctx, m)

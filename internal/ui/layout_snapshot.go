@@ -7,6 +7,7 @@ import "shux/internal/protocol"
 type LayoutSnapshot struct {
 	SessionID  protocol.SessionID
 	WindowID   protocol.WindowID
+	Revision   uint64
 	WindowCols int
 	WindowRows int
 	ActivePane protocol.PaneID
@@ -43,9 +44,9 @@ func LayoutSnapshotFromEvent(e protocol.EventWindowLayoutChanged) LayoutSnapshot
 	return LayoutSnapshot{
 		SessionID:  e.SessionID,
 		WindowID:   e.WindowID,
+		Revision:   e.Revision,
 		WindowCols: e.Cols,
 		WindowRows: e.Rows,
-		ActivePane: e.ActivePane,
 		Panes:      panes,
 	}
 }

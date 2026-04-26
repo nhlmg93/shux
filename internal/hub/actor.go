@@ -60,6 +60,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 				a.fanout(ctx, m)
 			case protocol.EventWindowLayoutChanged:
 				a.fanout(ctx, m)
+			case protocol.EventPaneSplitCompleted:
+				a.fanout(ctx, m)
+			case protocol.EventCommandRejected:
+				a.fanout(ctx, m)
 			default:
 				panic(fmt.Sprintf("hub: unhandled event type %T", msg))
 			}

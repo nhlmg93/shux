@@ -69,6 +69,52 @@ func TestSecondDaemonCandidateExitsCleanlyWhenShuxOwnsPort(t *testing.T) {
 	}
 }
 
+func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	peerDone := make(chan []byte, 1)
+	go func() { peerDone <- attachAndDetachAfter(t, addr, 1200*time.Millisecond) }()
+	time.Sleep(200 * time.Millisecond)
+
+	attachAndSendKeys(t, addr, []byte{ctrlB, 'q'}, 100*time.Millisecond)
+
+	select {
+	case <-peerDone:
+		t.Fatal("peer client exited when another client quit")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	select {
+	case <-peerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("peer client did not detach after its own detach key")
+	}
+
+	available, err := client.ServerAvailable(t.Context(), addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !available {
+		t.Fatal("daemon should remain available after non-last client quit")
+	}
+}
+
+func TestLastClientDetachDoesNotStopDaemon(t *testing.T) {
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	attachAndDetachAfter(t, addr, 100*time.Millisecond)
+
+	available, err := client.ServerAvailable(t.Context(), addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !available {
+		t.Fatal("daemon should remain available after last client detach")
+	}
+}
+
 func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	addr := freeLoopbackAddr(t)
 	ctx, cancel := context.WithCancel(t.Context())

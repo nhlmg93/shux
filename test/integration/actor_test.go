@@ -11,12 +11,19 @@ import (
 	"shux/internal/supervisor"
 )
 
+type commandSender interface {
+	Send(context.Context, protocol.Command) error
+}
+
 // ID suffixes match supervisor/session/window counters: first create in each actor is "1".
 const (
 	initSessionID = protocol.SessionID("s-1")
 	initWindowID  = protocol.WindowID("w-1")
 	initPaneID    = protocol.PaneID("p-1")
 	initPane2ID   = protocol.PaneID("p-2")
+	initPane3ID   = protocol.PaneID("p-3")
+	testClientID  = protocol.ClientID("test-client")
+	testClient2ID = protocol.ClientID("test-client-2")
 )
 
 func TestStart_acceptsCommandNoop(t *testing.T) {
@@ -78,11 +85,11 @@ func TestHub_fansOutLifecycleEvents(t *testing.T) {
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
 	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  initSessionID,
-		WindowID:   initWindowID,
-		Cols:       80,
-		Rows:       24,
-		ActivePane: initPaneID,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
 		Panes: []protocol.EventLayoutPane{
 			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
 		},
@@ -97,55 +104,44 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(protocol.EventChanAdapter, 12)
+	events := make(protocol.EventChanAdapter, 16)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-split", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
 
 	ref := supervisor.StartWithHub(ctx, &eref)
-	if err := ref.Send(ctx, protocol.CommandCreateSession{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ref.Send(ctx, protocol.CommandCreateWindow{SessionID: initSessionID}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ref.Send(ctx, protocol.CommandCreatePane{SessionID: initSessionID, WindowID: initWindowID}); err != nil {
-		t.Fatal(err)
-	}
-
-	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
-	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
-	assertEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  initSessionID,
-		WindowID:   initWindowID,
-		Cols:       80,
-		Rows:       24,
-		ActivePane: initPaneID,
-		Panes: []protocol.EventLayoutPane{
-			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
-		},
-	})
+	bootstrapWindow(t, ctx, ref, events)
 
 	if err := ref.Send(ctx, protocol.CommandPaneSplit{
-		SessionID: initSessionID,
-		WindowID:  initWindowID,
-		Direction: protocol.SplitVertical,
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane2ID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  initSessionID,
-		WindowID:   initWindowID,
-		Cols:       80,
-		Rows:       24,
-		ActivePane: initPane2ID,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
 		Panes: []protocol.EventLayoutPane{
 			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
 			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
 		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
 	})
 
 	if err := ref.Send(ctx, protocol.CommandWindowResize{
@@ -158,11 +154,11 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 	}
 
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
-		SessionID:  initSessionID,
-		WindowID:   initWindowID,
-		Cols:       100,
-		Rows:       30,
-		ActivePane: initPane2ID,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      100,
+		Rows:      30,
 		Panes: []protocol.EventLayoutPane{
 			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 50, Rows: 30},
 			{PaneID: initPane2ID, Col: 50, Row: 0, Cols: 50, Rows: 30},
@@ -171,6 +167,144 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 
 	cancel()
 	time.Sleep(50 * time.Millisecond)
+}
+
+func TestHub_serializes_repeated_targeted_splits(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 32)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-concurrent-split", Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+	ref := supervisor.StartWithHub(ctx, &eref)
+	bootstrapWindow(t, ctx, ref, events)
+
+	if err := ref.Send(ctx, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	if err := ref.Send(ctx, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClient2ID, RequestID: 2},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitHorizontal,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane3ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 12},
+			{PaneID: initPane3ID, Col: 0, Row: 12, Cols: 40, Rows: 12},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClient2ID,
+		RequestID:    2,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane3ID,
+		Revision:     3,
+	})
+}
+
+func TestHub_rejects_missing_target_split_without_crashing(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-reject-split")
+	if err := ref.Send(ctx, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 7},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: protocol.PaneID("missing"),
+		Direction:    protocol.SplitVertical,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertEvent(t, events, protocol.EventCommandRejected{
+		ClientID:  testClientID,
+		RequestID: 7,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Command:   "pane-split",
+		Reason:    "target pane missing",
+	})
+}
+
+func startWindowWithEvents(t *testing.T, ctx context.Context, clientID protocol.ClientID) (commandSender, <-chan protocol.Event) {
+	t.Helper()
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 16)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+	ref := supervisor.StartWithHub(ctx, &eref)
+	bootstrapWindow(t, ctx, ref, events)
+	return ref, events
+}
+
+func bootstrapWindow(t *testing.T, ctx context.Context, ref commandSender, events <-chan protocol.Event) {
+	t.Helper()
+	if err := ref.Send(ctx, protocol.CommandCreateSession{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ref.Send(ctx, protocol.CommandCreateWindow{SessionID: initSessionID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ref.Send(ctx, protocol.CommandCreatePane{SessionID: initSessionID, WindowID: initWindowID}); err != nil {
+		t.Fatal(err)
+	}
+	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
+	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
+	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
+	})
 }
 
 func assertEvent(t *testing.T, events <-chan protocol.Event, want protocol.Event) {

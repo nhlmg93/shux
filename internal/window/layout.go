@@ -7,6 +7,8 @@ import (
 )
 
 const minPaneCells = 1
+const defaultSplitRatio = uint16(5000)
+const splitRatioScale = uint16(10000)
 
 // Rect is pane placement in window cell coordinates, origin top-left.
 type Rect struct {
@@ -15,26 +17,28 @@ type Rect struct {
 	Rows     uint16
 }
 
-type layoutPhase uint8
+type layoutNode struct {
+	PaneID protocol.PaneID
+	Split  protocol.SplitDirection
+	Ratio  uint16
+	First  *layoutNode
+	Second *layoutNode
+}
 
-const (
-	phaseEmpty layoutPhase = iota
-	phaseOne
-	phaseSplit
-)
+func leaf(id protocol.PaneID) *layoutNode {
+	return &layoutNode{PaneID: id}
+}
 
-// Layout is window-local tiling: window size, per-pane geometry, and active pane.
-// Invariants: panes are inside the window, do not overlap, and have non-zero size.
+func (n *layoutNode) isLeaf() bool {
+	return n != nil && n.PaneID.Valid()
+}
+
+// Layout is window-local shared tiling geometry. It deliberately does not own
+// client focus; clients carry explicit pane targets on commands.
 type Layout struct {
 	WindowCols, WindowRows uint16
-	phase                  layoutPhase
+	root                   *layoutNode
 	panes                  map[protocol.PaneID]Rect
-	active                 protocol.PaneID
-	// phaseSplit: paneA is left or top, paneB is right or bottom.
-	paneA, paneB  protocol.PaneID
-	splitVertical bool
-	// Vertical: width of left pane. Horizontal: height of top pane.
-	splitPrimary uint16
 }
 
 // NewLayout returns an empty layout for a window of the given size.
@@ -45,7 +49,6 @@ func NewLayout(windowCols, windowRows uint16) Layout {
 	return Layout{
 		WindowCols: windowCols,
 		WindowRows: windowRows,
-		phase:      phaseEmpty,
 		panes:      make(map[protocol.PaneID]Rect),
 	}
 }
@@ -55,99 +58,8 @@ func (l *Layout) SetWindowSize(cols, rows uint16) {
 	if cols == 0 || rows == 0 {
 		panic(fmt.Sprintf("window: SetWindowSize: invalid size %dx%d", cols, rows))
 	}
-	oldW, oldH := l.WindowCols, l.WindowRows
 	l.WindowCols, l.WindowRows = cols, rows
-	switch l.phase {
-	case phaseEmpty:
-		return
-	case phaseOne:
-		for id := range l.panes {
-			r := Rect{Col: 0, Row: 0, Cols: cols, Rows: rows}
-			if err := l.assertRectInWindow(r); err != nil {
-				panic(err)
-			}
-			l.panes[id] = r
-		}
-	case phaseSplit:
-		if l.splitVertical {
-			l.splitPrimary = scaleSplit(uint32(l.splitPrimary), int(oldW), int(cols))
-		} else {
-			l.splitPrimary = scaleSplit(uint32(l.splitPrimary), int(oldH), int(rows))
-		}
-		l.refitSplitLocked()
-	}
-}
-
-// scaleSplit maps a divider position when the window dimension along that axis changes.
-func scaleSplit(oldPos uint32, oldDim, newDim int) uint16 {
-	if newDim < 2 {
-		return 1
-	}
-	if oldDim < 1 {
-		return uint16(newDim / 2)
-	}
-	n := int((int64(oldPos)*int64(newDim) + int64(oldDim)/2) / int64(oldDim))
-	if n < minPaneCells {
-		n = minPaneCells
-	}
-	if n >= newDim {
-		n = newDim - minPaneCells
-	}
-	if n < minPaneCells {
-		n = minPaneCells
-	}
-	return uint16(n)
-}
-
-func (l *Layout) refitSplitLocked() {
-	w, h := l.WindowCols, l.WindowRows
-	if l.splitVertical {
-		w0 := l.splitPrimary
-		if w0 < minPaneCells {
-			w0 = minPaneCells
-		}
-		if w0+minPaneCells > w {
-			w0 = w - minPaneCells
-		}
-		if w0 < minPaneCells {
-			panic("window: layout: window too narrow for split")
-		}
-		w1 := w - w0
-		l.splitPrimary = w0
-		ra := Rect{Col: 0, Row: 0, Cols: w0, Rows: h}
-		rb := Rect{Col: w0, Row: 0, Cols: w1, Rows: h}
-		if err := l.assertRectInWindow(ra); err != nil {
-			panic(err)
-		}
-		if err := l.assertRectInWindow(rb); err != nil {
-			panic(err)
-		}
-		l.panes[l.paneA] = ra
-		l.panes[l.paneB] = rb
-	} else {
-		h0 := l.splitPrimary
-		if h0 < minPaneCells {
-			h0 = minPaneCells
-		}
-		if h0+minPaneCells > h {
-			h0 = h - minPaneCells
-		}
-		if h0 < minPaneCells {
-			panic("window: layout: window too short for split")
-		}
-		h1 := h - h0
-		l.splitPrimary = h0
-		ra := Rect{Col: 0, Row: 0, Cols: w, Rows: h0}
-		rb := Rect{Col: 0, Row: h0, Cols: w, Rows: h1}
-		if err := l.assertRectInWindow(ra); err != nil {
-			panic(err)
-		}
-		if err := l.assertRectInWindow(rb); err != nil {
-			panic(err)
-		}
-		l.panes[l.paneA] = ra
-		l.panes[l.paneB] = rb
-	}
+	l.refit()
 }
 
 // SetSinglePane is the initial layout: one pane fills the window (replaces any prior layout).
@@ -155,93 +67,162 @@ func (l *Layout) SetSinglePane(id protocol.PaneID) {
 	if !id.Valid() {
 		panic("window: SetSinglePane: invalid PaneID")
 	}
-	l.phase = phaseOne
-	l.splitVertical = false
-	l.paneA, l.paneB = "", ""
-	l.panes = make(map[protocol.PaneID]Rect)
-	r := Rect{Col: 0, Row: 0, Cols: l.WindowCols, Rows: l.WindowRows}
-	if err := l.assertRectInWindow(r); err != nil {
-		panic(err)
-	}
-	l.panes[id] = r
-	l.active = id
+	l.root = leaf(id)
+	l.refit()
 }
 
-// SplitActive replaces the single-pane layout with a 2-pane split. newPane becomes active.
-// Only valid in phaseOne with exactly one pane.
-func (l *Layout) SplitActive(dir protocol.SplitDirection, newPane protocol.PaneID) {
-	if l.phase != phaseOne {
-		panic("window: SplitActive: expected single-pane layout")
+// CanSplitPane reports whether target is currently present as a split leaf.
+func (l *Layout) CanSplitPane(target protocol.PaneID, dir protocol.SplitDirection) error {
+	if !target.Valid() {
+		return fmt.Errorf("invalid target pane")
 	}
-	if len(l.panes) != 1 {
-		panic("window: SplitActive: expected exactly one pane")
+	if !dir.Valid() {
+		return fmt.Errorf("invalid split direction")
 	}
+	if l.root == nil {
+		return fmt.Errorf("empty layout")
+	}
+	if !l.hasLeaf(target) {
+		return fmt.Errorf("target pane missing")
+	}
+	r, ok := l.Rect(target)
+	if !ok {
+		return fmt.Errorf("target pane has no geometry")
+	}
+	if dir == protocol.SplitVertical && r.Cols < 2*minPaneCells {
+		return fmt.Errorf("target pane too narrow")
+	}
+	if dir == protocol.SplitHorizontal && r.Rows < 2*minPaneCells {
+		return fmt.Errorf("target pane too short")
+	}
+	return nil
+}
+
+// SplitPane replaces target leaf with a split branch containing target and newPane.
+func (l *Layout) SplitPane(target protocol.PaneID, dir protocol.SplitDirection, newPane protocol.PaneID) error {
 	if !newPane.Valid() {
-		panic("window: SplitActive: invalid new PaneID")
+		return fmt.Errorf("invalid new pane")
 	}
-	var oldID protocol.PaneID
-	for id := range l.panes {
-		oldID = id
-		break
+	if err := l.CanSplitPane(target, dir); err != nil {
+		return err
 	}
-	w, h := l.WindowCols, l.WindowRows
-	l.paneA = oldID
-	l.paneB = newPane
-	l.phase = phaseSplit
-	l.splitVertical = dir == protocol.SplitVertical
-	if l.splitVertical {
-		if w < 2 {
-			panic("window: SplitActive: window too narrow")
-		}
-		w0 := int(w) / 2
-		if w0 < minPaneCells {
-			w0 = minPaneCells
-		}
-		if w0 >= int(w) {
-			w0 = int(w) - minPaneCells
-		}
-		l.splitPrimary = uint16(w0)
-	} else {
-		if h < 2 {
-			panic("window: SplitActive: window too short")
-		}
-		h0 := int(h) / 2
-		if h0 < minPaneCells {
-			h0 = minPaneCells
-		}
-		if h0 >= int(h) {
-			h0 = int(h) - minPaneCells
-		}
-		l.splitPrimary = uint16(h0)
+	if l.hasLeaf(newPane) {
+		return fmt.Errorf("new pane already exists")
 	}
-	l.panes = make(map[protocol.PaneID]Rect)
-	l.panes[l.paneA] = Rect{}
-	l.panes[l.paneB] = Rect{}
-	l.refitSplitLocked()
-	l.active = newPane
+	if !l.splitLeaf(&l.root, target, dir, newPane) {
+		return fmt.Errorf("target pane missing")
+	}
+	l.refit()
+	return nil
 }
 
-// CycleActive switches the active pane between the two split panes; no-op if not split.
-func (l *Layout) CycleActive() {
-	if l.phase != phaseSplit {
+// SplitActive is retained only for old call sites; it splits the first pane in stable order.
+func (l *Layout) SplitActive(dir protocol.SplitDirection, newPane protocol.PaneID) {
+	ids := l.PaneIDs()
+	if len(ids) == 0 {
+		panic("window: SplitActive: empty layout")
+	}
+	if err := l.SplitPane(ids[0], dir, newPane); err != nil {
+		panic("window: SplitActive: " + err.Error())
+	}
+}
+
+func (l *Layout) splitLeaf(slot **layoutNode, target protocol.PaneID, dir protocol.SplitDirection, newPane protocol.PaneID) bool {
+	n := *slot
+	if n == nil {
+		return false
+	}
+	if n.isLeaf() {
+		if n.PaneID != target {
+			return false
+		}
+		*slot = &layoutNode{
+			Split:  dir,
+			Ratio:  defaultSplitRatio,
+			First:  leaf(target),
+			Second: leaf(newPane),
+		}
+		return true
+	}
+	return l.splitLeaf(&n.First, target, dir, newPane) || l.splitLeaf(&n.Second, target, dir, newPane)
+}
+
+func (l *Layout) hasLeaf(target protocol.PaneID) bool {
+	return hasLeaf(l.root, target)
+}
+
+func hasLeaf(n *layoutNode, target protocol.PaneID) bool {
+	if n == nil {
+		return false
+	}
+	if n.isLeaf() {
+		return n.PaneID == target
+	}
+	return hasLeaf(n.First, target) || hasLeaf(n.Second, target)
+}
+
+func (l *Layout) refit() {
+	l.panes = make(map[protocol.PaneID]Rect)
+	if l.root == nil {
 		return
 	}
-	if l.active == l.paneA {
-		l.active = l.paneB
-	} else {
-		l.active = l.paneA
+	root := Rect{Col: 0, Row: 0, Cols: l.WindowCols, Rows: l.WindowRows}
+	if err := l.assertRectInWindow(root); err != nil {
+		panic(err)
 	}
+	l.fitNode(l.root, root)
 }
 
-// SetActive sets the active pane if it exists in the layout.
-func (l *Layout) SetActive(id protocol.PaneID) {
-	if !id.Valid() {
-		panic("window: SetActive: invalid PaneID")
+func (l *Layout) fitNode(n *layoutNode, r Rect) {
+	if n == nil {
+		return
 	}
-	if _, ok := l.panes[id]; !ok {
-		panic("window: SetActive: unknown pane")
+	if n.isLeaf() {
+		if err := l.assertRectInWindow(r); err != nil {
+			panic(err)
+		}
+		l.panes[n.PaneID] = r
+		return
 	}
-	l.active = id
+	first, second := splitRect(r, n.Split, n.Ratio)
+	l.fitNode(n.First, first)
+	l.fitNode(n.Second, second)
+}
+
+func splitRect(r Rect, dir protocol.SplitDirection, ratio uint16) (Rect, Rect) {
+	if ratio == 0 || ratio >= splitRatioScale {
+		ratio = defaultSplitRatio
+	}
+	if dir == protocol.SplitVertical {
+		if r.Cols < 2*minPaneCells {
+			panic("window: layout: pane too narrow for split")
+		}
+		firstCols := scalePortion(r.Cols, ratio)
+		secondCols := r.Cols - firstCols
+		return Rect{Col: r.Col, Row: r.Row, Cols: firstCols, Rows: r.Rows},
+			Rect{Col: r.Col + firstCols, Row: r.Row, Cols: secondCols, Rows: r.Rows}
+	}
+	if r.Rows < 2*minPaneCells {
+		panic("window: layout: pane too short for split")
+	}
+	firstRows := scalePortion(r.Rows, ratio)
+	secondRows := r.Rows - firstRows
+	return Rect{Col: r.Col, Row: r.Row, Cols: r.Cols, Rows: firstRows},
+		Rect{Col: r.Col, Row: r.Row + firstRows, Cols: r.Cols, Rows: secondRows}
+}
+
+func scalePortion(total uint16, ratio uint16) uint16 {
+	if total < 2*minPaneCells {
+		panic("window: layout: split total too small")
+	}
+	n := int(uint32(total) * uint32(ratio) / uint32(splitRatioScale))
+	if n < minPaneCells {
+		n = minPaneCells
+	}
+	if n >= int(total) {
+		n = int(total) - minPaneCells
+	}
+	return uint16(n)
 }
 
 // Rect returns a copy of the pane’s rectangle, or false if the pane is unknown.
@@ -253,32 +234,23 @@ func (l *Layout) Rect(id protocol.PaneID) (Rect, bool) {
 	return r, ok
 }
 
-// ActivePane returns the active pane, or false if none.
-func (l *Layout) ActivePane() (protocol.PaneID, bool) {
-	if !l.active.Valid() {
-		return "", false
-	}
-	if _, ok := l.panes[l.active]; !ok {
-		return "", false
-	}
-	return l.active, true
+// PaneIDs returns pane ids in stable render order.
+func (l *Layout) PaneIDs() []protocol.PaneID {
+	ids := make([]protocol.PaneID, 0, len(l.panes))
+	collectPaneIDs(l.root, &ids)
+	return ids
 }
 
-// PaneIDs returns pane ids in stable order (for events and resize fanout).
-func (l *Layout) PaneIDs() []protocol.PaneID {
-	switch l.phase {
-	case phaseEmpty:
-		return nil
-	case phaseOne:
-		for id := range l.panes {
-			return []protocol.PaneID{id}
-		}
-		return nil
-	case phaseSplit:
-		return []protocol.PaneID{l.paneA, l.paneB}
-	default:
-		return nil
+func collectPaneIDs(n *layoutNode, ids *[]protocol.PaneID) {
+	if n == nil {
+		return
 	}
+	if n.isLeaf() {
+		*ids = append(*ids, n.PaneID)
+		return
+	}
+	collectPaneIDs(n.First, ids)
+	collectPaneIDs(n.Second, ids)
 }
 
 func (l *Layout) assertRectInWindow(r Rect) error {
