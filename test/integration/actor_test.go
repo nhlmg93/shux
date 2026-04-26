@@ -67,7 +67,7 @@ func TestHub_fansOutLifecycleEvents(t *testing.T) {
 	defer cancel()
 
 	eref := hub.Start(ctx)
-	events := make(eventChanSink, 3)
+	events := make(eventChanSink, 4)
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-client", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +86,12 @@ func TestHub_fansOutLifecycleEvents(t *testing.T) {
 	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
 	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Cols:      80,
+		Rows:      24,
+	})
 
 	cancel()
 	time.Sleep(50 * time.Millisecond)

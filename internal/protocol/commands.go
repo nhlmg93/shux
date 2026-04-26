@@ -28,6 +28,42 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneInit: invalid size %dx%d", c.Cols, c.Rows)
 		}
 		return nil
+	case CommandPaneResize:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResize: invalid SessionID")
+		}
+		if !c.WindowID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResize: invalid WindowID")
+		}
+		if !c.PaneID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResize: invalid PaneID")
+		}
+		if c.Cols == 0 || c.Rows == 0 {
+			return fmt.Errorf("protocol: CommandPaneResize: invalid size %dx%d", c.Cols, c.Rows)
+		}
+		return nil
+	case CommandWindowResize:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandWindowResize: invalid SessionID")
+		}
+		if !c.WindowID.Valid() {
+			return fmt.Errorf("protocol: CommandWindowResize: invalid WindowID")
+		}
+		if c.Cols == 0 || c.Rows == 0 {
+			return fmt.Errorf("protocol: CommandWindowResize: invalid size %dx%d", c.Cols, c.Rows)
+		}
+		return nil
+	case CommandPaneSplit:
+		if !c.SessionID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSplit: invalid SessionID")
+		}
+		if !c.WindowID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSplit: invalid WindowID")
+		}
+		if !c.Direction.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSplit: invalid Direction %d", int(c.Direction))
+		}
+		return nil
 	default:
 		return fmt.Errorf("protocol: unknown command type %T", cmd)
 	}
@@ -58,4 +94,49 @@ type CommandCreatePane struct {
 type CommandPaneInit struct {
 	Cols uint16
 	Rows uint16
+}
+
+// SplitDirection is how a pane is divided for a 2-way split.
+type SplitDirection int
+
+const (
+	// SplitVertical places the new pane to the right of the current pane.
+	SplitVertical SplitDirection = iota
+	// SplitHorizontal places the new pane below the current pane.
+	SplitHorizontal
+)
+
+// Valid reports whether d is a known split axis. Unknown numeric values fail
+// validation in ValidateCommand for CommandPaneSplit.
+func (d SplitDirection) Valid() bool {
+	return d == SplitVertical || d == SplitHorizontal
+}
+
+// CommandPaneResize updates a pane’s libghostty size after the terminal has
+// been initialized. Cols and rows must be non-zero. SessionID, WindowID, and
+// PaneID select the target pane when routed from the supervisor.
+type CommandPaneResize struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Cols      uint16
+	Rows      uint16
+}
+
+// CommandWindowResize reports a new total window size in cells. Handled by
+// the window actor to recompute layout and issue pane resizes. SessionID and
+// WindowID select the window when routed from the supervisor.
+type CommandWindowResize struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Cols      uint16
+	Rows      uint16
+}
+
+// CommandPaneSplit requests splitting the active pane. Routing matches other
+// window-scoped operations (e.g. via supervisor → session → window).
+type CommandPaneSplit struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Direction SplitDirection
 }

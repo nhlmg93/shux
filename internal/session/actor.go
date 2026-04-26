@@ -49,6 +49,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				}
 			case protocol.CommandCreatePane:
 				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandWindowResize:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPaneSplit:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPaneResize:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
 			default:
 				panic(fmt.Sprintf("session: unhandled command type %T", msg))
 			}

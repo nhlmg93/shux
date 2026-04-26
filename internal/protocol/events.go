@@ -45,6 +45,17 @@ func ValidateEvent(event Event) error {
 			return fmt.Errorf("protocol: EventPaneCreated: invalid PaneID")
 		}
 		return nil
+	case EventWindowLayoutChanged:
+		if !e.SessionID.Valid() {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid SessionID")
+		}
+		if !e.WindowID.Valid() {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid WindowID")
+		}
+		if e.Cols <= 0 || e.Rows <= 0 {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid size %dx%d", e.Cols, e.Rows)
+		}
+		return nil
 	default:
 		return fmt.Errorf("protocol: unknown event type %T", event)
 	}
@@ -83,4 +94,13 @@ type EventWindowCreated struct {
 type EventPaneCreated struct {
 	WindowID WindowID
 	PaneID   PaneID
+}
+
+// EventWindowLayoutChanged is emitted when a window’s cell geometry changes
+// (e.g. after resize or split). Hub fanout and publishers are wired separately.
+type EventWindowLayoutChanged struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Cols      int
+	Rows      int
 }

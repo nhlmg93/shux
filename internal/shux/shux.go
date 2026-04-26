@@ -72,7 +72,7 @@ func (a *Shux) Run(opts ...tea.ProgramOption) error {
 		return fmt.Errorf("failed to bootstrap default session: %w", err)
 	}
 
-	_, err := tea.NewProgram(ui.NewModel(a.SessionID, a.WindowID, a.PaneID), opts...).Run()
+	_, err := tea.NewProgram(ui.NewModelWithSupervisor(a.SessionID, a.WindowID, a.PaneID, a.supervisor, ctx), opts...).Run()
 	if err != nil {
 		a.Logger.Error(fmt.Sprintf("shux: ui failed: %v", err))
 		return fmt.Errorf("failed to run ui: %w", err)
