@@ -15,17 +15,28 @@ type Windows = *actor.Lifecycle[protocol.WindowID, protocol.Command]
 
 type Actor struct {
 	Windows
-	seq uint64         // next window id suffix; only touched from Run goroutine
-	hub actor.EventRef // optional lifecycle event sink (best-effort publish)
+	SessionID protocol.SessionID
+	ShellPath string
+	seq       uint64         // next window id suffix; only touched from Run goroutine
+	hub       actor.EventRef // optional lifecycle event sink (best-effort publish)
 }
 
 func NewActor(hub actor.EventRef) *Actor {
+	return NewActorWithConfig(hub, "", "/bin/sh")
+}
+
+func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, shellPath string) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("session: NewActor: invalid hub ref")
 	}
+	if shellPath == "" {
+		panic("session: NewActor: empty shell path")
+	}
 	return &Actor{
-		Windows: actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
-		hub:     hub,
+		Windows:   actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
+		SessionID: sessionID,
+		ShellPath: shellPath,
+		hub:       hub,
 	}
 }
 
@@ -43,7 +54,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			case protocol.CommandCreateWindow:
 				a.seq++
 				wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
-				a.Init(wid, window.StartWithHub(ctx, a.hub))
+				a.Init(wid, window.StartWithConfig(ctx, a.hub, m.SessionID, wid, a.ShellPath))
 				if a.hub != nil {
 					_ = a.hub.Send(ctx, protocol.EventWindowCreated{SessionID: m.SessionID, WindowID: wid})
 				}
@@ -53,7 +64,15 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.Windows.Must(m.WindowID).Send(ctx, m)
 			case protocol.CommandPaneSplit:
 				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPaneClose:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
 			case protocol.CommandPaneResize:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPaneKey:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPaneMouse:
+				a.Windows.Must(m.WindowID).Send(ctx, m)
+			case protocol.CommandPanePaste:
 				a.Windows.Must(m.WindowID).Send(ctx, m)
 			default:
 				panic(fmt.Sprintf("session: unhandled command type %T", msg))
@@ -69,4 +88,8 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 // StartWithHub is [Start] with optional hub; lifecycle events are best-effort when hub is non-nil.
 func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
+}
+
+func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, shellPath string) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithConfig(hub, sessionID, shellPath).Run)
 }

@@ -20,36 +20,60 @@ const (
 	started
 	closed
 
-	bootstrapClientID   = protocol.ClientID("bootstrap")
-	layoutCacheClientID = protocol.ClientID("layout-cache")
+	bootstrapClientID = protocol.ClientID("bootstrap")
+	cacheClientID     = protocol.ClientID("state-cache")
 )
 
-type layoutCache struct {
+type (
+	windowLayoutSnapshots map[protocol.WindowID]protocol.EventWindowLayoutChanged
+	paneScreenSnapshots   map[protocol.PaneID]protocol.EventPaneScreenChanged
+
+	layoutsBySession map[protocol.SessionID]windowLayoutSnapshots
+	screensByWindow  map[protocol.WindowID]paneScreenSnapshots
+	screensBySession map[protocol.SessionID]screensByWindow
+)
+
+type stateCache struct {
 	mu      sync.Mutex
-	layouts map[protocol.SessionID]map[protocol.WindowID]protocol.EventWindowLayoutChanged
+	layouts layoutsBySession
+	screens screensBySession
 }
 
-func newLayoutCache() *layoutCache {
-	return &layoutCache{layouts: make(map[protocol.SessionID]map[protocol.WindowID]protocol.EventWindowLayoutChanged)}
-}
-
-func (c *layoutCache) DeliverEvent(_ context.Context, e protocol.Event) error {
-	layout, ok := e.(protocol.EventWindowLayoutChanged)
-	if !ok {
-		return nil
+func newStateCache() *stateCache {
+	return &stateCache{
+		layouts: make(layoutsBySession),
+		screens: make(screensBySession),
 	}
+}
+
+func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	windows := c.layouts[layout.SessionID]
-	if windows == nil {
-		windows = make(map[protocol.WindowID]protocol.EventWindowLayoutChanged)
-		c.layouts[layout.SessionID] = windows
+	switch event := e.(type) {
+	case protocol.EventWindowLayoutChanged:
+		windows := c.layouts[event.SessionID]
+		if windows == nil {
+			windows = make(windowLayoutSnapshots)
+			c.layouts[event.SessionID] = windows
+		}
+		windows[event.WindowID] = event
+	case protocol.EventPaneScreenChanged:
+		windows := c.screens[event.SessionID]
+		if windows == nil {
+			windows = make(screensByWindow)
+			c.screens[event.SessionID] = windows
+		}
+		panes := windows[event.WindowID]
+		if panes == nil {
+			panes = make(paneScreenSnapshots)
+			windows[event.WindowID] = panes
+		}
+		panes[event.PaneID] = event
 	}
-	windows[layout.WindowID] = layout
 	return nil
 }
 
-func (c *layoutCache) Snapshot(sessionID protocol.SessionID, windowID protocol.WindowID) (protocol.EventWindowLayoutChanged, bool) {
+func (c *stateCache) LayoutSnapshot(sessionID protocol.SessionID, windowID protocol.WindowID) (protocol.EventWindowLayoutChanged, bool) {
 	if c == nil {
 		return protocol.EventWindowLayoutChanged{}, false
 	}
@@ -63,8 +87,30 @@ func (c *layoutCache) Snapshot(sessionID protocol.SessionID, windowID protocol.W
 	return layout, ok
 }
 
+func (c *stateCache) ScreenSnapshots(sessionID protocol.SessionID, windowID protocol.WindowID) []protocol.EventPaneScreenChanged {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	windows := c.screens[sessionID]
+	if windows == nil {
+		return nil
+	}
+	panes := windows[windowID]
+	if panes == nil {
+		return nil
+	}
+	snapshots := make([]protocol.EventPaneScreenChanged, 0, len(panes))
+	for _, screen := range panes {
+		snapshots = append(snapshots, screen)
+	}
+	return snapshots
+}
+
 type Shux struct {
 	Logger *Logger
+	Config Config
 
 	DefaultSessionID protocol.SessionID
 	DefaultWindowID  protocol.WindowID
@@ -79,10 +125,14 @@ type Shux struct {
 	shutdownOnce sync.Once
 	clientsMu    sync.Mutex
 	clients      map[protocol.ClientID]*tea.Program
-	layouts      *layoutCache
+	cache        *stateCache
 }
 
 func NewShux() (*Shux, error) {
+	return NewShuxWithConfig(DefaultConfig())
+}
+
+func NewShuxWithConfig(config Config) (*Shux, error) {
 	logger, err := NewLogger()
 	if err != nil {
 		return nil, fmt.Errorf("failed to init logger: %w", err)
@@ -90,6 +140,7 @@ func NewShux() (*Shux, error) {
 
 	return &Shux{
 		Logger:   logger,
+		Config:   config.WithDefaults(),
 		shutdown: make(chan struct{}),
 		clients:  make(map[protocol.ClientID]*tea.Program),
 	}, nil
@@ -188,8 +239,11 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		exitIntentMu.Unlock()
 	}
 	model := ui.NewModelWithSupervisorAndExit(clientID, a.DefaultSessionID, a.DefaultWindowID, a.DefaultPaneID, a.supervisor, ctx, setExitIntent)
-	if layout, ok := a.layouts.Snapshot(a.DefaultSessionID, a.DefaultWindowID); ok {
+	if layout, ok := a.cache.LayoutSnapshot(a.DefaultSessionID, a.DefaultWindowID); ok {
 		model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
+	}
+	for _, screen := range a.cache.ScreenSnapshots(a.DefaultSessionID, a.DefaultWindowID) {
+		model = model.WithPaneScreen(screen)
 	}
 	p := tea.NewProgram(model, opts...)
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
@@ -285,12 +339,12 @@ func (a *Shux) Start(ctx context.Context) error {
 	actorCtx, cancel := context.WithCancel(ctx)
 	hubRef := hub.Start(actorCtx)
 	a.hub = hubRef
-	a.layouts = newLayoutCache()
-	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: layoutCacheClientID, Sink: a.layouts}); err != nil {
+	a.cache = newStateCache()
+	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: cacheClientID, Sink: a.cache}); err != nil {
 		cancel()
 		return err
 	}
-	a.supervisor = supervisor.StartWithHub(actorCtx, &hubRef)
+	a.supervisor = supervisor.StartWithConfig(actorCtx, &hubRef, a.Config.ShellPath)
 	a.actorCancel = cancel
 	a.state = started
 	return nil

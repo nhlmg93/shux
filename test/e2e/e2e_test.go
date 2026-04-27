@@ -36,6 +36,7 @@ func TestShuxRun_rendersTitleAndDetachesOnPrefixD(t *testing.T) {
 		tea.WithContext(ctx),
 		tea.WithInput(r),
 		tea.WithOutput(&out),
+		tea.WithWindowSize(80, 24),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -46,5 +47,38 @@ func TestShuxRun_rendersTitleAndDetachesOnPrefixD(t *testing.T) {
 	}
 	if s.DefaultSessionID != protocol.SessionID("s-1") || s.DefaultWindowID != protocol.WindowID("w-1") || s.DefaultPaneID != protocol.PaneID("p-1") {
 		t.Fatalf("ids = %q %q %q", s.DefaultSessionID, s.DefaultWindowID, s.DefaultPaneID)
+	}
+}
+
+func TestShuxRun_userCanTypeShellCommandAndSeeOutput(t *testing.T) {
+	s, err := shux.NewShux()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	r, w := io.Pipe()
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		_, _ = w.Write([]byte("\x1b[200~printf shux-e2e-ok\\n\n\x1b[201~"))
+		time.Sleep(700 * time.Millisecond)
+		_, _ = w.Write([]byte{ctrlB, 'd'})
+		_ = w.Close()
+	}()
+
+	var out bytes.Buffer
+	err = s.Run(
+		tea.WithContext(ctx),
+		tea.WithInput(r),
+		tea.WithOutput(&out),
+		tea.WithWindowSize(80, 24),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("shux-e2e-ok")) {
+		t.Fatalf("expected command output in UI buffer; got %q", out.String())
 	}
 }

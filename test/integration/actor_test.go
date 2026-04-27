@@ -269,6 +269,73 @@ func TestHub_rejects_missing_target_split_without_crashing(t *testing.T) {
 	})
 }
 
+func TestHub_fansOutPaneScreenChanged(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 2)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-screen", Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+	want := protocol.EventPaneScreenChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+		Revision:  1,
+		Cols:      2,
+		Rows:      1,
+		Lines: []protocol.EventPaneScreenLine{{
+			Text: "ok",
+			Cells: []protocol.EventPaneScreenCell{
+				{Text: "o", Bold: true},
+				{Text: "k"},
+			},
+		}},
+	}
+	if err := eref.Send(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	assertEvent(t, events, want)
+}
+
+func TestPaneInputCommandsRouteThroughActorTree(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, _ := startWindowWithEvents(t, ctx, "test-pane-input")
+	commands := []protocol.Command{
+		protocol.CommandPaneKey{
+			SessionID: initSessionID,
+			WindowID:  initWindowID,
+			PaneID:    initPaneID,
+			Action:    protocol.KeyActionPress,
+			Key:       "x",
+			Text:      "x",
+		},
+		protocol.CommandPanePaste{
+			SessionID: initSessionID,
+			WindowID:  initWindowID,
+			PaneID:    initPaneID,
+			Data:      []byte("echo shux\n"),
+		},
+		protocol.CommandPaneMouse{
+			SessionID: initSessionID,
+			WindowID:  initWindowID,
+			PaneID:    initPaneID,
+			Action:    protocol.MouseActionPress,
+			Button:    protocol.MouseButtonLeft,
+			CellCol:   1,
+			CellRow:   1,
+		},
+	}
+	for _, cmd := range commands {
+		if err := ref.Send(ctx, cmd); err != nil {
+			t.Fatalf("send %T: %v", cmd, err)
+		}
+	}
+}
+
 func startWindowWithEvents(t *testing.T, ctx context.Context, clientID protocol.ClientID) (commandSender, <-chan protocol.Event) {
 	t.Helper()
 	eref := hub.Start(ctx)
@@ -309,12 +376,21 @@ func bootstrapWindow(t *testing.T, ctx context.Context, ref commandSender, event
 
 func assertEvent(t *testing.T, events <-chan protocol.Event, want protocol.Event) {
 	t.Helper()
-	select {
-	case got := <-events:
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("event = %#v, want %#v", got, want)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case got := <-events:
+			if _, skip := got.(protocol.EventPaneScreenChanged); skip {
+				if _, wantScreen := want.(protocol.EventPaneScreenChanged); !wantScreen {
+					continue
+				}
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("event = %#v, want %#v", got, want)
+			}
+			return
+		case <-deadline:
+			t.Fatalf("timed out waiting for %#v", want)
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for %#v", want)
 	}
 }

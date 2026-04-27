@@ -117,6 +117,44 @@ func (l *Layout) SplitPane(target protocol.PaneID, dir protocol.SplitDirection, 
 }
 
 // SplitActive is retained only for old call sites; it splits the first pane in stable order.
+func (l *Layout) RemovePane(id protocol.PaneID) error {
+	if !id.Valid() {
+		return fmt.Errorf("invalid pane")
+	}
+	if l.root == nil || !l.hasLeaf(id) {
+		return fmt.Errorf("pane missing")
+	}
+	if l.root.isLeaf() {
+		if l.root.PaneID != id {
+			return fmt.Errorf("pane missing")
+		}
+		l.root = nil
+		l.refit()
+		return nil
+	}
+	if !removeLeaf(&l.root, id) {
+		return fmt.Errorf("pane missing")
+	}
+	l.refit()
+	return nil
+}
+
+func removeLeaf(slot **layoutNode, id protocol.PaneID) bool {
+	n := *slot
+	if n == nil || n.isLeaf() {
+		return false
+	}
+	if n.First != nil && n.First.isLeaf() && n.First.PaneID == id {
+		*slot = n.Second
+		return true
+	}
+	if n.Second != nil && n.Second.isLeaf() && n.Second.PaneID == id {
+		*slot = n.First
+		return true
+	}
+	return removeLeaf(&n.First, id) || removeLeaf(&n.Second, id)
+}
+
 func (l *Layout) SplitActive(dir protocol.SplitDirection, newPane protocol.PaneID) {
 	ids := l.PaneIDs()
 	if len(ids) == 0 {

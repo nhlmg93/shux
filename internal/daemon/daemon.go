@@ -14,6 +14,10 @@ import (
 )
 
 func Run(ctx context.Context, addr string) error {
+	return RunWithConfig(ctx, addr, shux.DefaultConfig())
+}
+
+func RunWithConfig(ctx context.Context, addr string, config shux.Config) error {
 	if !isLocalAddr(addr) {
 		return fmt.Errorf("daemon: refusing non-local bind address %q", addr)
 	}
@@ -25,7 +29,7 @@ func Run(ctx context.Context, addr string) error {
 		return nil
 	}
 
-	app, err := shux.NewShux()
+	app, err := shux.NewShuxWithConfig(config)
 	if err != nil {
 		return err
 	}

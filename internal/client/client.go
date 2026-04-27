@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -17,15 +18,25 @@ import (
 	"shux/internal/sshkey"
 )
 
+type AttachOptions struct {
+	Bash bool
+}
+
 func AttachOrSpawn(ctx context.Context, addr string) error {
+	return AttachOrSpawnWithOptions(ctx, addr, AttachOptions{})
+}
+
+func AttachOrSpawnWithOptions(ctx context.Context, addr string, opts AttachOptions) error {
 	available, err := ServerAvailable(ctx, addr)
 	if err != nil {
 		return err
 	}
 	if available {
+		// Attach never mutates daemon startup policy. In particular, --bash only
+		// affects a newly spawned daemon child; existing daemons keep their shell.
 		return Attach(ctx, addr)
 	}
-	if err := spawnDetached(); err != nil {
+	if err := spawnDetached(opts); err != nil {
 		return err
 	}
 	if err := WaitReady(ctx, addr, 2*time.Second); err != nil {
@@ -69,6 +80,9 @@ func Attach(ctx context.Context, addr string) error {
 		return fmt.Errorf("client: start shell: %w", err)
 	}
 
+	stopResize := forwardWindowChanges(sess, int(os.Stdout.Fd()))
+	defer stopResize()
+
 	done := make(chan error, 1)
 	go func() { done <- sess.Wait() }()
 	select {
@@ -80,6 +94,30 @@ func Attach(ctx context.Context, addr string) error {
 			return fmt.Errorf("client: ssh session: %w", err)
 		}
 		return nil
+	}
+}
+
+func forwardWindowChanges(sess *ssh.Session, fd int) func() {
+	changes := make(chan os.Signal, 1)
+	signal.Notify(changes, syscall.SIGWINCH)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-changes:
+				width, height, err := term.GetSize(fd)
+				if err != nil || width <= 0 || height <= 0 {
+					continue
+				}
+				_ = sess.WindowChange(height, width)
+			}
+		}
+	}()
+	return func() {
+		signal.Stop(changes)
+		close(done)
 	}
 }
 
@@ -125,7 +163,7 @@ func ServerAvailable(ctx context.Context, addr string) (bool, error) {
 	return true, nil
 }
 
-func spawnDetached() error {
+func spawnDetached(opts AttachOptions) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("client: executable path: %w", err)
@@ -141,7 +179,11 @@ func spawnDetached() error {
 	}
 	defer devNull.Close()
 
-	cmd := exec.Command(exe)
+	args := make([]string, 0, 1)
+	if opts.Bash {
+		args = append(args, "--bash")
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Stdin = devNull
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

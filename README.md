@@ -12,6 +12,20 @@ Start or attach to shux:
 
 If no backend is running, `./shux` starts a local daemon and attaches the current terminal. If a backend is already running, it attaches to the existing daemon.
 
+Panes run an interactive shell. New daemons use `/bin/sh` by default:
+
+```bash
+./shux
+```
+
+To start a new daemon whose panes use `/bin/bash`:
+
+```bash
+./shux --bash
+```
+
+`--bash` only affects a newly spawned daemon. Attaching to an already-running daemon does not change its shell policy.
+
 ## Keys
 
 shux uses a tmux-style prefix key:

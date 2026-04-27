@@ -3,6 +3,7 @@ package sim
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,13 +97,22 @@ func TestSim_emits_default_window_layout_on_pane_create(t *testing.T) {
 
 func assertSimEvent(t *testing.T, events <-chan protocol.Event, want protocol.Event) {
 	t.Helper()
-	select {
-	case got := <-events:
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("event = %#v, want %#v", got, want)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case got := <-events:
+			if _, skip := got.(protocol.EventPaneScreenChanged); skip {
+				if _, wantScreen := want.(protocol.EventPaneScreenChanged); !wantScreen {
+					continue
+				}
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("event = %#v, want %#v", got, want)
+			}
+			return
+		case <-deadline:
+			t.Fatalf("timed out waiting for %#v", want)
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for %#v", want)
 	}
 }
 
@@ -162,13 +172,90 @@ func TestSim_split_and_resize(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
+func TestSim_shellPTYInputOutputAndResize(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 64)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-pty", Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+	ref := supervisor.StartWithHub(ctx, &eref)
+	if err := ref.Send(ctx, protocol.CommandCreateSession{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ref.Send(ctx, protocol.CommandCreateWindow{SessionID: simSessionID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ref.Send(ctx, protocol.CommandCreatePane{SessionID: simSessionID, WindowID: simWindowID}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPaneScreen(t, events, simPaneID, func(e protocol.EventPaneScreenChanged) bool {
+		return e.Cols == 78 && e.Rows == 22
+	})
+
+	if err := ref.Send(ctx, protocol.CommandPanePaste{
+		SessionID: simSessionID,
+		WindowID:  simWindowID,
+		PaneID:    simPaneID,
+		Data:      []byte("printf shux-pty-ok\\n\n"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPaneScreen(t, events, simPaneID, func(e protocol.EventPaneScreenChanged) bool {
+		return screenContains(e, "shux-pty-ok")
+	})
+
+	if err := ref.Send(ctx, protocol.CommandWindowResize{SessionID: simSessionID, WindowID: simWindowID, Cols: 100, Rows: 30}); err != nil {
+		t.Fatal(err)
+	}
+	waitForPaneScreen(t, events, simPaneID, func(e protocol.EventPaneScreenChanged) bool {
+		return e.Cols == 98 && e.Rows == 28
+	})
+}
+
+func waitForPaneScreen(t *testing.T, events <-chan protocol.Event, paneID protocol.PaneID, match func(protocol.EventPaneScreenChanged) bool) protocol.EventPaneScreenChanged {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			screen, ok := event.(protocol.EventPaneScreenChanged)
+			if !ok || screen.PaneID != paneID {
+				continue
+			}
+			if match(screen) {
+				return screen
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for pane screen %s", paneID)
+		}
+	}
+}
+
+func screenContains(screen protocol.EventPaneScreenChanged, needle string) bool {
+	for _, line := range screen.Lines {
+		if strings.Contains(line.Text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func drain4(t *testing.T, ch <-chan protocol.Event) {
 	t.Helper()
-	for i := 0; i < 4; i++ {
+	seen := 0
+	deadline := time.After(time.Second)
+	for seen < 4 {
 		select {
-		case <-ch:
-		case <-time.After(time.Second):
-			t.Fatalf("drain4: short read at %d", i)
+		case event := <-ch:
+			if _, skip := event.(protocol.EventPaneScreenChanged); skip {
+				continue
+			}
+			seen++
+		case <-deadline:
+			t.Fatalf("drain4: short read at %d", seen)
 		}
 	}
 }

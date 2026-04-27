@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/actor"
@@ -17,6 +18,7 @@ type pendingKind uint8
 
 const (
 	pendingPaneSplit pendingKind = iota + 1
+	pendingPaneClose
 )
 
 type pendingCommand struct {
@@ -58,6 +60,7 @@ type Model struct {
 	Pending      map[protocol.RequestID]pendingCommand
 	NextRequest  protocol.RequestID
 	Layout       LayoutSnapshot
+	Screens      map[protocol.PaneID]protocol.EventPaneScreenChanged
 	Supervisor   actor.Ref[protocol.Command]
 	Ctx          context.Context
 	OnExit       func(ExitIntent)
@@ -78,6 +81,7 @@ func NewModelForClient(clientID protocol.ClientID, sessionID protocol.SessionID,
 		ActivePaneID: paneID,
 		Pending:      make(map[protocol.RequestID]pendingCommand),
 		Layout:       EmptyLayoutSnapshot(sessionID, windowID),
+		Screens:      make(map[protocol.PaneID]protocol.EventPaneScreenChanged),
 	}
 }
 
@@ -109,6 +113,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m = m.applyLayoutSnapshot(LayoutSnapshotFromEvent(e))
+		case protocol.EventPaneScreenChanged:
+			if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
+				return m, nil
+			}
+			m = m.WithPaneScreen(e)
+		case protocol.EventPaneClosed:
+			if e.WindowID != m.WindowID {
+				return m, nil
+			}
+			delete(m.Screens, e.PaneID)
+			if m.ActivePaneID == e.PaneID {
+				m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
+			}
+		case protocol.EventPaneCloseLastRequested:
+			if e.ClientID != m.ClientID {
+				return m, nil
+			}
+			delete(m.Pending, e.RequestID)
+			if m.OnExit != nil {
+				m.OnExit(ExitQuit)
+			}
+			return m, tea.Quit
 		case protocol.EventPaneSplitCompleted:
 			if e.ClientID != m.ClientID {
 				return m, nil
@@ -148,8 +174,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.Prefix {
 			if key == "ctrl+b" {
 				m.Prefix = true
+				return m, nil
 			}
-			return m, nil
+			return m, m.sendPaneKey(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), keyActionFromPress(msg)))
 		}
 		m.Prefix = false
 		if m.Supervisor.Valid() && m.Ctx != nil {
@@ -167,6 +194,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
 				m.Layout.ActivePane = m.ActivePaneID
 				return m, nil
+			case "x":
+				return m.startPaneClose(m.ActivePaneID)
 			case "q":
 				if m.OnExit != nil {
 					m.OnExit(ExitQuit)
@@ -184,19 +213,215 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				panic("ui: select window by index not implemented")
 			}
 		}
+	case tea.KeyReleaseMsg:
+		if !m.Prefix {
+			return m, m.sendPaneKey(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), protocol.KeyActionRelease))
+		}
+	case tea.PasteMsg:
+		return m, m.sendPanePaste([]byte(msg.Content))
+	case tea.MouseMsg:
+		if cmd, ok := m.mouseCommand(msg); ok {
+			return m, m.sendPaneMouse(cmd)
+		}
 	}
 
 	return m, nil
 }
 
+func (m Model) sendPaneKey(cmd protocol.CommandPaneKey) tea.Cmd {
+	return func() tea.Msg {
+		if m.Supervisor.Valid() && m.Ctx != nil && cmd.PaneID.Valid() {
+			_ = m.Supervisor.Send(m.Ctx, cmd)
+		}
+		return nil
+	}
+}
+
+func (m Model) sendPaneMouse(cmd protocol.CommandPaneMouse) tea.Cmd {
+	return func() tea.Msg {
+		if m.Supervisor.Valid() && m.Ctx != nil && cmd.PaneID.Valid() {
+			_ = m.Supervisor.Send(m.Ctx, cmd)
+		}
+		return nil
+	}
+}
+
+func (m Model) startPaneClose(paneID protocol.PaneID) (Model, tea.Cmd) {
+	if !m.ClientID.Valid() || !paneID.Valid() {
+		return m, nil
+	}
+	req := m.nextRequestID()
+	m.rememberPending(req, pendingCommand{Kind: pendingPaneClose})
+	return m, m.sendPaneClose(req, paneID)
+}
+
+func (m Model) sendPaneClose(req protocol.RequestID, paneID protocol.PaneID) tea.Cmd {
+	return func() tea.Msg {
+		if m.Supervisor.Valid() && m.Ctx != nil && paneID.Valid() {
+			_ = m.Supervisor.Send(m.Ctx, protocol.CommandPaneClose{
+				Meta: protocol.CommandMeta{
+					ClientID:  m.ClientID,
+					RequestID: req,
+				},
+				SessionID: m.SessionID,
+				WindowID:  m.WindowID,
+				PaneID:    paneID,
+			})
+		}
+		return nil
+	}
+}
+
+func (m Model) sendPanePaste(data []byte) tea.Cmd {
+	return func() tea.Msg {
+		if m.Supervisor.Valid() && m.Ctx != nil && m.ActivePaneID.Valid() {
+			_ = m.Supervisor.Send(m.Ctx, protocol.CommandPanePaste{
+				SessionID: m.SessionID,
+				WindowID:  m.WindowID,
+				PaneID:    m.ActivePaneID,
+				Data:      data,
+			})
+		}
+		return nil
+	}
+}
+
+func keyActionFromPress(msg tea.KeyPressMsg) protocol.KeyAction {
+	if msg.Key().IsRepeat {
+		return protocol.KeyActionRepeat
+	}
+	return protocol.KeyActionPress
+}
+
+func keyCommand(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, key tea.Key, action protocol.KeyAction) protocol.CommandPaneKey {
+	name := key.String()
+	return protocol.CommandPaneKey{
+		SessionID:   sessionID,
+		WindowID:    windowID,
+		PaneID:      paneID,
+		Action:      action,
+		Key:         normalizeKeyName(name),
+		Text:        key.Text,
+		Modifiers:   keyModifiers(key.Mod),
+		BaseKey:     runeString(key.BaseCode),
+		ShiftedKey:  runeString(key.ShiftedCode),
+		PhysicalKey: runeString(key.Code),
+	}
+}
+
+func normalizeKeyName(key string) string {
+	if len(key) == 1 {
+		return key
+	}
+	key = strings.TrimPrefix(key, "ctrl+")
+	key = strings.TrimPrefix(key, "alt+")
+	key = strings.TrimPrefix(key, "shift+")
+	key = strings.TrimPrefix(key, "meta+")
+	switch key {
+	case " ":
+		return "space"
+	case "esc":
+		return "escape"
+	case "pgup":
+		return "pageup"
+	case "pgdown":
+		return "pagedown"
+	default:
+		return key
+	}
+}
+
+func keyModifiers(mod tea.KeyMod) protocol.InputModifiers {
+	var mods protocol.InputModifiers
+	if mod&tea.ModShift != 0 {
+		mods |= protocol.ModifierShift
+	}
+	if mod&tea.ModCtrl != 0 {
+		mods |= protocol.ModifierCtrl
+	}
+	if mod&tea.ModAlt != 0 {
+		mods |= protocol.ModifierAlt
+	}
+	if mod&tea.ModMeta != 0 {
+		mods |= protocol.ModifierMeta
+	}
+	return mods
+}
+
+func runeString(r rune) string {
+	if r == 0 {
+		return ""
+	}
+	return string(r)
+}
+
+func (m Model) mouseCommand(msg tea.MouseMsg) (protocol.CommandPaneMouse, bool) {
+	mouse := msg.Mouse()
+	pane, ok := m.paneAt(mouse.X, mouse.Y)
+	if !ok {
+		return protocol.CommandPaneMouse{}, false
+	}
+	action := protocol.MouseActionPress
+	switch msg.(type) {
+	case tea.MouseReleaseMsg:
+		action = protocol.MouseActionRelease
+	case tea.MouseMotionMsg:
+		action = protocol.MouseActionMotion
+	case tea.MouseWheelMsg:
+		action = protocol.MouseActionWheel
+	}
+	return protocol.CommandPaneMouse{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    pane.PaneID,
+		Action:    action,
+		Button:    mouseButton(mouse.Button),
+		Modifiers: keyModifiers(mouse.Mod),
+		CellCol:   mouse.X - pane.Col - 1,
+		CellRow:   mouse.Y - pane.Row - 1,
+	}, true
+}
+
+func (m Model) paneAt(col, row int) (LayoutPane, bool) {
+	for _, pane := range m.Layout.Panes {
+		if col > pane.Col && col < pane.Col+pane.Cols-1 && row > pane.Row && row < pane.Row+pane.Rows-1 {
+			return pane, true
+		}
+	}
+	return LayoutPane{}, false
+}
+
+func mouseButton(button tea.MouseButton) protocol.MouseButton {
+	switch button {
+	case tea.MouseLeft:
+		return protocol.MouseButtonLeft
+	case tea.MouseMiddle:
+		return protocol.MouseButtonMiddle
+	case tea.MouseRight:
+		return protocol.MouseButtonRight
+	case tea.MouseWheelUp:
+		return protocol.MouseButtonWheelUp
+	case tea.MouseWheelDown:
+		return protocol.MouseButtonWheelDown
+	case tea.MouseWheelLeft:
+		return protocol.MouseButtonWheelLeft
+	case tea.MouseWheelRight:
+		return protocol.MouseButtonWheelRight
+	default:
+		return protocol.MouseButtonNone
+	}
+}
+
 func (m Model) sendWindowResize(cols, rows uint16) tea.Cmd {
 	return func() tea.Msg {
-		_ = m.Supervisor.Send(m.Ctx, protocol.CommandWindowResize{
+		if err := m.Supervisor.Send(m.Ctx, protocol.CommandWindowResize{
 			SessionID: m.SessionID,
 			WindowID:  m.WindowID,
 			Cols:      cols,
 			Rows:      rows,
-		})
+		}); err != nil {
+			panic(fmt.Sprintf("ui: send window resize: %v", err))
+		}
 		return nil
 	}
 }
@@ -263,6 +488,14 @@ func (m Model) WithLayoutSnapshot(snap LayoutSnapshot) Model {
 	return m.applyLayoutSnapshot(snap)
 }
 
+func (m Model) WithPaneScreen(screen protocol.EventPaneScreenChanged) Model {
+	if m.Screens == nil {
+		m.Screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
+	}
+	m.Screens[screen.PaneID] = screen
+	return m
+}
+
 func normalizeActivePane(active protocol.PaneID, panes []LayoutPane) protocol.PaneID {
 	if len(panes) == 0 {
 		return ""
@@ -288,9 +521,50 @@ func cycleActivePane(active protocol.PaneID, panes []LayoutPane) protocol.PaneID
 	return panes[0].PaneID
 }
 
+func (m Model) paneScreen(paneID protocol.PaneID) protocol.EventPaneScreenChanged {
+	screen, ok := m.Screens[paneID]
+	if !ok {
+		return protocol.EventPaneScreenChanged{}
+	}
+	return screen
+}
+
+func (m Model) activeCursor() *tea.Cursor {
+	paneID := m.Layout.ActivePane
+	if paneID == "" {
+		paneID = m.ActivePaneID
+	}
+	screen, ok := m.Screens[paneID]
+	if !ok || !screen.Cursor.Visible {
+		return nil
+	}
+	for _, p := range m.Layout.Panes {
+		if p.PaneID != paneID {
+			continue
+		}
+		col := p.Col + 1 + screen.Cursor.Col
+		row := p.Row + 1 + screen.Cursor.Row
+		if col <= p.Col || col >= p.Col+p.Cols-1 || row <= p.Row || row >= p.Row+p.Rows-1 {
+			return nil
+		}
+		cursor := tea.NewCursor(col, row)
+		cursor.Blink = screen.Cursor.Blink
+		return cursor
+	}
+	return nil
+}
+
 func (m Model) View() tea.View {
 	v := tea.NewView(m.viewString())
+	if cursor := m.activeCursor(); cursor != nil {
+		v.Cursor = cursor
+	}
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	v.KeyboardEnhancements.ReportEventTypes = true
+	v.KeyboardEnhancements.ReportAlternateKeys = true
+	v.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
+	v.KeyboardEnhancements.ReportAssociatedText = true
 	return v
 }
 
@@ -316,7 +590,7 @@ func (m Model) viewString() string {
 		if m.Layout.ActivePane == "" && i == 0 {
 			active = true
 		}
-		canvas.drawPane(p, active)
+		canvas.drawPaneWithScreenEvent(p, active, m.paneScreen(p.PaneID))
 	}
 	return canvas.String()
 }

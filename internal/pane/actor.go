@@ -4,77 +4,85 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mitchellh/go-libghostty"
 	"shux/internal/actor"
 	"shux/internal/protocol"
 )
 
-// Default cell pixel size for libghostty Resize, matching go-libghostty test usage.
-// Init uses NewTerminal(WithSize); Resize must be given explicit cell dimensions.
-const defaultCellW, defaultCellH = 8, 16
-
-// Actor runs a single pane. VT is a libghostty handle; it is nil until
-// a follow-up creates the terminal with known dimensions (WithSize).
+// Actor runs a single pane. Terminal owns the shell process, PTY, VT, render
+// state, and screen revision; Actor owns command serialization and hub fanout.
 type Actor struct {
-	VT *libghostty.Terminal
+	Hub       actor.EventRef
+	Terminal  *Terminal
+	SessionID protocol.SessionID
+	WindowID  protocol.WindowID
+	PaneID    protocol.PaneID
 }
 
-// NewActor returns a pane actor. VT is nil until dimensions are wired.
+// NewActor returns a pane actor. Terminal is initialized with dimensions by
+// CommandPaneInit.
 func NewActor() *Actor {
-	return &Actor{}
+	return NewActorWithConfig(nil, "", "", "", "/bin/sh")
 }
 
-// initTerminal allocates a libghostty Terminal exactly once. Cols and rows are
-// cell counts as uint16: they cannot be negative at the type level; zero is invalid.
-// It panics on zero size, double init, or if NewTerminal returns an error.
-func (a *Actor) initTerminal(cols, rows uint16) {
-	if cols == 0 || rows == 0 {
-		panic(fmt.Sprintf("pane: InitTerminal: invalid size %dx%d (cols and rows must be positive)", cols, rows))
+func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) *Actor {
+	if hub != nil && !hub.Valid() {
+		panic("pane: NewActor: invalid hub ref")
 	}
-	if a.VT != nil {
-		panic("pane: InitTerminal: terminal already created (double init)")
-	}
-	term, err := libghostty.NewTerminal(libghostty.WithSize(cols, rows))
-	if err != nil {
-		panic(fmt.Sprintf("pane: NewTerminal: %v", err))
-	}
-	a.VT = term
-}
-
-// resizeTerminal changes VT dimensions after init. It panics on zero size,
-// resize before init, or if Resize returns an error.
-func (a *Actor) resizeTerminal(cols, rows uint16) {
-	if cols == 0 || rows == 0 {
-		panic(fmt.Sprintf("pane: resizeTerminal: invalid size %dx%d (cols and rows must be positive)", cols, rows))
-	}
-	if a.VT == nil {
-		panic("pane: resizeTerminal: terminal not created (resize before init)")
-	}
-	if err := a.VT.Resize(cols, rows, defaultCellW, defaultCellH); err != nil {
-		panic(fmt.Sprintf("pane: Resize: %v", err))
+	return &Actor{
+		Hub:       hub,
+		Terminal:  NewTerminal(shellPath),
+		SessionID: sessionID,
+		WindowID:  windowID,
+		PaneID:    paneID,
 	}
 }
 
-func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
-	defer func() {
-		if a.VT != nil {
-			a.VT.Close()
-		}
-	}()
+func (a *Actor) sendScreen(ctx context.Context, event protocol.EventPaneScreenChanged) {
+	if a.Hub == nil {
+		return
+	}
+	event.SessionID = a.SessionID
+	event.WindowID = a.WindowID
+	event.PaneID = a.PaneID
+	_ = a.Hub.Send(ctx, event)
+}
+
+func (a *Actor) closeResources() {
+	if a.Terminal != nil {
+		a.Terminal.Close()
+	}
+}
+
+func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+	defer a.closeResources()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if output, ok := msg.(ptyOutput); ok {
+				if event, emit := a.Terminal.FeedOutput(output); emit {
+					a.sendScreen(ctx, event)
+				}
+				continue
+			}
 			if err := protocol.ValidateCommand(msg); err != nil {
 				panic(err)
 			}
 			switch msg := msg.(type) {
 			case protocol.CommandNoop:
 			case protocol.CommandPaneInit:
-				a.initTerminal(msg.Cols, msg.Rows)
+				a.sendScreen(ctx, a.Terminal.Init(ctx, self, msg.Cols, msg.Rows))
 			case protocol.CommandPaneResize:
-				a.resizeTerminal(msg.Cols, msg.Rows)
+				a.sendScreen(ctx, a.Terminal.Resize(msg.Cols, msg.Rows))
+			case protocol.CommandPaneKey:
+				a.Terminal.HandleKey(msg)
+			case protocol.CommandPaneMouse:
+				a.Terminal.HandleMouse(msg)
+			case protocol.CommandPaneClose:
+				return
+			case protocol.CommandPanePaste:
+				a.Terminal.HandlePaste(msg)
 			default:
 				panic(fmt.Sprintf("pane: unhandled command type %T", msg))
 			}
@@ -84,4 +92,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor().Run)
+}
+
+func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithConfig(hub, sessionID, windowID, paneID, shellPath).Run)
 }

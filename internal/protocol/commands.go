@@ -2,6 +2,11 @@ package protocol
 
 import "fmt"
 
+const (
+	MaxPaneInputTextBytes = 4096
+	MaxPanePasteBytes     = 65536
+)
+
 type Command any
 
 func ValidateCommand(cmd Command) error {
@@ -29,14 +34,8 @@ func ValidateCommand(cmd Command) error {
 		}
 		return nil
 	case CommandPaneResize:
-		if !c.SessionID.Valid() {
-			return fmt.Errorf("protocol: CommandPaneResize: invalid SessionID")
-		}
-		if !c.WindowID.Valid() {
-			return fmt.Errorf("protocol: CommandPaneResize: invalid WindowID")
-		}
-		if !c.PaneID.Valid() {
-			return fmt.Errorf("protocol: CommandPaneResize: invalid PaneID")
+		if err := validatePaneTarget("CommandPaneResize", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
 		}
 		if c.Cols == 0 || c.Rows == 0 {
 			return fmt.Errorf("protocol: CommandPaneResize: invalid size %dx%d", c.Cols, c.Rows)
@@ -51,6 +50,47 @@ func ValidateCommand(cmd Command) error {
 		}
 		if c.Cols == 0 || c.Rows == 0 {
 			return fmt.Errorf("protocol: CommandWindowResize: invalid size %dx%d", c.Cols, c.Rows)
+		}
+		return nil
+	case CommandPaneKey:
+		if err := validatePaneTarget("CommandPaneKey", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
+		}
+		if !c.Action.Valid() {
+			return fmt.Errorf("protocol: CommandPaneKey: invalid Action %d", int(c.Action))
+		}
+		if !c.Modifiers.Valid() {
+			return fmt.Errorf("protocol: CommandPaneKey: invalid Modifiers %d", uint16(c.Modifiers))
+		}
+		if len(c.Text) > MaxPaneInputTextBytes {
+			return fmt.Errorf("protocol: CommandPaneKey: text too large")
+		}
+		return nil
+	case CommandPaneMouse:
+		if err := validatePaneTarget("CommandPaneMouse", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
+		}
+		if !c.Action.Valid() {
+			return fmt.Errorf("protocol: CommandPaneMouse: invalid Action %d", int(c.Action))
+		}
+		if !c.Button.Valid() {
+			return fmt.Errorf("protocol: CommandPaneMouse: invalid Button %d", int(c.Button))
+		}
+		if !c.Modifiers.Valid() {
+			return fmt.Errorf("protocol: CommandPaneMouse: invalid Modifiers %d", uint16(c.Modifiers))
+		}
+		if c.CellCol < 0 || c.CellRow < 0 {
+			return fmt.Errorf("protocol: CommandPaneMouse: negative coordinate")
+		}
+		return nil
+	case CommandPaneClose:
+		return validatePaneTarget("CommandPaneClose", c.SessionID, c.WindowID, c.PaneID)
+	case CommandPanePaste:
+		if err := validatePaneTarget("CommandPanePaste", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
+		}
+		if len(c.Data) > MaxPanePasteBytes {
+			return fmt.Errorf("protocol: CommandPanePaste: data too large")
 		}
 		return nil
 	case CommandPaneSplit:
@@ -82,6 +122,19 @@ type CommandMeta struct {
 
 func (m CommandMeta) Valid() bool {
 	return m.ClientID.Valid() && m.RequestID.Valid()
+}
+
+func validatePaneTarget(commandName string, sessionID SessionID, windowID WindowID, paneID PaneID) error {
+	if !sessionID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid SessionID", commandName)
+	}
+	if !windowID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid WindowID", commandName)
+	}
+	if !paneID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid PaneID", commandName)
+	}
+	return nil
 }
 
 type CommandNoop struct{}
@@ -146,6 +199,110 @@ type CommandWindowResize struct {
 	WindowID  WindowID
 	Cols      uint16
 	Rows      uint16
+}
+
+// KeyAction is a semantic keyboard event phase.
+type KeyAction uint8
+
+const (
+	KeyActionPress KeyAction = iota
+	KeyActionRelease
+	KeyActionRepeat
+)
+
+func (a KeyAction) Valid() bool {
+	return a == KeyActionPress || a == KeyActionRelease || a == KeyActionRepeat
+}
+
+// InputModifiers is a bitset of keyboard/mouse modifiers.
+type InputModifiers uint16
+
+const (
+	ModifierShift InputModifiers = 1 << iota
+	ModifierAlt
+	ModifierCtrl
+	ModifierMeta
+)
+
+func (m InputModifiers) Valid() bool {
+	const known = ModifierShift | ModifierAlt | ModifierCtrl | ModifierMeta
+	return m&^known == 0
+}
+
+// CommandPaneKey carries protocol-owned semantic key input to a pane actor.
+// Key is a normalized key name/code supplied by the UI mapping layer; Text is
+// bounded UTF-8 associated/printable text when available.
+type CommandPaneKey struct {
+	SessionID   SessionID
+	WindowID    WindowID
+	PaneID      PaneID
+	Action      KeyAction
+	Key         string
+	Text        string
+	Modifiers   InputModifiers
+	BaseKey     string
+	ShiftedKey  string
+	PhysicalKey string
+}
+
+// MouseAction is a semantic mouse event phase.
+type MouseAction uint8
+
+const (
+	MouseActionPress MouseAction = iota
+	MouseActionRelease
+	MouseActionMotion
+	MouseActionWheel
+)
+
+func (a MouseAction) Valid() bool {
+	return a == MouseActionPress || a == MouseActionRelease || a == MouseActionMotion || a == MouseActionWheel
+}
+
+// MouseButton identifies a mouse button or wheel axis.
+type MouseButton uint8
+
+const (
+	MouseButtonNone MouseButton = iota
+	MouseButtonLeft
+	MouseButtonMiddle
+	MouseButtonRight
+	MouseButtonWheelUp
+	MouseButtonWheelDown
+	MouseButtonWheelLeft
+	MouseButtonWheelRight
+)
+
+func (b MouseButton) Valid() bool {
+	return b <= MouseButtonWheelRight
+}
+
+// CommandPaneMouse carries pane-local cell coordinates to the pane actor.
+type CommandPaneMouse struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Action    MouseAction
+	Button    MouseButton
+	Modifiers InputModifiers
+	CellCol   int
+	CellRow   int
+}
+
+// CommandPaneClose closes/kills one pane and removes it from the window layout.
+type CommandPaneClose struct {
+	Meta      CommandMeta
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+}
+
+// CommandPanePaste carries bounded raw paste bytes to a pane actor.
+type CommandPanePaste struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Data      []byte
 }
 
 // CommandPaneSplit requests splitting an explicit target pane. Client-originated

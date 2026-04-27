@@ -9,9 +9,12 @@ import (
 	"golang.org/x/term"
 	"shux/internal/client"
 	"shux/internal/daemon"
+	"shux/internal/shux"
 )
 
 const defaultAddr = "127.0.0.1:23234"
+
+var bashShell bool
 
 var rootCmd = &cobra.Command{
 	Use:     "shux",
@@ -27,7 +30,7 @@ var attachCmd = &cobra.Command{
 	Aliases: []string{"a", "attach-session"},
 	Short:   "Attach to the shux session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return client.AttachOrSpawn(cmd.Context(), defaultAddr)
+		return client.AttachOrSpawnWithOptions(cmd.Context(), defaultAddr, attachOptions())
 	},
 }
 
@@ -41,6 +44,7 @@ var detachCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
 	rootCmd.AddCommand(attachCmd, detachCmd)
 }
 
@@ -50,14 +54,25 @@ func main() {
 
 func runRoot(ctx context.Context) error {
 	if isInteractiveTerminal() {
-		return client.AttachOrSpawn(ctx, defaultAddr)
+		return client.AttachOrSpawnWithOptions(ctx, defaultAddr, attachOptions())
 	}
 
 	if isDaemonChild() {
-		return daemon.Run(ctx, defaultAddr)
+		return daemon.RunWithConfig(ctx, defaultAddr, runtimeConfig())
 	}
 
 	return fmt.Errorf("shux requires an interactive terminal")
+}
+
+func attachOptions() client.AttachOptions {
+	return client.AttachOptions{Bash: bashShell}
+}
+
+func runtimeConfig() shux.Config {
+	if bashShell {
+		return shux.BashConfig()
+	}
+	return shux.DefaultConfig()
 }
 
 func isInteractiveTerminal() bool {
