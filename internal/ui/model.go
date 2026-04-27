@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,6 +20,7 @@ type pendingKind uint8
 const (
 	pendingPaneSplit pendingKind = iota + 1
 	pendingPaneClose
+	pendingWindowCreate
 )
 
 type pendingCommand struct {
@@ -50,54 +52,67 @@ func (s *ProgramEventSink) DeliverEvent(_ context.Context, e protocol.Event) err
 	return nil
 }
 
+// ModelConfig configures a Model. Supervisor and Ctx must be set together or
+// both omitted; the model wires Bubble Tea events to backend commands when
+// they're present and runs read-only otherwise.
+type ModelConfig struct {
+	ClientID   protocol.ClientID
+	SessionID  protocol.SessionID
+	WindowID   protocol.WindowID
+	PaneID     protocol.PaneID
+	Supervisor actor.Ref[protocol.Command]
+	Ctx        context.Context
+	OnExit     func(ExitIntent)
+}
+
 type Model struct {
-	Title        string
-	ClientID     protocol.ClientID
-	SessionID    protocol.SessionID
-	WindowID     protocol.WindowID
-	PaneID       protocol.PaneID
-	ActivePaneID protocol.PaneID
-	Pending      map[protocol.RequestID]pendingCommand
-	NextRequest  protocol.RequestID
-	Layout       LayoutSnapshot
-	Screens      map[protocol.PaneID]protocol.EventPaneScreenChanged
-	Supervisor   actor.Ref[protocol.Command]
-	Ctx          context.Context
-	OnExit       func(ExitIntent)
-	Prefix       bool
+	Title         string
+	ClientID      protocol.ClientID
+	SessionID     protocol.SessionID
+	WindowID      protocol.WindowID
+	PaneID        protocol.PaneID
+	ActivePaneID  protocol.PaneID
+	Pending       map[protocol.RequestID]pendingCommand
+	NextRequest   protocol.RequestID
+	Layout        LayoutSnapshot
+	Screens       map[protocol.PaneID]protocol.EventPaneScreenChanged
+	WindowIDs     []protocol.WindowID
+	ClosedWindows map[protocol.WindowID]bool
+	Layouts       map[protocol.WindowID]LayoutSnapshot
+	WindowScreens map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged
+	Supervisor    actor.Ref[protocol.Command]
+	Ctx           context.Context
+	OnExit        func(ExitIntent)
+	Prefix        bool
 }
 
-func NewModel(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) Model {
-	return NewModelForClient("", sessionID, windowID, paneID)
-}
-
-func NewModelForClient(clientID protocol.ClientID, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) Model {
-	return Model{
-		Title:        "shux",
-		ClientID:     clientID,
-		SessionID:    sessionID,
-		WindowID:     windowID,
-		PaneID:       paneID,
-		ActivePaneID: paneID,
-		Pending:      make(map[protocol.RequestID]pendingCommand),
-		Layout:       EmptyLayoutSnapshot(sessionID, windowID),
-		Screens:      make(map[protocol.PaneID]protocol.EventPaneScreenChanged),
+// NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
+// together; passing one without the other is a programming bug.
+func NewModel(cfg ModelConfig) Model {
+	if cfg.Supervisor.Valid() && cfg.Ctx == nil {
+		panic("ui: NewModel: supervisor without context")
 	}
-}
-
-// NewModelWithSupervisor attaches the supervisor command ref and context so
-// terminal resizes become CommandWindowResize on the backend.
-func NewModelWithSupervisor(clientID protocol.ClientID, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, sup actor.Ref[protocol.Command], ctx context.Context) Model {
-	m := NewModelForClient(clientID, sessionID, windowID, paneID)
-	m.Supervisor = sup
-	m.Ctx = ctx
-	return m
-}
-
-func NewModelWithSupervisorAndExit(clientID protocol.ClientID, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, sup actor.Ref[protocol.Command], ctx context.Context, onExit func(ExitIntent)) Model {
-	m := NewModelWithSupervisor(clientID, sessionID, windowID, paneID, sup, ctx)
-	m.OnExit = onExit
-	return m
+	if !cfg.Supervisor.Valid() && cfg.Ctx != nil {
+		panic("ui: NewModel: context without supervisor")
+	}
+	return Model{
+		Title:         "shux",
+		ClientID:      cfg.ClientID,
+		SessionID:     cfg.SessionID,
+		WindowID:      cfg.WindowID,
+		PaneID:        cfg.PaneID,
+		ActivePaneID:  cfg.PaneID,
+		Pending:       make(map[protocol.RequestID]pendingCommand),
+		Layout:        EmptyLayoutSnapshot(cfg.SessionID, cfg.WindowID),
+		Screens:       make(map[protocol.PaneID]protocol.EventPaneScreenChanged),
+		WindowIDs:     []protocol.WindowID{cfg.WindowID},
+		ClosedWindows: make(map[protocol.WindowID]bool),
+		Layouts:       make(map[protocol.WindowID]LayoutSnapshot),
+		WindowScreens: make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged),
+		Supervisor:    cfg.Supervisor,
+		Ctx:           cfg.Ctx,
+		OnExit:        cfg.OnExit,
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -107,183 +122,266 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case HubEvent:
-		switch e := msg.E.(type) {
-		case protocol.EventWindowLayoutChanged:
-			if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
-				return m, nil
+		return m.handleHubEvent(msg.E)
+	case tea.WindowSizeMsg:
+		return m.handleWindowSize(msg)
+	case tea.KeyPressMsg:
+		return m.handleKeyPress(msg)
+	case tea.KeyReleaseMsg:
+		if !m.Prefix {
+			return m, m.dispatch(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), protocol.KeyActionRelease))
+		}
+	case tea.PasteMsg:
+		return m, m.dispatch(protocol.CommandPanePaste{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+			PaneID:    m.ActivePaneID,
+			Data:      []byte(msg.Content),
+		})
+	case tea.MouseMsg:
+		if cmd, ok := m.mouseCommand(msg); ok {
+			return m, m.dispatch(cmd)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
+	switch e := e.(type) {
+	case protocol.EventSessionWindowsChanged:
+		if e.SessionID != m.SessionID {
+			return m, nil
+		}
+		return m.WithWindowIDs(e.Windows), nil
+	case protocol.EventWindowCreated:
+		if e.SessionID != m.SessionID {
+			return m, nil
+		}
+		m = m.addWindowID(e.WindowID)
+		if e.ClientID == m.ClientID {
+			if pending, ok := m.Pending[e.RequestID]; ok && pending.Kind == pendingWindowCreate {
+				delete(m.Pending, e.RequestID)
+				m = m.switchWindow(e.WindowID)
 			}
-			m = m.applyLayoutSnapshot(LayoutSnapshotFromEvent(e))
-		case protocol.EventPaneScreenChanged:
-			if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
-				return m, nil
-			}
-			m = m.WithPaneScreen(e)
-		case protocol.EventPaneClosed:
-			if e.WindowID != m.WindowID {
-				return m, nil
-			}
-			delete(m.Screens, e.PaneID)
-			if m.ActivePaneID == e.PaneID {
-				m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
-			}
-		case protocol.EventPaneCloseLastRequested:
-			if e.ClientID != m.ClientID {
-				return m, nil
-			}
-			delete(m.Pending, e.RequestID)
+		}
+		return m, nil
+	case protocol.EventPaneCreated:
+		if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
+			return m, nil
+		}
+		if !m.ActivePaneID.Valid() {
+			m.ActivePaneID = e.PaneID
+		}
+		return m, nil
+	case protocol.EventWindowClosed:
+		if e.SessionID != m.SessionID {
+			return m, nil
+		}
+		m = m.removeWindow(e.WindowID)
+		if e.WindowID != m.WindowID {
+			return m, nil
+		}
+		if len(m.WindowIDs) == 0 {
 			if m.OnExit != nil {
 				m.OnExit(ExitQuit)
 			}
 			return m, tea.Quit
-		case protocol.EventPaneSplitCompleted:
-			if e.ClientID != m.ClientID {
-				return m, nil
-			}
-			if pending, ok := m.Pending[e.RequestID]; ok && pending.Kind == pendingPaneSplit {
-				delete(m.Pending, e.RequestID)
-				m.ActivePaneID = e.NewPaneID
-				m.Layout.ActivePane = normalizeActivePane(m.ActivePaneID, m.Layout.Panes)
-			}
-		case protocol.EventCommandRejected:
-			if e.ClientID == m.ClientID {
-				delete(m.Pending, e.RequestID)
-			}
 		}
-		return m, nil
-	case tea.WindowSizeMsg:
-		switch {
-		case m.Supervisor.Valid() && m.Ctx == nil:
-			panic("ui: nil context with valid supervisor ref")
-		case !m.Supervisor.Valid() && m.Ctx != nil:
-			panic("ui: context set without valid supervisor ref")
-		case !m.Supervisor.Valid():
+		m = m.switchWindow(m.WindowIDs[0])
+		return m, m.currentWindowResizeCmd()
+	case protocol.EventWindowLayoutChanged:
+		if e.SessionID != m.SessionID {
 			return m, nil
 		}
-		if msg.Width <= 0 || msg.Height <= 0 {
+		snap := LayoutSnapshotFromEvent(e)
+		m.storeLayoutSnapshot(snap)
+		if e.WindowID != m.WindowID {
 			return m, nil
 		}
-		if msg.Width > 0xFFFF || msg.Height > 0xFFFF {
+		return m.applyLayoutSnapshot(snap), nil
+	case protocol.EventPaneScreenChanged:
+		if e.SessionID != m.SessionID {
 			return m, nil
 		}
-		m.Layout.WindowCols = int(msg.Width)
-		m.Layout.WindowRows = int(msg.Height)
-		cols, rows := uint16(msg.Width), uint16(msg.Height)
-		return m, m.sendWindowResize(cols, rows)
-	case tea.KeyPressMsg:
-		key := msg.String()
-		if !m.Prefix {
-			if key == "ctrl+b" {
-				m.Prefix = true
-				return m, nil
-			}
-			return m, m.sendPaneKey(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), keyActionFromPress(msg)))
+		m.storePaneScreen(e)
+		if e.WindowID != m.WindowID {
+			return m, nil
 		}
-		m.Prefix = false
-		if m.Supervisor.Valid() && m.Ctx != nil {
-			switch key {
-			case "d":
-				if m.OnExit != nil {
-					m.OnExit(ExitDetach)
-				}
-				return m, tea.Quit
-			case "%":
-				return m.startPaneSplit(protocol.SplitVertical)
-			case "\"":
-				return m.startPaneSplit(protocol.SplitHorizontal)
-			case "o":
-				m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
-				m.Layout.ActivePane = m.ActivePaneID
-				return m, nil
-			case "x":
-				return m.startPaneClose(m.ActivePaneID)
-			case "q":
-				if m.OnExit != nil {
-					m.OnExit(ExitQuit)
-				}
-				return m, tea.Quit
-			case "c":
-				panic("ui: create window not implemented")
-			case "n":
-				panic("ui: next window not implemented")
-			case "p":
-				panic("ui: previous window not implemented")
-			case "?":
-				panic("ui: list key bindings not implemented")
-			case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				panic("ui: select window by index not implemented")
-			}
+		return m.WithPaneScreen(e), nil
+	case protocol.EventPaneClosed:
+		if e.WindowID != m.WindowID {
+			return m, nil
 		}
-	case tea.KeyReleaseMsg:
-		if !m.Prefix {
-			return m, m.sendPaneKey(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), protocol.KeyActionRelease))
+		delete(m.Screens, e.PaneID)
+		if m.ActivePaneID == e.PaneID {
+			m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
 		}
-	case tea.PasteMsg:
-		return m, m.sendPanePaste([]byte(msg.Content))
-	case tea.MouseMsg:
-		if cmd, ok := m.mouseCommand(msg); ok {
-			return m, m.sendPaneMouse(cmd)
+	case protocol.EventPaneCloseLastRequested:
+		if e.ClientID != m.ClientID {
+			return m, nil
+		}
+		delete(m.Pending, e.RequestID)
+		if m.OnExit != nil {
+			m.OnExit(ExitQuit)
+		}
+		return m, tea.Quit
+	case protocol.EventPaneSplitCompleted:
+		if e.ClientID != m.ClientID {
+			return m, nil
+		}
+		if pending, ok := m.Pending[e.RequestID]; ok && pending.Kind == pendingPaneSplit {
+			delete(m.Pending, e.RequestID)
+			m.ActivePaneID = e.NewPaneID
+			m.Layout.ActivePane = normalizeActivePane(m.ActivePaneID, m.Layout.Panes)
+		}
+	case protocol.EventCommandRejected:
+		if e.ClientID == m.ClientID {
+			delete(m.Pending, e.RequestID)
 		}
 	}
-
 	return m, nil
 }
 
-func (m Model) sendPaneKey(cmd protocol.CommandPaneKey) tea.Cmd {
-	return func() tea.Msg {
-		if m.Supervisor.Valid() && m.Ctx != nil && cmd.PaneID.Valid() {
-			_ = m.Supervisor.Send(m.Ctx, cmd)
+func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	if !m.Supervisor.Valid() {
+		return m, nil
+	}
+	if msg.Width <= 0 || msg.Height <= 0 || msg.Width > 0xFFFF || msg.Height > 0xFFFF {
+		return m, nil
+	}
+	m.Layout.WindowCols = int(msg.Width)
+	m.Layout.WindowRows = int(msg.Height)
+	return m, m.dispatch(protocol.CommandWindowResize{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Cols:      uint16(msg.Width),
+		Rows:      uint16(msg.Height),
+	})
+}
+
+func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if !m.Prefix {
+		if key == "ctrl+b" {
+			m.Prefix = true
+			return m, nil
 		}
+		return m, m.dispatch(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), keyActionFromPress(msg)))
+	}
+	m.Prefix = false
+	if !m.Supervisor.Valid() {
+		return m, nil
+	}
+	switch key {
+	case "d":
+		if m.OnExit != nil {
+			m.OnExit(ExitDetach)
+		}
+		return m, tea.Quit
+	case "%":
+		return m.startPaneSplit(protocol.SplitVertical)
+	case "\"":
+		return m.startPaneSplit(protocol.SplitHorizontal)
+	case "o":
+		m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
+		m.Layout.ActivePane = m.ActivePaneID
+		return m, nil
+	case "x":
+		return m.startPaneClose(m.ActivePaneID)
+	case "q":
+		if m.OnExit != nil {
+			m.OnExit(ExitQuit)
+		}
+		return m, tea.Quit
+	case "c":
+		return m.startWindowCreate()
+	case "n":
+		m = m.switchWindowByOffset(1)
+		return m, m.currentWindowResizeCmd()
+	case "p":
+		m = m.switchWindowByOffset(-1)
+		return m, m.currentWindowResizeCmd()
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		m = m.switchWindowByNumber(int(key[0] - '0'))
+		return m, m.currentWindowResizeCmd()
+	case "0":
+		m = m.switchWindowByNumber(10)
+		return m, m.currentWindowResizeCmd()
+	case "?":
+		fmt.Fprintf(os.Stderr, "ui: prefix key %q not implemented yet\n", key)
+		return m, nil
+	}
+	return m, nil
+}
+
+// dispatch returns a tea.Cmd that sends cmd to the supervisor when the model
+// has a live supervisor+context. With no supervisor (test/read-only) it's a
+// no-op tea.Cmd.
+func (m Model) currentWindowResizeCmd() tea.Cmd {
+	cols, rows := uint16OrZero(m.Layout.WindowCols), uint16OrZero(m.Layout.WindowRows)
+	if cols == 0 || rows == 0 {
+		return nil
+	}
+	return m.dispatch(protocol.CommandWindowResize{SessionID: m.SessionID, WindowID: m.WindowID, Cols: cols, Rows: rows})
+}
+
+func (m Model) dispatch(cmd protocol.Command) tea.Cmd {
+	if !m.Supervisor.Valid() || m.Ctx == nil {
+		return nil
+	}
+	sup, ctx := m.Supervisor, m.Ctx
+	return func() tea.Msg {
+		_ = sup.Send(ctx, cmd)
 		return nil
 	}
 }
 
-func (m Model) sendPaneMouse(cmd protocol.CommandPaneMouse) tea.Cmd {
-	return func() tea.Msg {
-		if m.Supervisor.Valid() && m.Ctx != nil && cmd.PaneID.Valid() {
-			_ = m.Supervisor.Send(m.Ctx, cmd)
-		}
-		return nil
+func (m Model) startWindowCreate() (Model, tea.Cmd) {
+	if !m.ClientID.Valid() {
+		return m, nil
 	}
+	req := m.rememberPending(pendingCommand{Kind: pendingWindowCreate})
+	return m, m.dispatch(protocol.CommandCreateWindow{
+		Meta:      protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID: m.SessionID,
+		Cols:      uint16OrZero(m.Layout.WindowCols),
+		Rows:      uint16OrZero(m.Layout.WindowRows),
+		AutoPane:  true,
+	})
+}
+
+func uint16OrZero(v int) uint16 {
+	if v <= 0 || v > 0xFFFF {
+		return 0
+	}
+	return uint16(v)
 }
 
 func (m Model) startPaneClose(paneID protocol.PaneID) (Model, tea.Cmd) {
 	if !m.ClientID.Valid() || !paneID.Valid() {
 		return m, nil
 	}
-	req := m.nextRequestID()
-	m.rememberPending(req, pendingCommand{Kind: pendingPaneClose})
-	return m, m.sendPaneClose(req, paneID)
+	req := m.rememberPending(pendingCommand{Kind: pendingPaneClose})
+	return m, m.dispatch(protocol.CommandPaneClose{
+		Meta:      protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    paneID,
+	})
 }
 
-func (m Model) sendPaneClose(req protocol.RequestID, paneID protocol.PaneID) tea.Cmd {
-	return func() tea.Msg {
-		if m.Supervisor.Valid() && m.Ctx != nil && paneID.Valid() {
-			_ = m.Supervisor.Send(m.Ctx, protocol.CommandPaneClose{
-				Meta: protocol.CommandMeta{
-					ClientID:  m.ClientID,
-					RequestID: req,
-				},
-				SessionID: m.SessionID,
-				WindowID:  m.WindowID,
-				PaneID:    paneID,
-			})
-		}
-		return nil
+func (m Model) startPaneSplit(dir protocol.SplitDirection) (Model, tea.Cmd) {
+	if !m.ClientID.Valid() {
+		return m, nil
 	}
-}
-
-func (m Model) sendPanePaste(data []byte) tea.Cmd {
-	return func() tea.Msg {
-		if m.Supervisor.Valid() && m.Ctx != nil && m.ActivePaneID.Valid() {
-			_ = m.Supervisor.Send(m.Ctx, protocol.CommandPanePaste{
-				SessionID: m.SessionID,
-				WindowID:  m.WindowID,
-				PaneID:    m.ActivePaneID,
-				Data:      data,
-			})
-		}
-		return nil
-	}
+	req := m.rememberPending(pendingCommand{Kind: pendingPaneSplit})
+	return m, m.dispatch(protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID:    m.SessionID,
+		WindowID:     m.WindowID,
+		TargetPaneID: m.ActivePaneID,
+		Direction:    dir,
+	})
 }
 
 func keyActionFromPress(msg tea.KeyPressMsg) protocol.KeyAction {
@@ -412,34 +510,9 @@ func mouseButton(button tea.MouseButton) protocol.MouseButton {
 	}
 }
 
-func (m Model) sendWindowResize(cols, rows uint16) tea.Cmd {
-	return func() tea.Msg {
-		if err := m.Supervisor.Send(m.Ctx, protocol.CommandWindowResize{
-			SessionID: m.SessionID,
-			WindowID:  m.WindowID,
-			Cols:      cols,
-			Rows:      rows,
-		}); err != nil {
-			panic(fmt.Sprintf("ui: send window resize: %v", err))
-		}
-		return nil
-	}
-}
-
-func (m Model) startPaneSplit(dir protocol.SplitDirection) (Model, tea.Cmd) {
-	if !m.ClientID.Valid() {
-		return m, nil
-	}
-	req := m.nextRequestID()
-	m.rememberPending(req, pendingCommand{Kind: pendingPaneSplit})
-	return m, m.sendPaneSplit(req, m.ActivePaneID, dir)
-}
-
-func (m Model) nextRequestID() protocol.RequestID {
-	return m.NextRequest + 1
-}
-
-func (m *Model) rememberPending(req protocol.RequestID, pending pendingCommand) {
+// rememberPending registers a pending command and returns its assigned request id.
+// The caller embeds the returned RequestID in the outgoing command's Meta.
+func (m *Model) rememberPending(pending pendingCommand) protocol.RequestID {
 	if m.Pending == nil {
 		m.Pending = make(map[protocol.RequestID]pendingCommand)
 	}
@@ -452,24 +525,123 @@ func (m *Model) rememberPending(req protocol.RequestID, pending pendingCommand) 
 		}
 		delete(m.Pending, oldest)
 	}
-	m.NextRequest = req
-	m.Pending[req] = pending
+	m.NextRequest++
+	m.Pending[m.NextRequest] = pending
+	return m.NextRequest
 }
 
-func (m Model) sendPaneSplit(req protocol.RequestID, target protocol.PaneID, dir protocol.SplitDirection) tea.Cmd {
-	return func() tea.Msg {
-		_ = m.Supervisor.Send(m.Ctx, protocol.CommandPaneSplit{
-			Meta: protocol.CommandMeta{
-				ClientID:  m.ClientID,
-				RequestID: req,
-			},
-			SessionID:    m.SessionID,
-			WindowID:     m.WindowID,
-			TargetPaneID: target,
-			Direction:    dir,
-		})
-		return nil
+func (m Model) WithWindowIDs(ids []protocol.WindowID) Model {
+	m.WindowIDs = m.WindowIDs[:0]
+	for _, wid := range ids {
+		if wid.Valid() && !m.ClosedWindows[wid] {
+			m.WindowIDs = append(m.WindowIDs, wid)
+		}
 	}
+	if len(m.WindowIDs) == 0 && m.WindowID.Valid() && !m.ClosedWindows[m.WindowID] {
+		m.WindowIDs = []protocol.WindowID{m.WindowID}
+	}
+	return m
+}
+
+func (m Model) addWindowID(windowID protocol.WindowID) Model {
+	if !windowID.Valid() || m.ClosedWindows[windowID] {
+		return m
+	}
+	for _, wid := range m.WindowIDs {
+		if wid == windowID {
+			return m
+		}
+	}
+	m.WindowIDs = append(m.WindowIDs, windowID)
+	return m
+}
+
+func (m Model) removeWindow(windowID protocol.WindowID) Model {
+	if m.ClosedWindows == nil {
+		m.ClosedWindows = make(map[protocol.WindowID]bool)
+	}
+	m.ClosedWindows[windowID] = true
+	for i, wid := range m.WindowIDs {
+		if wid == windowID {
+			m.WindowIDs = append(m.WindowIDs[:i], m.WindowIDs[i+1:]...)
+			break
+		}
+	}
+	delete(m.Layouts, windowID)
+	delete(m.WindowScreens, windowID)
+	return m
+}
+
+func (m *Model) storeLayoutSnapshot(snap LayoutSnapshot) {
+	if m.Layouts == nil {
+		m.Layouts = make(map[protocol.WindowID]LayoutSnapshot)
+	}
+	m.Layouts[snap.WindowID] = snap
+}
+
+func (m *Model) storePaneScreen(screen protocol.EventPaneScreenChanged) {
+	if m.WindowScreens == nil {
+		m.WindowScreens = make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged)
+	}
+	screens := m.WindowScreens[screen.WindowID]
+	if screens == nil {
+		screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
+		m.WindowScreens[screen.WindowID] = screens
+	}
+	screens[screen.PaneID] = screen
+}
+
+func (m Model) switchWindow(windowID protocol.WindowID) Model {
+	if !windowID.Valid() || windowID == m.WindowID {
+		return m
+	}
+	cols, rows := m.Layout.WindowCols, m.Layout.WindowRows
+	m.WindowID = windowID
+	m.Layout = EmptyLayoutSnapshot(m.SessionID, windowID)
+	if snap, ok := m.Layouts[windowID]; ok {
+		m.Layout = snap
+	}
+	if cols > 0 {
+		m.Layout.WindowCols = cols
+	}
+	if rows > 0 {
+		m.Layout.WindowRows = rows
+	}
+	m.Screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
+	if screens := m.WindowScreens[windowID]; screens != nil {
+		for pid, screen := range screens {
+			m.Screens[pid] = screen
+		}
+	}
+	m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
+	m.Layout.ActivePane = m.ActivePaneID
+	return m
+}
+
+func (m Model) switchWindowByOffset(offset int) Model {
+	if len(m.WindowIDs) == 0 {
+		return m
+	}
+	idx := 0
+	for i, wid := range m.WindowIDs {
+		if wid == m.WindowID {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + offset) % len(m.WindowIDs)
+	if idx < 0 {
+		idx += len(m.WindowIDs)
+	}
+	return m.switchWindow(m.WindowIDs[idx])
+}
+
+func (m Model) switchWindowByNumber(number int) Model {
+	index := number - 1
+	if index < 0 || index >= len(m.WindowIDs) {
+		return m
+	}
+	return m.switchWindow(m.WindowIDs[index])
 }
 
 func (m Model) applyLayoutSnapshot(snap LayoutSnapshot) Model {
@@ -485,12 +657,20 @@ func (m Model) applyLayoutSnapshot(snap LayoutSnapshot) Model {
 }
 
 func (m Model) WithLayoutSnapshot(snap LayoutSnapshot) Model {
+	m.storeLayoutSnapshot(snap)
+	if snap.WindowID != m.WindowID {
+		return m
+	}
 	return m.applyLayoutSnapshot(snap)
 }
 
 func (m Model) WithPaneScreen(screen protocol.EventPaneScreenChanged) Model {
 	if m.Screens == nil {
 		m.Screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
+	}
+	m.storePaneScreen(screen)
+	if screen.WindowID != m.WindowID {
+		return m
 	}
 	m.Screens[screen.PaneID] = screen
 	return m
@@ -556,9 +736,6 @@ func (m Model) activeCursor() *tea.Cursor {
 
 func (m Model) View() tea.View {
 	v := tea.NewView(m.viewString())
-	if cursor := m.activeCursor(); cursor != nil {
-		v.Cursor = cursor
-	}
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.KeyboardEnhancements.ReportEventTypes = true
@@ -572,12 +749,12 @@ func (m Model) View() tea.View {
 // (Bubble Tea still owns the program loop and View contract). Pane lines are a logical preview
 // of cell geometry, not a pixel-matched terminal partition.
 func (m Model) viewString() string {
-	cols := max(1, m.Layout.WindowCols)
-	rows := max(1, m.Layout.WindowRows)
-	if cols == 1 && m.Layout.WindowCols == 0 {
+	cols := m.Layout.WindowCols
+	rows := m.Layout.WindowRows
+	if cols <= 0 {
 		cols = 80
 	}
-	if rows == 1 && m.Layout.WindowRows == 0 {
+	if rows <= 0 {
 		rows = 24
 	}
 	canvas := newRuneCanvas(cols, rows)

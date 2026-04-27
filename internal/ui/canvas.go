@@ -1,13 +1,17 @@
 package ui
 
 import (
+	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"shux/internal/protocol"
 )
 
-const cursorANSI = "\x1b[97;44m" // bright white text on blue: visible on dark and light themes.
+var debugViewPath = os.Getenv("SHUX_DEBUG_VIEW")
+
+const cursorANSI = "\x1b[7m" // reverse video: portable across terminal palettes.
 
 type runeCanvas struct {
 	cols int
@@ -33,18 +37,6 @@ func newRuneCanvas(cols, rows int) *runeCanvas {
 		}
 	}
 	return &runeCanvas{cols: cols, rows: rows, buf: buf, ansi: ansi}
-}
-
-func (c *runeCanvas) drawPane(p LayoutPane, active bool) {
-	c.drawPaneWithScreen(p, active, nil)
-}
-
-func (c *runeCanvas) drawPaneWithScreen(p LayoutPane, active bool, lines []string) {
-	c.drawPaneWithCells(p, active, textLinesToCells(lines))
-}
-
-func (c *runeCanvas) drawPaneWithCells(p LayoutPane, active bool, lines []protocol.EventPaneScreenLine) {
-	c.drawPaneWithScreenEvent(p, active, protocol.EventPaneScreenChanged{Lines: lines})
 }
 
 func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, screen protocol.EventPaneScreenChanged) {
@@ -123,10 +115,7 @@ func (c *runeCanvas) drawCursor(x, y, w, h int, cursor protocol.EventPaneScreenC
 	if cx < 0 || cx >= c.cols || cy < 0 || cy >= c.rows {
 		return
 	}
-	if c.buf[cy][cx] == ' ' {
-		c.buf[cy][cx] = '█'
-	}
-	c.ansi[cy][cx] = cursorANSI
+	c.ansi[cy][cx] = c.ansi[cy][cx] + cursorANSI
 }
 
 func (c *runeCanvas) drawPaneContent(x, y, w, h int, lines []protocol.EventPaneScreenLine) {
@@ -139,29 +128,7 @@ func (c *runeCanvas) drawPaneContent(x, y, w, h int, lines []protocol.EventPaneS
 }
 
 func labelForPane(p LayoutPane) string {
-	return string(p.PaneID) + " " + itoa(p.Cols) + "x" + itoa(p.Rows) + " @" + itoa(p.Col) + "," + itoa(p.Row)
-}
-
-func itoa(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	neg := v < 0
-	if neg {
-		v = -v
-	}
-	var b [20]byte
-	i := len(b)
-	for v > 0 {
-		i--
-		b[i] = byte('0' + v%10)
-		v /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
+	return string(p.PaneID) + " " + strconv.Itoa(p.Cols) + "x" + strconv.Itoa(p.Rows) + " @" + strconv.Itoa(p.Col) + "," + strconv.Itoa(p.Row)
 }
 
 func (c *runeCanvas) drawText(x, y int, s string) {
@@ -196,8 +163,7 @@ func (c *runeCanvas) drawCellsClipped(x, y int, line protocol.EventPaneScreenLin
 		c.drawTextClipped(x, y, line.Text, maxWidth)
 		return
 	}
-	drawn := 0
-	for _, cell := range line.Cells {
+	for drawn, cell := range line.Cells {
 		if drawn >= maxWidth {
 			return
 		}
@@ -205,14 +171,8 @@ func (c *runeCanvas) drawCellsClipped(x, y int, line protocol.EventPaneScreenLin
 		if text == "" {
 			text = " "
 		}
-		for _, r := range text {
-			if drawn >= maxWidth {
-				return
-			}
-			c.setStyled(x+drawn, y, r, cellANSI(cell))
-			drawn++
-			break
-		}
+		r, _ := utf8.DecodeRuneInString(text)
+		c.setStyled(x+drawn, y, r, cellANSI(cell))
 	}
 }
 
@@ -254,18 +214,38 @@ func (c *runeCanvas) String() string {
 		}
 		lines[y] = b.String()
 	}
-	return strings.Join(lines, "\n")
-}
-
-func textLinesToCells(lines []string) []protocol.EventPaneScreenLine {
-	if len(lines) == 0 {
-		return nil
-	}
-	out := make([]protocol.EventPaneScreenLine, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, protocol.EventPaneScreenLine{Text: line})
+	out := strings.Join(lines, "\n")
+	if debugViewPath != "" {
+		c.dumpDebug(out)
 	}
 	return out
+}
+
+func (c *runeCanvas) dumpDebug(rendered string) {
+	f, err := os.OpenFile(debugViewPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString("=== row 0 cells ===\n")
+	if c.rows > 0 {
+		for x, r := range c.buf[0] {
+			ansi := c.ansi[0][x]
+			if ansi == "" && r == ' ' {
+				continue
+			}
+			f.WriteString("  col ")
+			f.WriteString(strconv.Itoa(x))
+			f.WriteString(" rune=")
+			f.WriteString(strconv.QuoteRune(r))
+			f.WriteString(" ansi=")
+			f.WriteString(strconv.Quote(ansi))
+			f.WriteString("\n")
+		}
+	}
+	f.WriteString("=== rendered ===\n")
+	f.WriteString(strconv.Quote(rendered))
+	f.WriteString("\n")
 }
 
 func cellANSI(cell protocol.EventPaneScreenCell) string {
@@ -307,18 +287,14 @@ func cellANSI(cell protocol.EventPaneScreenCell) string {
 }
 
 func colorANSI(color protocol.EventPaneScreenColor, fg bool) string {
+	base := "38"
+	if !fg {
+		base = "48"
+	}
 	switch color.Kind {
 	case "palette":
-		base := "38"
-		if !fg {
-			base = "48"
-		}
 		return base + ";5;" + strconv.Itoa(int(color.Index))
 	case "rgb":
-		base := "38"
-		if !fg {
-			base = "48"
-		}
 		return base + ";2;" + strconv.Itoa(int(color.R)) + ";" + strconv.Itoa(int(color.G)) + ";" + strconv.Itoa(int(color.B))
 	default:
 		return ""

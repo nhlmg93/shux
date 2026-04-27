@@ -30,63 +30,51 @@ func ValidateEvent(event Event) error {
 		}
 		return nil
 	case EventSessionCreated:
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventSessionCreated: invalid SessionID")
+		return validateSessionTarget("EventSessionCreated", e.SessionID)
+	case EventWindowCreated:
+		if err := validateWindowTarget("EventWindowCreated", e.SessionID, e.WindowID); err != nil {
+			return err
+		}
+		if !optionalRequestMetaValid(e.ClientID, e.RequestID) {
+			return fmt.Errorf("protocol: EventWindowCreated: invalid optional request meta")
 		}
 		return nil
-	case EventWindowCreated:
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventWindowCreated: invalid SessionID")
+	case EventSessionWindowsChanged:
+		if err := validateSessionTarget("EventSessionWindowsChanged", e.SessionID); err != nil {
+			return err
 		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventWindowCreated: invalid WindowID")
+		if e.Revision == 0 {
+			return fmt.Errorf("protocol: EventSessionWindowsChanged: invalid Revision")
+		}
+		for i, wid := range e.Windows {
+			if !wid.Valid() {
+				return fmt.Errorf("protocol: EventSessionWindowsChanged: Windows[%d]: invalid WindowID", i)
+			}
 		}
 		return nil
 	case EventPaneCreated:
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCreated: invalid WindowID")
+		if err := validateSessionTarget("EventPaneCreated", e.SessionID); err != nil {
+			return err
 		}
-		if !e.PaneID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCreated: invalid PaneID")
-		}
-		return nil
+		return validateWindowPaneFields("EventPaneCreated", e.WindowID, e.PaneID)
+	case EventWindowClosed:
+		return validateWindowTarget("EventWindowClosed", e.SessionID, e.WindowID)
 	case EventPaneClosed:
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventPaneClosed: invalid WindowID")
-		}
-		if !e.PaneID.Valid() {
-			return fmt.Errorf("protocol: EventPaneClosed: invalid PaneID")
-		}
-		return nil
+		return validateWindowPaneFields("EventPaneClosed", e.WindowID, e.PaneID)
 	case EventPaneCloseLastRequested:
-		if !e.ClientID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCloseLastRequested: invalid ClientID")
+		if err := validateRequestMeta("EventPaneCloseLastRequested", e.ClientID, e.RequestID); err != nil {
+			return err
 		}
-		if !e.RequestID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCloseLastRequested: invalid RequestID")
-		}
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCloseLastRequested: invalid SessionID")
-		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCloseLastRequested: invalid WindowID")
-		}
-		if !e.PaneID.Valid() {
-			return fmt.Errorf("protocol: EventPaneCloseLastRequested: invalid PaneID")
-		}
-		return nil
+		return validatePaneTarget("EventPaneCloseLastRequested", e.SessionID, e.WindowID, e.PaneID)
 	case EventWindowLayoutChanged:
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid SessionID")
-		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid WindowID")
+		if err := validateWindowTarget("EventWindowLayoutChanged", e.SessionID, e.WindowID); err != nil {
+			return err
 		}
 		if e.Revision == 0 {
 			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid Revision")
 		}
-		if e.Cols <= 0 || e.Rows <= 0 {
-			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid size %dx%d", e.Cols, e.Rows)
+		if err := validateEventSize("EventWindowLayoutChanged", e.Cols, e.Rows); err != nil {
+			return err
 		}
 		for i, p := range e.Panes {
 			if !p.PaneID.Valid() {
@@ -98,20 +86,17 @@ func ValidateEvent(event Event) error {
 		}
 		return nil
 	case EventPaneScreenChanged:
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventPaneScreenChanged: invalid SessionID")
-		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventPaneScreenChanged: invalid WindowID")
-		}
-		if !e.PaneID.Valid() {
-			return fmt.Errorf("protocol: EventPaneScreenChanged: invalid PaneID")
+		if err := validatePaneTarget("EventPaneScreenChanged", e.SessionID, e.WindowID, e.PaneID); err != nil {
+			return err
 		}
 		if e.Revision == 0 {
 			return fmt.Errorf("protocol: EventPaneScreenChanged: invalid Revision")
 		}
-		if e.Cols <= 0 || e.Rows <= 0 || e.Cols > MaxPaneScreenCols || e.Rows > MaxPaneScreenRows {
-			return fmt.Errorf("protocol: EventPaneScreenChanged: invalid size %dx%d", e.Cols, e.Rows)
+		if err := validateEventSize("EventPaneScreenChanged", e.Cols, e.Rows); err != nil {
+			return err
+		}
+		if e.Cols > MaxPaneScreenCols || e.Rows > MaxPaneScreenRows {
+			return fmt.Errorf("protocol: EventPaneScreenChanged: size %dx%d exceeds max %dx%d", e.Cols, e.Rows, MaxPaneScreenCols, MaxPaneScreenRows)
 		}
 		if err := e.Cursor.Validate(e.Cols, e.Rows); err != nil {
 			return fmt.Errorf("protocol: EventPaneScreenChanged: %w", err)
@@ -126,17 +111,11 @@ func ValidateEvent(event Event) error {
 		}
 		return nil
 	case EventPaneSplitCompleted:
-		if !e.ClientID.Valid() {
-			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid ClientID")
+		if err := validateRequestMeta("EventPaneSplitCompleted", e.ClientID, e.RequestID); err != nil {
+			return err
 		}
-		if !e.RequestID.Valid() {
-			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid RequestID")
-		}
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid SessionID")
-		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid WindowID")
+		if err := validateWindowTarget("EventPaneSplitCompleted", e.SessionID, e.WindowID); err != nil {
+			return err
 		}
 		if !e.TargetPaneID.Valid() {
 			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid TargetPaneID")
@@ -149,17 +128,11 @@ func ValidateEvent(event Event) error {
 		}
 		return nil
 	case EventCommandRejected:
-		if !e.ClientID.Valid() {
-			return fmt.Errorf("protocol: EventCommandRejected: invalid ClientID")
+		if err := validateRequestMeta("EventCommandRejected", e.ClientID, e.RequestID); err != nil {
+			return err
 		}
-		if !e.RequestID.Valid() {
-			return fmt.Errorf("protocol: EventCommandRejected: invalid RequestID")
-		}
-		if !e.SessionID.Valid() {
-			return fmt.Errorf("protocol: EventCommandRejected: invalid SessionID")
-		}
-		if !e.WindowID.Valid() {
-			return fmt.Errorf("protocol: EventCommandRejected: invalid WindowID")
+		if err := validateWindowTarget("EventCommandRejected", e.SessionID, e.WindowID); err != nil {
+			return err
 		}
 		if e.Command == "" {
 			return fmt.Errorf("protocol: EventCommandRejected: empty Command")
@@ -171,6 +144,40 @@ func ValidateEvent(event Event) error {
 	default:
 		return fmt.Errorf("protocol: unknown event type %T", event)
 	}
+}
+
+func validateRequestMeta(name string, clientID ClientID, requestID RequestID) error {
+	if !clientID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid ClientID", name)
+	}
+	if !requestID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid RequestID", name)
+	}
+	return nil
+}
+
+func optionalRequestMetaValid(clientID ClientID, requestID RequestID) bool {
+	if clientID == "" && requestID == 0 {
+		return true
+	}
+	return clientID.Valid() && requestID.Valid()
+}
+
+func validateWindowPaneFields(name string, windowID WindowID, paneID PaneID) error {
+	if !windowID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid WindowID", name)
+	}
+	if !paneID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid PaneID", name)
+	}
+	return nil
+}
+
+func validateEventSize(name string, cols, rows int) error {
+	if cols <= 0 || rows <= 0 {
+		return fmt.Errorf("protocol: %s: invalid size %dx%d", name, cols, rows)
+	}
+	return nil
 }
 
 // EventSink receives fanout copies of events from the hub (e.g. actor.Ref[Event] in internal/actor).
@@ -196,16 +203,34 @@ type EventSessionCreated struct {
 	SessionID SessionID
 }
 
-// EventWindowCreated is emitted after a window exists under the session.
+// EventWindowCreated is emitted after a window exists under the session. When
+// ClientID/RequestID are set, they identify the client command that created it.
 type EventWindowCreated struct {
+	ClientID  ClientID
+	RequestID RequestID
 	SessionID SessionID
 	WindowID  WindowID
 }
 
+// EventSessionWindowsChanged is emitted when a session's window order changes.
+// Active window is intentionally client-local and not part of this event.
+type EventSessionWindowsChanged struct {
+	SessionID SessionID
+	Revision  uint64
+	Windows   []WindowID
+}
+
 // EventPaneCreated is emitted after a pane exists under the window.
 type EventPaneCreated struct {
-	WindowID WindowID
-	PaneID   PaneID
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+}
+
+// EventWindowClosed is emitted after the last pane in a window is closed.
+type EventWindowClosed struct {
+	SessionID SessionID
+	WindowID  WindowID
 }
 
 // EventPaneClosed is emitted after a pane is removed from its window.

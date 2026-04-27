@@ -17,7 +17,9 @@ type Actor struct {
 	Windows
 	SessionID protocol.SessionID
 	ShellPath string
-	seq       uint64         // next window id suffix; only touched from Run goroutine
+	seq       uint64 // next window id suffix; only touched from Run goroutine
+	revision  uint64
+	windowIDs []protocol.WindowID
 	hub       actor.EventRef // optional lifecycle event sink (best-effort publish)
 }
 
@@ -51,34 +53,51 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			}
 			switch m := msg.(type) {
 			case protocol.CommandNoop:
+				continue
 			case protocol.CommandCreateWindow:
-				a.seq++
-				wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
-				a.Init(wid, window.StartWithConfig(ctx, a.hub, m.SessionID, wid, a.ShellPath))
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventWindowCreated{SessionID: m.SessionID, WindowID: wid})
-				}
-			case protocol.CommandCreatePane:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandWindowResize:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPaneSplit:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPaneClose:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPaneResize:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPaneKey:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPaneMouse:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			case protocol.CommandPanePaste:
-				a.Windows.Must(m.WindowID).Send(ctx, m)
-			default:
-				panic(fmt.Sprintf("session: unhandled command type %T", msg))
+				a.handleCreateWindow(ctx, m)
+				continue
 			}
+			if wid, ok := protocol.RouteWindowID(msg); ok {
+				_ = a.Windows.Must(wid).Send(ctx, msg)
+				continue
+			}
+			panic(fmt.Sprintf("session: unhandled command type %T", msg))
 		}
 	}
+}
+
+func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreateWindow) {
+	a.seq++
+	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
+	a.Init(wid, window.StartWithConfig(ctx, a.hub, m.SessionID, wid, a.ShellPath))
+	a.windowIDs = append(a.windowIDs, wid)
+	a.revision++
+	if a.hub != nil {
+		_ = a.hub.Send(ctx, protocol.EventWindowCreated{
+			ClientID:  m.Meta.ClientID,
+			RequestID: m.Meta.RequestID,
+			SessionID: m.SessionID,
+			WindowID:  wid,
+		})
+		a.emitWindowsChanged(ctx, m.SessionID)
+	}
+	if m.AutoPane {
+		cols, rows := m.Cols, m.Rows
+		if cols == 0 || rows == 0 {
+			cols, rows = 80, 24
+		}
+		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandWindowResize{SessionID: m.SessionID, WindowID: wid, Cols: cols, Rows: rows})
+		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandCreatePane{SessionID: m.SessionID, WindowID: wid})
+	}
+}
+
+func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.SessionID) {
+	if a.hub == nil {
+		return
+	}
+	windows := append([]protocol.WindowID(nil), a.windowIDs...)
+	_ = a.hub.Send(ctx, protocol.EventSessionWindowsChanged{SessionID: sessionID, Revision: a.revision, Windows: windows})
 }
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {

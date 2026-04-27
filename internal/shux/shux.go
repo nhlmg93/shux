@@ -176,11 +176,18 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		Ctx:        ctx,
 		OnExit:     setExitIntent,
 	})
-	if layout, ok := a.cache.LayoutSnapshot(a.DefaultSessionID, a.DefaultWindowID); ok {
-		model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
+	windowIDs := a.cache.WindowIDs(a.DefaultSessionID)
+	if len(windowIDs) == 0 {
+		windowIDs = []protocol.WindowID{a.DefaultWindowID}
 	}
-	for _, screen := range a.cache.ScreenSnapshots(a.DefaultSessionID, a.DefaultWindowID) {
-		model = model.WithPaneScreen(screen)
+	model = model.WithWindowIDs(windowIDs)
+	for _, windowID := range windowIDs {
+		if layout, ok := a.cache.LayoutSnapshot(a.DefaultSessionID, windowID); ok {
+			model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
+		}
+		for _, screen := range a.cache.ScreenSnapshots(a.DefaultSessionID, windowID) {
+			model = model.WithPaneScreen(screen)
+		}
 	}
 	p := tea.NewProgram(model, opts...)
 
@@ -304,6 +311,11 @@ func bootstrapStep[T protocol.Event](ctx context.Context, super actor.Ref[protoc
 	if err := super.Send(ctx, cmd); err != nil {
 		return zero, err
 	}
+	return bootstrapWait[T](ctx, events)
+}
+
+func bootstrapWait[T protocol.Event](ctx context.Context, events <-chan protocol.Event) (T, error) {
+	var zero T
 	for {
 		select {
 		case <-ctx.Done():

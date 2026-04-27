@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"shux/internal/actor"
 	"shux/internal/protocol"
@@ -44,34 +45,17 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 			case protocol.EventNoop:
 			case protocol.EventRegisterSubscriber:
 				if _, ok := a.sinks[m.ClientID]; ok {
-					panic("hub: duplicate EventRegisterSubscriber for client")
+					fmt.Fprintf(os.Stderr, "hub: duplicate EventRegisterSubscriber for %q (ignored)\n", m.ClientID)
+					continue
 				}
 				a.sinks[m.ClientID] = m.Sink
 			case protocol.EventUnregisterSubscriber:
 				if _, ok := a.sinks[m.ClientID]; !ok {
-					panic("hub: EventUnregisterSubscriber for unknown client")
+					continue
 				}
 				delete(a.sinks, m.ClientID)
-			case protocol.EventSessionCreated:
-				a.fanout(ctx, m)
-			case protocol.EventWindowCreated:
-				a.fanout(ctx, m)
-			case protocol.EventPaneCreated:
-				a.fanout(ctx, m)
-			case protocol.EventPaneClosed:
-				a.fanout(ctx, m)
-			case protocol.EventPaneCloseLastRequested:
-				a.fanout(ctx, m)
-			case protocol.EventWindowLayoutChanged:
-				a.fanout(ctx, m)
-			case protocol.EventPaneScreenChanged:
-				a.fanout(ctx, m)
-			case protocol.EventPaneSplitCompleted:
-				a.fanout(ctx, m)
-			case protocol.EventCommandRejected:
-				a.fanout(ctx, m)
 			default:
-				panic(fmt.Sprintf("hub: unhandled event type %T", msg))
+				a.fanout(ctx, m)
 			}
 		}
 	}

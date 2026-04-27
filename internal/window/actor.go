@@ -46,6 +46,139 @@ func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, window
 	}
 }
 
+func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-inbox:
+			if err := protocol.ValidateCommand(msg); err != nil {
+				panic(err)
+			}
+			switch m := msg.(type) {
+			case protocol.CommandNoop:
+				continue
+			case protocol.CommandCreatePane:
+				a.handleCreatePane(ctx, m)
+			case protocol.CommandWindowResize:
+				a.handleWindowResize(ctx, m)
+			case protocol.CommandPaneSplit:
+				a.handlePaneSplit(ctx, m)
+			case protocol.CommandPaneClose:
+				a.handlePaneClose(ctx, m)
+			default:
+				if pid, ok := protocol.RoutePaneID(msg); ok {
+					_ = a.Panes.Must(pid).Send(ctx, msg)
+					continue
+				}
+				panic(fmt.Sprintf("window: unhandled command type %T", msg))
+			}
+		}
+	}
+}
+
+func (a *Actor) handleCreatePane(ctx context.Context, m protocol.CommandCreatePane) {
+	if len(a.paneIDs) > 0 {
+		panic("window: second pane: use CommandPaneSplit (layout is single-or-split)")
+	}
+	pid := a.nextPaneID()
+	a.paneIDs = append(a.paneIDs, pid)
+	a.Init(pid, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, pid, a.ShellPath))
+	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: pid})
+	if err := a.Layout.SetSinglePane(pid); err != nil {
+		panic(fmt.Sprintf("window: SetSinglePane after CreatePane: %v", err))
+	}
+	a.revision++
+	a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "CreatePane"), true)
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) handleWindowResize(ctx context.Context, m protocol.CommandWindowResize) {
+	if err := a.Layout.SetWindowSize(m.Cols, m.Rows); err != nil {
+		return
+	}
+	a.revision++
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "WindowResize"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit) {
+	if err := a.Layout.CanSplitPane(m.TargetPaneID, m.Direction); err != nil {
+		a.rejectSplit(ctx, m, err.Error())
+		return
+	}
+	newID := a.nextPaneID()
+	if err := a.Layout.SplitPane(m.TargetPaneID, m.Direction, newID); err != nil {
+		a.rejectSplit(ctx, m, err.Error())
+		return
+	}
+	a.revision++
+	a.paneIDs = append(a.paneIDs, newID)
+	a.Init(newID, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, newID, a.ShellPath))
+	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: newID})
+	for _, pid := range a.Layout.PaneIDs() {
+		r := a.mustRect(pid, "PaneSplit")
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, pid == newID)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+	a.emit(ctx, protocol.EventPaneSplitCompleted{
+		ClientID:     m.Meta.ClientID,
+		RequestID:    m.Meta.RequestID,
+		SessionID:    m.SessionID,
+		WindowID:     m.WindowID,
+		TargetPaneID: m.TargetPaneID,
+		NewPaneID:    newID,
+		Revision:     a.revision,
+	})
+}
+
+func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose) {
+	lastPane := len(a.Layout.PaneIDs()) <= 1
+	if err := a.Layout.RemovePane(m.PaneID); err != nil {
+		panic("window: close pane: " + err.Error())
+	}
+	_ = a.Panes.Must(m.PaneID).Send(ctx, m)
+	a.Panes.Delete(m.PaneID)
+	for i, pid := range a.paneIDs {
+		if pid == m.PaneID {
+			a.paneIDs = append(a.paneIDs[:i], a.paneIDs[i+1:]...)
+			break
+		}
+	}
+	a.revision++
+	a.emit(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
+	if lastPane {
+		a.emit(ctx, protocol.EventWindowClosed{SessionID: m.SessionID, WindowID: m.WindowID})
+		return
+	}
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "PaneClose"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) nextPaneID() protocol.PaneID {
+	a.seq++
+	return protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
+}
+
+func (a *Actor) mustRect(pid protocol.PaneID, op string) Rect {
+	r, ok := a.Layout.Rect(pid)
+	if !ok {
+		panic(fmt.Sprintf("window: layout: missing rect after %s", op))
+	}
+	return r
+}
+
+func (a *Actor) emit(ctx context.Context, evt protocol.Event) {
+	if a.hub == nil {
+		return
+	}
+	_ = a.hub.Send(ctx, evt)
+}
+
 func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid protocol.WindowID) {
 	if a.hub == nil {
 		return
@@ -73,11 +206,8 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 	})
 }
 
-func (a *Actor) reject(ctx context.Context, m protocol.CommandPaneSplit, reason string) {
-	if a.hub == nil {
-		return
-	}
-	_ = a.hub.Send(ctx, protocol.EventCommandRejected{
+func (a *Actor) rejectSplit(ctx context.Context, m protocol.CommandPaneSplit, reason string) {
+	a.emit(ctx, protocol.EventCommandRejected{
 		ClientID:  m.Meta.ClientID,
 		RequestID: m.Meta.RequestID,
 		SessionID: m.SessionID,
@@ -125,133 +255,6 @@ func paneContentSize(r Rect) (uint16, uint16) {
 		rows = 1
 	}
 	return cols, rows
-}
-
-func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg := <-inbox:
-			if err := protocol.ValidateCommand(msg); err != nil {
-				panic(err)
-			}
-			switch m := msg.(type) {
-			case protocol.CommandNoop:
-			case protocol.CommandCreatePane:
-				if len(a.paneIDs) > 0 {
-					panic("window: second pane: use CommandPaneSplit (layout is single-or-split)")
-
-				}
-				a.seq++
-				pid := protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
-				a.paneIDs = append(a.paneIDs, pid)
-				a.Init(pid, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, pid, a.ShellPath))
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventPaneCreated{WindowID: m.WindowID, PaneID: pid})
-				}
-				a.Layout.SetSinglePane(pid)
-				a.revision++
-				if r, ok := a.Layout.Rect(pid); !ok {
-					panic("window: layout: missing rect after SetSinglePane")
-				} else {
-					a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, true)
-				}
-				a.emitLayout(ctx, m.SessionID, m.WindowID)
-			case protocol.CommandWindowResize:
-				a.Layout.SetWindowSize(m.Cols, m.Rows)
-				a.revision++
-				for _, pid := range a.Layout.PaneIDs() {
-					r, ok := a.Layout.Rect(pid)
-					if !ok {
-						panic("window: layout: missing rect after SetWindowSize")
-					}
-					a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, false)
-				}
-				a.emitLayout(ctx, m.SessionID, m.WindowID)
-			case protocol.CommandPaneSplit:
-				if err := a.Layout.CanSplitPane(m.TargetPaneID, m.Direction); err != nil {
-					a.reject(ctx, m, err.Error())
-					continue
-				}
-				a.seq++
-				newID := protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
-				if err := a.Layout.SplitPane(m.TargetPaneID, m.Direction, newID); err != nil {
-					a.reject(ctx, m, err.Error())
-					continue
-				}
-				a.revision++
-				a.paneIDs = append(a.paneIDs, newID)
-				a.Init(newID, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, newID, a.ShellPath))
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventPaneCreated{WindowID: m.WindowID, PaneID: newID})
-				}
-				for _, pid := range a.Layout.PaneIDs() {
-					r, ok := a.Layout.Rect(pid)
-					if !ok {
-						panic("window: layout: missing rect after split")
-					}
-					if pid == newID {
-						a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, true)
-					} else {
-						a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, false)
-					}
-				}
-				a.emitLayout(ctx, m.SessionID, m.WindowID)
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventPaneSplitCompleted{
-						ClientID:     m.Meta.ClientID,
-						RequestID:    m.Meta.RequestID,
-						SessionID:    m.SessionID,
-						WindowID:     m.WindowID,
-						TargetPaneID: m.TargetPaneID,
-						NewPaneID:    newID,
-						Revision:     a.revision,
-					})
-				}
-			case protocol.CommandPaneClose:
-				if len(a.Layout.PaneIDs()) <= 1 {
-					if a.hub != nil && m.Meta.Valid() {
-						_ = a.hub.Send(ctx, protocol.EventPaneCloseLastRequested{ClientID: m.Meta.ClientID, RequestID: m.Meta.RequestID, SessionID: m.SessionID, WindowID: m.WindowID, PaneID: m.PaneID})
-					}
-					continue
-				}
-				if err := a.Layout.RemovePane(m.PaneID); err != nil {
-					panic("window: close pane: " + err.Error())
-				}
-				_ = a.Panes.Must(m.PaneID).Send(ctx, m)
-				a.Panes.Delete(m.PaneID)
-				for i, pid := range a.paneIDs {
-					if pid == m.PaneID {
-						a.paneIDs = append(a.paneIDs[:i], a.paneIDs[i+1:]...)
-						break
-					}
-				}
-				a.revision++
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
-				}
-				for _, pid := range a.Layout.PaneIDs() {
-					r, ok := a.Layout.Rect(pid)
-					if !ok {
-						panic("window: layout: missing rect after close")
-					}
-					a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, r, false)
-				}
-				a.emitLayout(ctx, m.SessionID, m.WindowID)
-			case protocol.CommandPaneResize:
-				a.Panes.Must(m.PaneID).Send(ctx, m)
-			case protocol.CommandPaneKey:
-				a.Panes.Must(m.PaneID).Send(ctx, m)
-			case protocol.CommandPaneMouse:
-				a.Panes.Must(m.PaneID).Send(ctx, m)
-			case protocol.CommandPanePaste:
-				a.Panes.Must(m.PaneID).Send(ctx, m)
-			default:
-				panic(fmt.Sprintf("window: unhandled command type %T", msg))
-			}
-		}
-	}
 }
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {

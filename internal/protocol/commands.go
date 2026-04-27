@@ -11,47 +11,33 @@ type Command any
 
 func ValidateCommand(cmd Command) error {
 	switch c := cmd.(type) {
-	case CommandNoop:
-		return nil
-	case CommandCreateSession:
+	case CommandNoop, CommandCreateSession:
 		return nil
 	case CommandCreateWindow:
-		if !c.SessionID.Valid() {
-			return fmt.Errorf("protocol: CommandCreateWindow: invalid SessionID")
+		if err := validateSessionTarget("CommandCreateWindow", c.SessionID); err != nil {
+			return err
+		}
+		if !c.Meta.Empty() && !c.Meta.Valid() {
+			return fmt.Errorf("protocol: CommandCreateWindow: invalid Meta")
+		}
+		if c.Cols != 0 || c.Rows != 0 {
+			return validateSize("CommandCreateWindow", c.Cols, c.Rows)
 		}
 		return nil
 	case CommandCreatePane:
-		if !c.SessionID.Valid() {
-			return fmt.Errorf("protocol: CommandCreatePane: invalid SessionID")
-		}
-		if !c.WindowID.Valid() {
-			return fmt.Errorf("protocol: CommandCreatePane: invalid WindowID")
-		}
-		return nil
+		return validateWindowTarget("CommandCreatePane", c.SessionID, c.WindowID)
 	case CommandPaneInit:
-		if c.Cols == 0 || c.Rows == 0 {
-			return fmt.Errorf("protocol: CommandPaneInit: invalid size %dx%d", c.Cols, c.Rows)
-		}
-		return nil
+		return validateSize("CommandPaneInit", c.Cols, c.Rows)
 	case CommandPaneResize:
 		if err := validatePaneTarget("CommandPaneResize", c.SessionID, c.WindowID, c.PaneID); err != nil {
 			return err
 		}
-		if c.Cols == 0 || c.Rows == 0 {
-			return fmt.Errorf("protocol: CommandPaneResize: invalid size %dx%d", c.Cols, c.Rows)
-		}
-		return nil
+		return validateSize("CommandPaneResize", c.Cols, c.Rows)
 	case CommandWindowResize:
-		if !c.SessionID.Valid() {
-			return fmt.Errorf("protocol: CommandWindowResize: invalid SessionID")
+		if err := validateWindowTarget("CommandWindowResize", c.SessionID, c.WindowID); err != nil {
+			return err
 		}
-		if !c.WindowID.Valid() {
-			return fmt.Errorf("protocol: CommandWindowResize: invalid WindowID")
-		}
-		if c.Cols == 0 || c.Rows == 0 {
-			return fmt.Errorf("protocol: CommandWindowResize: invalid size %dx%d", c.Cols, c.Rows)
-		}
-		return nil
+		return validateSize("CommandWindowResize", c.Cols, c.Rows)
 	case CommandPaneKey:
 		if err := validatePaneTarget("CommandPaneKey", c.SessionID, c.WindowID, c.PaneID); err != nil {
 			return err
@@ -97,11 +83,8 @@ func ValidateCommand(cmd Command) error {
 		if !c.Meta.Valid() {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Meta")
 		}
-		if !c.SessionID.Valid() {
-			return fmt.Errorf("protocol: CommandPaneSplit: invalid SessionID")
-		}
-		if !c.WindowID.Valid() {
-			return fmt.Errorf("protocol: CommandPaneSplit: invalid WindowID")
+		if err := validateWindowTarget("CommandPaneSplit", c.SessionID, c.WindowID); err != nil {
+			return err
 		}
 		if !c.TargetPaneID.Valid() {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid TargetPaneID")
@@ -124,17 +107,111 @@ func (m CommandMeta) Valid() bool {
 	return m.ClientID.Valid() && m.RequestID.Valid()
 }
 
-func validatePaneTarget(commandName string, sessionID SessionID, windowID WindowID, paneID PaneID) error {
+func (m CommandMeta) Empty() bool {
+	return m.ClientID == "" && m.RequestID == 0
+}
+
+func validateSessionTarget(name string, sessionID SessionID) error {
 	if !sessionID.Valid() {
-		return fmt.Errorf("protocol: %s: invalid SessionID", commandName)
-	}
-	if !windowID.Valid() {
-		return fmt.Errorf("protocol: %s: invalid WindowID", commandName)
-	}
-	if !paneID.Valid() {
-		return fmt.Errorf("protocol: %s: invalid PaneID", commandName)
+		return fmt.Errorf("protocol: %s: invalid SessionID", name)
 	}
 	return nil
+}
+
+func validateWindowTarget(name string, sessionID SessionID, windowID WindowID) error {
+	if err := validateSessionTarget(name, sessionID); err != nil {
+		return err
+	}
+	if !windowID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid WindowID", name)
+	}
+	return nil
+}
+
+func validatePaneTarget(name string, sessionID SessionID, windowID WindowID, paneID PaneID) error {
+	if err := validateWindowTarget(name, sessionID, windowID); err != nil {
+		return err
+	}
+	if !paneID.Valid() {
+		return fmt.Errorf("protocol: %s: invalid PaneID", name)
+	}
+	return nil
+}
+
+func validateSize(name string, cols, rows uint16) error {
+	if cols == 0 || rows == 0 {
+		return fmt.Errorf("protocol: %s: invalid size %dx%d", name, cols, rows)
+	}
+	return nil
+}
+
+// RouteSessionID returns the SessionID a command should be forwarded to.
+// Reports false for commands that the supervisor handles directly (CommandNoop,
+// CommandCreateSession) or for unknown types.
+func RouteSessionID(cmd Command) (SessionID, bool) {
+	switch c := cmd.(type) {
+	case CommandCreateWindow:
+		return c.SessionID, true
+	case CommandCreatePane:
+		return c.SessionID, true
+	case CommandWindowResize:
+		return c.SessionID, true
+	case CommandPaneSplit:
+		return c.SessionID, true
+	case CommandPaneClose:
+		return c.SessionID, true
+	case CommandPaneResize:
+		return c.SessionID, true
+	case CommandPaneKey:
+		return c.SessionID, true
+	case CommandPaneMouse:
+		return c.SessionID, true
+	case CommandPanePaste:
+		return c.SessionID, true
+	}
+	return "", false
+}
+
+// RoutePaneID returns the PaneID for commands that the window forwards directly
+// to a pane actor without further bookkeeping. Reports false for commands the
+// window handles itself (CommandPaneSplit, CommandPaneClose, CommandCreatePane).
+func RoutePaneID(cmd Command) (PaneID, bool) {
+	switch c := cmd.(type) {
+	case CommandPaneResize:
+		return c.PaneID, true
+	case CommandPaneKey:
+		return c.PaneID, true
+	case CommandPaneMouse:
+		return c.PaneID, true
+	case CommandPanePaste:
+		return c.PaneID, true
+	}
+	return "", false
+}
+
+// RouteWindowID returns the WindowID a command should be forwarded to.
+// Reports false for commands that the session handles directly (CommandCreateWindow)
+// or for unknown types.
+func RouteWindowID(cmd Command) (WindowID, bool) {
+	switch c := cmd.(type) {
+	case CommandCreatePane:
+		return c.WindowID, true
+	case CommandWindowResize:
+		return c.WindowID, true
+	case CommandPaneSplit:
+		return c.WindowID, true
+	case CommandPaneClose:
+		return c.WindowID, true
+	case CommandPaneResize:
+		return c.WindowID, true
+	case CommandPaneKey:
+		return c.WindowID, true
+	case CommandPaneMouse:
+		return c.WindowID, true
+	case CommandPanePaste:
+		return c.WindowID, true
+	}
+	return "", false
 }
 
 type CommandNoop struct{}
@@ -142,10 +219,15 @@ type CommandNoop struct{}
 // CommandCreateSession is handled by the supervisor; it spawns a new session actor.
 type CommandCreateSession struct{}
 
-// CommandCreateWindow is handled by the session actor; it creates a new window.
-// When sent via the supervisor, SessionID selects the session; zero value is invalid.
+// CommandCreateWindow is handled by the session actor. When AutoPane is true
+// it also creates the initial pane (tmux new-window behavior). When Meta is set,
+// EventWindowCreated echoes it so only the originating client switches windows.
 type CommandCreateWindow struct {
+	Meta      CommandMeta
 	SessionID SessionID
+	Cols      uint16
+	Rows      uint16
+	AutoPane  bool
 }
 
 // CommandCreatePane is handled by the window actor; it creates a new pane.

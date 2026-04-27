@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,9 @@ type Logger struct {
 	file *os.File
 	ch   chan string
 	done chan struct{}
+
+	closeOnce sync.Once
+	closed    chan struct{}
 }
 
 func appDataDir() (string, error) {
@@ -36,15 +40,6 @@ func logPath() (string, error) {
 	return filepath.Join(dir, "shux.log"), nil
 }
 
-func hostKeyPath() (string, error) {
-	dir, err := appDataDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(dir, "id_ed25519"), nil
-}
-
 func NewLogger() (*Logger, error) {
 	path, err := logPath()
 	if err != nil {
@@ -57,9 +52,10 @@ func NewLogger() (*Logger, error) {
 	}
 
 	logger := &Logger{
-		file: file,
-		ch:   make(chan string, 128),
-		done: make(chan struct{}),
+		file:   file,
+		ch:     make(chan string, 128),
+		done:   make(chan struct{}),
+		closed: make(chan struct{}),
 	}
 	go logger.run()
 
@@ -78,8 +74,11 @@ func (l *Logger) log(level, msg string) {
 	if l == nil || l.file == nil {
 		return
 	}
-
-	l.ch <- fmt.Sprintf("%s [%s] %s", time.Now().Format(time.RFC3339), level, msg)
+	line := fmt.Sprintf("%s [%s] %s", time.Now().Format(time.RFC3339), level, msg)
+	select {
+	case l.ch <- line:
+	case <-l.closed:
+	}
 }
 
 func (l *Logger) Printf(format string, args ...any) {
@@ -99,8 +98,10 @@ func (l *Logger) Close() error {
 		return nil
 	}
 
-	close(l.ch)
+	l.closeOnce.Do(func() {
+		close(l.closed)
+		close(l.ch)
+	})
 	<-l.done
-
 	return l.file.Close()
 }

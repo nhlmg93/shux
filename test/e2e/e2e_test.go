@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,17 +26,17 @@ func TestShuxRun_rendersTitleAndDetachesOnPrefixD(t *testing.T) {
 	defer cancel()
 
 	r, w := io.Pipe()
+	out := newReadyOutput()
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		out.waitReady(time.Second)
 		_, _ = w.Write([]byte{ctrlB, 'd'})
 		_ = w.Close()
 	}()
 
-	var out bytes.Buffer
 	err = s.Run(
 		tea.WithContext(ctx),
 		tea.WithInput(r),
-		tea.WithOutput(&out),
+		tea.WithOutput(out),
 		tea.WithWindowSize(80, 24),
 	)
 	if err != nil {
@@ -60,19 +61,19 @@ func TestShuxRun_userCanTypeShellCommandAndSeeOutput(t *testing.T) {
 	defer cancel()
 
 	r, w := io.Pipe()
+	out := newReadyOutput()
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		out.waitReady(time.Second)
 		_, _ = w.Write([]byte("\x1b[200~printf shux-e2e-ok\\n\n\x1b[201~"))
-		time.Sleep(700 * time.Millisecond)
+		out.waitContains([]byte("shux-e2e-ok"), time.Second)
 		_, _ = w.Write([]byte{ctrlB, 'd'})
 		_ = w.Close()
 	}()
 
-	var out bytes.Buffer
 	err = s.Run(
 		tea.WithContext(ctx),
 		tea.WithInput(r),
-		tea.WithOutput(&out),
+		tea.WithOutput(out),
 		tea.WithWindowSize(80, 24),
 	)
 	if err != nil {
@@ -80,5 +81,57 @@ func TestShuxRun_userCanTypeShellCommandAndSeeOutput(t *testing.T) {
 	}
 	if !bytes.Contains(out.Bytes(), []byte("shux-e2e-ok")) {
 		t.Fatalf("expected command output in UI buffer; got %q", out.String())
+	}
+}
+
+type readyOutput struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	once  sync.Once
+	ready chan struct{}
+}
+
+func newReadyOutput() *readyOutput {
+	return &readyOutput{ready: make(chan struct{})}
+}
+
+func (o *readyOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	n, err := o.buf.Write(p)
+	o.mu.Unlock()
+	if n > 0 {
+		o.once.Do(func() { close(o.ready) })
+	}
+	return n, err
+}
+
+func (o *readyOutput) Len() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Len()
+}
+
+func (o *readyOutput) Bytes() []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]byte(nil), o.buf.Bytes()...)
+}
+
+func (o *readyOutput) String() string { return string(o.Bytes()) }
+
+func (o *readyOutput) waitReady(timeout time.Duration) {
+	select {
+	case <-o.ready:
+	case <-time.After(timeout):
+	}
+}
+
+func (o *readyOutput) waitContains(needle []byte, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if bytes.Contains(o.Bytes(), needle) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -83,7 +83,8 @@ func TestHub_fansOutLifecycleEvents(t *testing.T) {
 
 	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{SessionID: initSessionID, Revision: 1, Windows: []protocol.WindowID{initWindowID}})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -122,7 +123,7 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -190,7 +191,7 @@ func TestHub_serializes_repeated_targeted_splits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -221,7 +222,7 @@ func TestHub_serializes_repeated_targeted_splits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPane3ID})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane3ID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -361,7 +362,8 @@ func bootstrapWindow(t *testing.T, ctx context.Context, ref commandSender, event
 	}
 	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
-	assertEvent(t, events, protocol.EventPaneCreated{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{SessionID: initSessionID, Revision: 1, Windows: []protocol.WindowID{initWindowID}})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,

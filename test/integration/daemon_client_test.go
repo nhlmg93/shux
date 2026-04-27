@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"shux/internal/daemon"
 )
 
-const ctrlB = 0x02
+const sshCtrlB = 0x02
 
 func TestDaemonStartsTrustedWishServer(t *testing.T) {
 	addr, stop := startTestDaemon(t)
@@ -41,7 +42,7 @@ func TestTwoSSHClientsCanAttachConcurrentlyAndDetachIndependently(t *testing.T) 
 	defer stop()
 
 	firstDone := make(chan []byte, 1)
-	go func() { firstDone <- attachAndDetachAfter(t, addr, 2*time.Second) }()
+	go func() { firstDone <- attachAndDetachAfter(t, addr, 500*time.Millisecond) }()
 
 	attachAndDetach(t, addr)
 
@@ -77,7 +78,7 @@ func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
 	go func() { peerDone <- attachAndDetachAfter(t, addr, 1200*time.Millisecond) }()
 	time.Sleep(200 * time.Millisecond)
 
-	attachAndSendKeys(t, addr, []byte{ctrlB, 'q'}, 100*time.Millisecond)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
 
 	select {
 	case <-peerDone:
@@ -125,7 +126,7 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	attachAndSendKeys(t, addr, []byte{ctrlB, 'q'}, 2*time.Second)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
 
 	select {
 	case err := <-done:
@@ -162,12 +163,12 @@ func startTestDaemon(t *testing.T) (string, func()) {
 
 func attachAndDetach(t *testing.T, addr string) []byte {
 	t.Helper()
-	return attachAndDetachAfter(t, addr, 2*time.Second)
+	return attachAndDetachAfter(t, addr, 0)
 }
 
 func attachAndDetachAfter(t *testing.T, addr string, delay time.Duration) []byte {
 	t.Helper()
-	return attachAndSendKeys(t, addr, []byte{ctrlB, 'd'}, delay)
+	return attachAndSendKeys(t, addr, []byte{sshCtrlB, 'd'}, delay)
 }
 
 func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Duration) []byte {
@@ -201,10 +202,10 @@ func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Durati
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out bytes.Buffer
+	out := &readyBuffer{ready: make(chan struct{})}
 	copyDone := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(&out, stdout); copyDone <- struct{}{} }()
-	go func() { _, _ = io.Copy(&out, stderr); copyDone <- struct{}{} }()
+	go func() { _, _ = io.Copy(out, stdout); copyDone <- struct{}{} }()
+	go func() { _, _ = io.Copy(out, stderr); copyDone <- struct{}{} }()
 
 	if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{}); err != nil {
 		t.Fatal(err)
@@ -214,7 +215,13 @@ func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Durati
 	}
 
 	go func() {
-		time.Sleep(delay)
+		select {
+		case <-out.ready:
+		case <-time.After(time.Second):
+		}
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		_, _ = stdin.Write(keys)
 		_ = stdin.Close()
 	}()
@@ -229,6 +236,29 @@ func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Durati
 		}
 	}
 	return out.Bytes()
+}
+
+type readyBuffer struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	once  sync.Once
+	ready chan struct{}
+}
+
+func (b *readyBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	n, err := b.buf.Write(p)
+	b.mu.Unlock()
+	if n > 0 {
+		b.once.Do(func() { close(b.ready) })
+	}
+	return n, err
+}
+
+func (b *readyBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
 }
 
 func freeLoopbackAddr(t *testing.T) string {

@@ -1,2 +1,2 @@
-// Package integration holds integration tests (e.g. actor_test.go for supervisor).
+// Package integration holds actor and daemon/client integration tests.
 package integration

@@ -3,6 +3,7 @@ package pane
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"shux/internal/actor"
 	"shux/internal/protocol"
@@ -47,6 +48,10 @@ func (a *Actor) sendScreen(ctx context.Context, event protocol.EventPaneScreenCh
 	_ = a.Hub.Send(ctx, event)
 }
 
+func (a *Actor) logTerminalErr(err error) {
+	fmt.Fprintf(os.Stderr, "pane %s/%s/%s: %v\n", a.SessionID, a.WindowID, a.PaneID, err)
+}
+
 func (a *Actor) closeResources() {
 	if a.Terminal != nil {
 		a.Terminal.Close()
@@ -61,7 +66,12 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 			return
 		case msg := <-inbox:
 			if output, ok := msg.(ptyOutput); ok {
-				if event, emit := a.Terminal.FeedOutput(output); emit {
+				event, emit, err := a.Terminal.FeedOutput(output)
+				if err != nil {
+					a.logTerminalErr(err)
+					continue
+				}
+				if emit {
 					a.sendScreen(ctx, event)
 				}
 				continue
@@ -72,17 +82,33 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 			switch msg := msg.(type) {
 			case protocol.CommandNoop:
 			case protocol.CommandPaneInit:
-				a.sendScreen(ctx, a.Terminal.Init(ctx, self, msg.Cols, msg.Rows))
+				event, err := a.Terminal.Init(ctx, self, msg.Cols, msg.Rows)
+				if err != nil {
+					a.logTerminalErr(err)
+					return
+				}
+				a.sendScreen(ctx, event)
 			case protocol.CommandPaneResize:
-				a.sendScreen(ctx, a.Terminal.Resize(msg.Cols, msg.Rows))
+				event, err := a.Terminal.Resize(msg.Cols, msg.Rows)
+				if err != nil {
+					a.logTerminalErr(err)
+					continue
+				}
+				a.sendScreen(ctx, event)
 			case protocol.CommandPaneKey:
-				a.Terminal.HandleKey(msg)
+				if err := a.Terminal.HandleKey(msg); err != nil {
+					a.logTerminalErr(err)
+				}
 			case protocol.CommandPaneMouse:
-				a.Terminal.HandleMouse(msg)
+				if err := a.Terminal.HandleMouse(msg); err != nil {
+					a.logTerminalErr(err)
+				}
 			case protocol.CommandPaneClose:
 				return
 			case protocol.CommandPanePaste:
-				a.Terminal.HandlePaste(msg)
+				if err := a.Terminal.HandlePaste(msg); err != nil {
+					a.logTerminalErr(err)
+				}
 			default:
 				panic(fmt.Sprintf("pane: unhandled command type %T", msg))
 			}

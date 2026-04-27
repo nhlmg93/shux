@@ -46,8 +46,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			if err := protocol.ValidateCommand(msg); err != nil {
 				panic(err)
 			}
-			switch m := msg.(type) {
+			switch msg.(type) {
 			case protocol.CommandNoop:
+				continue
 			case protocol.CommandCreateSession:
 				a.seq++
 				sid := protocol.SessionID("s-" + strconv.FormatUint(a.seq, 10))
@@ -55,27 +56,13 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				if a.hub != nil {
 					_ = a.hub.Send(ctx, protocol.EventSessionCreated{SessionID: sid})
 				}
-			case protocol.CommandCreateWindow:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandCreatePane:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandWindowResize:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPaneSplit:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPaneClose:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPaneResize:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPaneKey:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPaneMouse:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			case protocol.CommandPanePaste:
-				a.Sessions.Must(m.SessionID).Send(ctx, m)
-			default:
-				panic(fmt.Sprintf("supervisor: unhandled command type %T", msg))
+				continue
 			}
+			if sid, ok := protocol.RouteSessionID(msg); ok {
+				_ = a.Sessions.Must(sid).Send(ctx, msg)
+				continue
+			}
+			panic(fmt.Sprintf("supervisor: unhandled command type %T", msg))
 		}
 	}
 }

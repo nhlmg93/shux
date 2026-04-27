@@ -36,16 +36,29 @@ ctrl+b
 
 Implemented bindings:
 
-```text
-ctrl+b d     detach this client; backend keeps running
-ctrl+b q     quit shux; shuts down the backend daemon
-ctrl+b %     split pane left/right
-ctrl+b "     split pane top/bottom
-ctrl+b o     focus next pane
-```
+| Key | Action |
+| --- | --- |
+| `ctrl+b d` | Detach this client; the backend keeps running. |
+| `ctrl+b q` | Quit shux; shuts down the backend daemon. |
+| `ctrl+b %` | Split the active pane left/right. |
+| `ctrl+b "` | Split the active pane top/bottom. |
+| `ctrl+b o` | Focus the next pane. |
+| `ctrl+b x` | Close the active pane. If it is the last pane in a window, close that window; if it is the last window, quit shux. |
+| `ctrl+b c` | Create a new window. |
+| `ctrl+b n` | Next window. |
+| `ctrl+b p` | Previous window. |
+| `ctrl+b 1` through `ctrl+b 9` | Select window by number. |
+| `ctrl+b 0` | Select window 10. |
+
+Reserved but not implemented yet:
+
+| Key | Planned action |
+| --- | --- |
+| `ctrl+b ?` | List key bindings. |
 
 Notes:
 
-- `ctrl+c` is not a shux quit key.
+- `ctrl+c` is not a shux quit key; it is sent to the active pane.
+- `ctrl+b` enters prefix mode and is not sent to the active pane.
 - Detach with `ctrl+b d` when you want to leave the session running.
 - Quit with `ctrl+b q` when you want to stop the shux backend.

@@ -1,20 +1,15 @@
-# Build Ghostty’s VT lib into .deps/prefix, then `go build`. Override GHOSTTY_REF if needed.
-# Usage: make | make go.  V=1 shows full commands.
-
 MAKEFLAGS += --no-print-directory
 
+.DEFAULT_GOAL := build
+
 GHOSTTY_REPO ?= https://github.com/ghostty-org/ghostty.git
-# Newer than v1.3.0: go-libghostty expects headers like ghostty/vt/sys.h from lib-vt.
 GHOSTTY_REF  ?= main
 
-DEPS_DIR     := .deps
-GHOSTTY_SRC  := $(DEPS_DIR)/ghostty
-PREFIX       := $(abspath $(DEPS_DIR)/prefix)
+DEPS_DIR := .deps
+GHOSTTY_SRC := $(DEPS_DIR)/ghostty
+PREFIX := $(abspath $(DEPS_DIR)/prefix)
 PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PREFIX)/share/pkgconfig
 
-ZIG_FLAGS ?= --summary none
-
-# Pane and sim tests link go-libghostty (CGO); requires make libghostty first.
 GO_TEST_FLAGS := -count=1 -shuffle=off
 GO_TEST := CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go test $(GO_TEST_FLAGS)
 
@@ -23,21 +18,32 @@ ifeq ($(V),1)
   QUIET :=
 endif
 
-.PHONY: all help build go libghostty libghostty-clean \
-	test test-sim test-integration test-e2e test-docker
+.PHONY: build test test-sim test-e2e test-integration libghostty clean help
 
-all: build
+build: libghostty
+	$(QUIET)CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux .
 
 help:
-	@echo "make              — libghostty + go build"
-	@echo "make go           — go build (needs .deps/prefix from libghostty)"
-	@echo "make libghostty   — clone + zig build install -Demit-lib-vt"
-	@echo "make libghostty-clean, V=1"
-	@echo "make test         — sim + integration + e2e (go test with CGO; needs libghostty)"
-	@echo "make test-sim, test-integration, test-e2e  (test/{sim,integration,e2e}/...)"
-	@echo "make test-docker  — build dockerfile.sim.env, run make test, remove container (see --rm)"
+	@echo "make            — build shux"
+	@echo "make build      — build shux"
+	@echo "make test       — run sim and e2e tests"
+	@echo "make test-sim   — run deterministic sim tests in Docker"
+	@echo "make test-e2e   — run e2e tests locally"
+	@echo "make test-integration — run integration tests locally"
+	@echo "make clean      — remove local libghostty build"
 
-build: libghostty go
+test: test-sim test-e2e
+
+test-sim:
+	$(QUIET)docker build -f Dockerfile.sim.env -t shux-test .
+	$(QUIET)docker rm -f shux-test-sim-run 2>/dev/null || true
+	$(QUIET)docker run --rm --name shux-test-sim-run shux-test
+
+test-e2e: libghostty
+	$(QUIET)$(GO_TEST) ./test/e2e/...
+
+test-integration: libghostty
+	$(QUIET)$(GO_TEST) ./test/integration/...
 
 $(GHOSTTY_SRC)/.git:
 	$(QUIET)mkdir -p $(DEPS_DIR)
@@ -45,27 +51,7 @@ $(GHOSTTY_SRC)/.git:
 	$(QUIET)git clone --depth 1 --branch $(GHOSTTY_REF) $(GHOSTTY_REPO) $(GHOSTTY_SRC)
 
 libghostty: $(GHOSTTY_SRC)/.git
-	$(QUIET)cd $(GHOSTTY_SRC) && zig build install -p $(PREFIX) -Doptimize=ReleaseFast -Demit-lib-vt=true $(ZIG_FLAGS)
+	$(QUIET)cd $(GHOSTTY_SRC) && zig build install -p $(PREFIX) -Doptimize=ReleaseFast -Demit-lib-vt=true --summary none
 
-libghostty-clean:
-	rm -rf $(GHOSTTY_SRC) $(DEPS_DIR)/prefix
-
-go:
-	@test -d "$(PREFIX)/lib" || (echo "Missing $(PREFIX). Run: make libghostty" && exit 1)
-	$(QUIET)PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux .
-
-test: test-sim test-integration test-e2e
-
-test-sim: libghostty
-	$(QUIET)$(GO_TEST) ./test/sim/...
-
-test-integration: libghostty
-	$(QUIET)$(GO_TEST) ./test/integration/...
-
-test-e2e: libghostty
-	$(QUIET)$(GO_TEST) ./test/e2e/...
-
-test-docker:
-	$(QUIET)docker build -f dockerfile.sim.env -t shux-test .
-	$(QUIET)docker rm -f shux-test-run 2>/dev/null || true
-	$(QUIET)docker run --rm --name shux-test-run shux-test
+clean:
+	$(QUIET)rm -rf $(GHOSTTY_SRC) $(DEPS_DIR)/prefix
