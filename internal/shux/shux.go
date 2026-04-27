@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"shux/internal/actor"
 	"shux/internal/hub"
 	"shux/internal/protocol"
@@ -13,100 +14,19 @@ import (
 	"shux/internal/ui"
 )
 
-type machine uint8
+type lifecycle uint8
 
 const (
-	new machine = iota
-	started
-	closed
+	stateNew lifecycle = iota
+	stateStarted
+	stateReady
+	stateClosed
+)
 
+const (
 	bootstrapClientID = protocol.ClientID("bootstrap")
 	cacheClientID     = protocol.ClientID("state-cache")
 )
-
-type (
-	windowLayoutSnapshots map[protocol.WindowID]protocol.EventWindowLayoutChanged
-	paneScreenSnapshots   map[protocol.PaneID]protocol.EventPaneScreenChanged
-
-	layoutsBySession map[protocol.SessionID]windowLayoutSnapshots
-	screensByWindow  map[protocol.WindowID]paneScreenSnapshots
-	screensBySession map[protocol.SessionID]screensByWindow
-)
-
-type stateCache struct {
-	mu      sync.Mutex
-	layouts layoutsBySession
-	screens screensBySession
-}
-
-func newStateCache() *stateCache {
-	return &stateCache{
-		layouts: make(layoutsBySession),
-		screens: make(screensBySession),
-	}
-}
-
-func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	switch event := e.(type) {
-	case protocol.EventWindowLayoutChanged:
-		windows := c.layouts[event.SessionID]
-		if windows == nil {
-			windows = make(windowLayoutSnapshots)
-			c.layouts[event.SessionID] = windows
-		}
-		windows[event.WindowID] = event
-	case protocol.EventPaneScreenChanged:
-		windows := c.screens[event.SessionID]
-		if windows == nil {
-			windows = make(screensByWindow)
-			c.screens[event.SessionID] = windows
-		}
-		panes := windows[event.WindowID]
-		if panes == nil {
-			panes = make(paneScreenSnapshots)
-			windows[event.WindowID] = panes
-		}
-		panes[event.PaneID] = event
-	}
-	return nil
-}
-
-func (c *stateCache) LayoutSnapshot(sessionID protocol.SessionID, windowID protocol.WindowID) (protocol.EventWindowLayoutChanged, bool) {
-	if c == nil {
-		return protocol.EventWindowLayoutChanged{}, false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	windows := c.layouts[sessionID]
-	if windows == nil {
-		return protocol.EventWindowLayoutChanged{}, false
-	}
-	layout, ok := windows[windowID]
-	return layout, ok
-}
-
-func (c *stateCache) ScreenSnapshots(sessionID protocol.SessionID, windowID protocol.WindowID) []protocol.EventPaneScreenChanged {
-	if c == nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	windows := c.screens[sessionID]
-	if windows == nil {
-		return nil
-	}
-	panes := windows[windowID]
-	if panes == nil {
-		return nil
-	}
-	snapshots := make([]protocol.EventPaneScreenChanged, 0, len(panes))
-	for _, screen := range panes {
-		snapshots = append(snapshots, screen)
-	}
-	return snapshots
-}
 
 type Shux struct {
 	Logger *Logger
@@ -116,16 +36,19 @@ type Shux struct {
 	DefaultWindowID  protocol.WindowID
 	DefaultPaneID    protocol.PaneID
 
-	hub          actor.Ref[protocol.Event]
-	supervisor   actor.Ref[protocol.Command]
-	actorCancel  context.CancelFunc
-	state        machine
-	bootstrapped bool
+	hub         actor.Ref[protocol.Event]
+	supervisor  actor.Ref[protocol.Command]
+	actorCancel context.CancelFunc
+	cache       *stateCache
+
+	stateMu sync.Mutex
+	state   lifecycle
+
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
-	clientsMu    sync.Mutex
-	clients      map[protocol.ClientID]*tea.Program
-	cache        *stateCache
+
+	clientsMu sync.Mutex
+	clients   map[protocol.ClientID]*tea.Program
 }
 
 func NewShux() (*Shux, error) {
@@ -169,19 +92,24 @@ func (a *Shux) DetachAllClients() int {
 }
 
 func (a *Shux) Close() error {
-	if a.state == closed {
+	a.stateMu.Lock()
+	if a.state == stateClosed {
+		a.stateMu.Unlock()
 		return nil
 	}
-	if a.actorCancel != nil {
-		a.actorCancel()
-		a.actorCancel = nil
+	cancel := a.actorCancel
+	a.actorCancel = nil
+	a.state = stateClosed
+	a.stateMu.Unlock()
+
+	if cancel != nil {
+		cancel()
 	}
-	a.state = closed
 	return a.Logger.Close()
 }
 
 func (a *Shux) Run(opts ...tea.ProgramOption) error {
-	if a.state == closed {
+	if a.getState() == stateClosed {
 		return fmt.Errorf("shux: run after close")
 	}
 	defer a.Close()
@@ -220,17 +148,18 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 	if clientID == "" {
 		return nil, nil, fmt.Errorf("shux: empty client id")
 	}
-	if a.state == closed {
+	switch a.getState() {
+	case stateClosed:
 		return nil, nil, fmt.Errorf("shux: attach after close")
-	}
-	if a.state != started {
-		return nil, nil, fmt.Errorf("shux: attach before start")
-	}
-	if !a.bootstrapped {
+	case stateNew, stateStarted:
 		return nil, nil, fmt.Errorf("shux: attach before bootstrap")
 	}
 
 	opts = append([]tea.ProgramOption{tea.WithContext(ctx)}, opts...)
+	// shux renders nested terminal cells itself. Preserve truecolor cells instead
+	// of letting Bubble Tea downsample them based on the SSH PTY environment
+	// (which often lacks COLORTERM/RGB and can turn dark grays into ANSI blue).
+	opts = append(opts, tea.WithColorProfile(colorprofile.TrueColor))
 	exitIntent := ui.ExitDetach
 	exitIntentMu := sync.Mutex{}
 	setExitIntent := func(intent ui.ExitIntent) {
@@ -238,7 +167,15 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		exitIntent = intent
 		exitIntentMu.Unlock()
 	}
-	model := ui.NewModelWithSupervisorAndExit(clientID, a.DefaultSessionID, a.DefaultWindowID, a.DefaultPaneID, a.supervisor, ctx, setExitIntent)
+	model := ui.NewModel(ui.ModelConfig{
+		ClientID:   clientID,
+		SessionID:  a.DefaultSessionID,
+		WindowID:   a.DefaultWindowID,
+		PaneID:     a.DefaultPaneID,
+		Supervisor: a.supervisor,
+		Ctx:        ctx,
+		OnExit:     setExitIntent,
+	})
 	if layout, ok := a.cache.LayoutSnapshot(a.DefaultSessionID, a.DefaultWindowID); ok {
 		model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
 	}
@@ -246,17 +183,21 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		model = model.WithPaneScreen(screen)
 	}
 	p := tea.NewProgram(model, opts...)
-	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
-		return nil, nil, fmt.Errorf("shux: register ui hub: %w", err)
-	}
+
 	a.clientsMu.Lock()
 	if _, exists := a.clients[clientID]; exists {
 		a.clientsMu.Unlock()
-		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
 		return nil, nil, fmt.Errorf("shux: duplicate client id %q", clientID)
 	}
 	a.clients[clientID] = p
 	a.clientsMu.Unlock()
+
+	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
+		a.clientsMu.Lock()
+		delete(a.clients, clientID)
+		a.clientsMu.Unlock()
+		return nil, nil, fmt.Errorf("shux: register ui hub: %w", err)
+	}
 
 	cleanup := func() {
 		exitIntentMu.Lock()
@@ -267,6 +208,7 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		delete(a.clients, clientID)
 		remaining := len(a.clients)
 		a.clientsMu.Unlock()
+
 		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
 		if intent == ui.ExitQuit && remaining == 0 {
 			a.RequestShutdown()
@@ -276,12 +218,13 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 }
 
 func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
-	if a.state == closed {
+	switch a.getState() {
+	case stateClosed:
 		return fmt.Errorf("shux: bootstrap after close")
-	}
-	if a.bootstrapped {
+	case stateReady:
 		return nil
 	}
+
 	a.Logger.Info("shux: bootstrap default session starting")
 	if err := a.Start(ctx); err != nil {
 		return err
@@ -293,26 +236,15 @@ func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
 	}
 	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
 
-	if err := a.supervisor.Send(ctx, protocol.CommandCreateSession{}); err != nil {
-		return err
-	}
-	session, err := waitForEvent[protocol.EventSessionCreated](ctx, events)
+	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{})
 	if err != nil {
 		return err
 	}
-
-	if err := a.supervisor.Send(ctx, protocol.CommandCreateWindow{SessionID: session.SessionID}); err != nil {
-		return err
-	}
-	window, err := waitForEvent[protocol.EventWindowCreated](ctx, events)
+	window, err := bootstrapStep[protocol.EventWindowCreated](ctx, a.supervisor, events, protocol.CommandCreateWindow{SessionID: session.SessionID})
 	if err != nil {
 		return err
 	}
-
-	if err := a.supervisor.Send(ctx, protocol.CommandCreatePane{SessionID: session.SessionID, WindowID: window.WindowID}); err != nil {
-		return err
-	}
-	pane, err := waitForEvent[protocol.EventPaneCreated](ctx, events)
+	pane, err := bootstrapStep[protocol.EventPaneCreated](ctx, a.supervisor, events, protocol.CommandCreatePane{SessionID: session.SessionID, WindowID: window.WindowID})
 	if err != nil {
 		return err
 	}
@@ -320,38 +252,58 @@ func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
 	a.DefaultSessionID = session.SessionID
 	a.DefaultWindowID = window.WindowID
 	a.DefaultPaneID = pane.PaneID
-	a.bootstrapped = true
+	a.setState(stateReady)
 	a.Logger.Info("shux: bootstrap default session ready")
 	return nil
 }
 
 func (a *Shux) Start(ctx context.Context) error {
-	if a.state == closed {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	switch a.state {
+	case stateClosed:
 		return fmt.Errorf("shux: start after close")
-	}
-	if a.state == started {
+	case stateStarted, stateReady:
 		return nil
-	}
-	if a.state != new {
+	case stateNew:
+		// fall through
+	default:
 		panic("shux: invalid lifecycle state")
 	}
+
 	a.Logger.Info("shux: starting actors")
 	actorCtx, cancel := context.WithCancel(ctx)
 	hubRef := hub.Start(actorCtx)
-	a.hub = hubRef
-	a.cache = newStateCache()
-	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: cacheClientID, Sink: a.cache}); err != nil {
+	cache := newStateCache()
+	if err := hubRef.Send(ctx, protocol.EventRegisterSubscriber{ClientID: cacheClientID, Sink: cache}); err != nil {
 		cancel()
 		return err
 	}
+	a.hub = hubRef
+	a.cache = cache
 	a.supervisor = supervisor.StartWithConfig(actorCtx, &hubRef, a.Config.ShellPath)
 	a.actorCancel = cancel
-	a.state = started
+	a.state = stateStarted
 	return nil
 }
 
-func waitForEvent[T protocol.Event](ctx context.Context, events <-chan protocol.Event) (T, error) {
+func (a *Shux) getState() lifecycle {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.state
+}
+
+func (a *Shux) setState(s lifecycle) {
+	a.stateMu.Lock()
+	a.state = s
+	a.stateMu.Unlock()
+}
+
+func bootstrapStep[T protocol.Event](ctx context.Context, super actor.Ref[protocol.Command], events <-chan protocol.Event, cmd protocol.Command) (T, error) {
 	var zero T
+	if err := super.Send(ctx, cmd); err != nil {
+		return zero, err
+	}
 	for {
 		select {
 		case <-ctx.Done():

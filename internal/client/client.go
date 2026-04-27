@@ -22,6 +22,14 @@ type AttachOptions struct {
 	Bash bool
 }
 
+func clientTerm() string {
+	term := os.Getenv("TERM")
+	if term == "" {
+		return "xterm-256color"
+	}
+	return term
+}
+
 func AttachOrSpawn(ctx context.Context, addr string) error {
 	return AttachOrSpawnWithOptions(ctx, addr, AttachOptions{})
 }
@@ -69,7 +77,7 @@ func Attach(ctx context.Context, addr string) error {
 	if err != nil {
 		return fmt.Errorf("client: terminal size: %w", err)
 	}
-	if err := sess.RequestPty("xterm-256color", height, width, ssh.TerminalModes{}); err != nil {
+	if err := sess.RequestPty(clientTerm(), height, width, ssh.TerminalModes{}); err != nil {
 		return fmt.Errorf("client: request pty: %w", err)
 	}
 

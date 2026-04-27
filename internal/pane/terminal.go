@@ -2,6 +2,7 @@ package pane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,8 @@ import (
 // Default cell pixel size for libghostty Resize, matching go-libghostty test usage.
 // Init uses NewTerminal(WithSize); Resize must be given explicit cell dimensions.
 const defaultCellW, defaultCellH = 8, 16
+
+var errTerminalNotInit = errors.New("pane: terminal not initialized")
 
 type ptyOutput []byte
 
@@ -45,45 +48,65 @@ func NewTerminal(shellPath string) *Terminal {
 	return &Terminal{ShellPath: shellPath}
 }
 
+func paneEnv(base []string) []string {
+	return append(base,
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+	)
+}
+
 // Init allocates libghostty and starts the shell PTY exactly once.
-func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], cols, rows uint16) protocol.EventPaneScreenChanged {
+// Returns an error if any libghostty/PTY setup step fails; the pane actor
+// should treat init failure as fatal for that pane (but not the daemon).
+func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], cols, rows uint16) (protocol.EventPaneScreenChanged, error) {
 	if cols == 0 || rows == 0 {
 		panic(fmt.Sprintf("pane: terminal init: invalid size %dx%d (cols and rows must be positive)", cols, rows))
 	}
 	if t.VT != nil || t.PTY != nil || t.Shell != nil {
 		panic("pane: terminal init: already created (double init)")
 	}
-	term, err := libghostty.NewTerminal(libghostty.WithSize(cols, rows))
+	term, err := libghostty.NewTerminal(
+		libghostty.WithSize(cols, rows),
+		libghostty.WithWritePty(func(_ *libghostty.Terminal, data []byte) {
+			// Terminal applications query capabilities/colors with escape sequences.
+			// libghostty answers those queries through this callback; forward the
+			// answer into the pane PTY so programs like Neovim don't fall back to
+			// degraded terminal assumptions.
+			if t.PTY != nil {
+				_ = t.writePTY(data)
+			}
+		}),
+	)
 	if err != nil {
-		panic(fmt.Sprintf("pane: NewTerminal: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: NewTerminal: %w", err)
 	}
 	renderState, err := libghostty.NewRenderState()
 	if err != nil {
 		term.Close()
-		panic(fmt.Sprintf("pane: NewRenderState: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: NewRenderState: %w", err)
 	}
 	keyEncoder, err := libghostty.NewKeyEncoder()
 	if err != nil {
 		renderState.Close()
 		term.Close()
-		panic(fmt.Sprintf("pane: NewKeyEncoder: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: NewKeyEncoder: %w", err)
 	}
 	mouseEncoder, err := libghostty.NewMouseEncoder()
 	if err != nil {
 		keyEncoder.Close()
 		renderState.Close()
 		term.Close()
-		panic(fmt.Sprintf("pane: NewMouseEncoder: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: NewMouseEncoder: %w", err)
 	}
 	cmd := exec.Command(t.ShellPath)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = paneEnv(os.Environ())
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
 		mouseEncoder.Close()
 		keyEncoder.Close()
 		renderState.Close()
 		term.Close()
-		panic(fmt.Sprintf("pane: pty start %q: %v", t.ShellPath, err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: pty start %q: %w", t.ShellPath, err)
 	}
 	t.VT = term
 	t.RenderState = renderState
@@ -118,33 +141,41 @@ func readPTY(ctx context.Context, self actor.Ref[protocol.Command], ptyFile *os.
 	}
 }
 
-func (t *Terminal) FeedOutput(chunk []byte) (protocol.EventPaneScreenChanged, bool) {
-	if t.VT == nil {
-		panic("pane: terminal output before init")
+func (t *Terminal) requireInit() error {
+	if t.VT == nil || t.RenderState == nil || t.PTY == nil {
+		return errTerminalNotInit
+	}
+	return nil
+}
+
+func (t *Terminal) FeedOutput(chunk []byte) (protocol.EventPaneScreenChanged, bool, error) {
+	if err := t.requireInit(); err != nil {
+		return protocol.EventPaneScreenChanged{}, false, err
 	}
 	if len(chunk) == 0 {
-		return protocol.EventPaneScreenChanged{}, false
+		return protocol.EventPaneScreenChanged{}, false, nil
 	}
 	t.VT.VTWrite(chunk)
 	t.revision++
-	return t.ScreenChanged(), true
+	event, err := t.ScreenChanged()
+	if err != nil {
+		return protocol.EventPaneScreenChanged{}, false, err
+	}
+	return event, true, nil
 }
 
-func (t *Terminal) Resize(cols, rows uint16) protocol.EventPaneScreenChanged {
+func (t *Terminal) Resize(cols, rows uint16) (protocol.EventPaneScreenChanged, error) {
 	if cols == 0 || rows == 0 {
 		panic(fmt.Sprintf("pane: terminal resize: invalid size %dx%d (cols and rows must be positive)", cols, rows))
 	}
-	if t.VT == nil {
-		panic("pane: terminal resize: terminal not created (resize before init)")
-	}
-	if t.PTY == nil {
-		panic("pane: terminal resize: pty not created (resize before init)")
+	if err := t.requireInit(); err != nil {
+		return protocol.EventPaneScreenChanged{}, err
 	}
 	if err := pty.Setsize(t.PTY, &pty.Winsize{Cols: cols, Rows: rows}); err != nil {
-		panic(fmt.Sprintf("pane: pty resize: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: pty resize: %w", err)
 	}
 	if err := t.VT.Resize(cols, rows, defaultCellW, defaultCellH); err != nil {
-		panic(fmt.Sprintf("pane: Resize: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: vt resize: %w", err)
 	}
 	t.cols = cols
 	t.rows = rows
@@ -152,59 +183,70 @@ func (t *Terminal) Resize(cols, rows uint16) protocol.EventPaneScreenChanged {
 	return t.ScreenChanged()
 }
 
-func (t *Terminal) ScreenChanged() protocol.EventPaneScreenChanged {
-	if t.RenderState == nil {
-		panic("pane: terminal screen before render state")
+func (t *Terminal) ScreenChanged() (protocol.EventPaneScreenChanged, error) {
+	if err := t.requireInit(); err != nil {
+		return protocol.EventPaneScreenChanged{}, err
 	}
 	if err := t.RenderState.Update(t.VT); err != nil {
-		panic(fmt.Sprintf("pane: RenderState.Update: %v", err))
+		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: RenderState.Update: %w", err)
+	}
+	cursor, err := t.cursorState()
+	if err != nil {
+		return protocol.EventPaneScreenChanged{}, err
+	}
+	lines, err := t.screenLines()
+	if err != nil {
+		return protocol.EventPaneScreenChanged{}, err
 	}
 	return protocol.EventPaneScreenChanged{
 		Revision: t.revision,
 		Cols:     int(t.cols),
 		Rows:     int(t.rows),
-		Lines:    t.screenLines(),
-		Cursor:   t.cursorState(),
-	}
+		Lines:    lines,
+		Cursor:   cursor,
+	}, nil
 }
 
-func (t *Terminal) cursorState() protocol.EventPaneScreenCursor {
+func (t *Terminal) cursorState() (protocol.EventPaneScreenCursor, error) {
 	visible, err := t.RenderState.CursorVisible()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderState.CursorVisible: %v", err))
+		return protocol.EventPaneScreenCursor{}, fmt.Errorf("pane: CursorVisible: %w", err)
 	}
 	blink, err := t.RenderState.CursorBlinking()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderState.CursorBlinking: %v", err))
+		return protocol.EventPaneScreenCursor{}, fmt.Errorf("pane: CursorBlinking: %w", err)
 	}
 	hasValue, err := t.RenderState.CursorViewportHasValue()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderState.CursorViewportHasValue: %v", err))
+		return protocol.EventPaneScreenCursor{}, fmt.Errorf("pane: CursorViewportHasValue: %w", err)
 	}
 	if !visible || !hasValue {
-		return protocol.EventPaneScreenCursor{Blink: blink}
+		return protocol.EventPaneScreenCursor{Blink: blink}, nil
 	}
 	x, err := t.RenderState.CursorViewportX()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderState.CursorViewportX: %v", err))
+		return protocol.EventPaneScreenCursor{}, fmt.Errorf("pane: CursorViewportX: %w", err)
 	}
 	y, err := t.RenderState.CursorViewportY()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderState.CursorViewportY: %v", err))
+		return protocol.EventPaneScreenCursor{}, fmt.Errorf("pane: CursorViewportY: %w", err)
 	}
 	if x >= t.cols || y >= t.rows {
-		return protocol.EventPaneScreenCursor{Blink: blink}
+		return protocol.EventPaneScreenCursor{Blink: blink}, nil
 	}
-	return protocol.NewEventPaneScreenCursor(int(x), int(y), blink)
+	return protocol.NewEventPaneScreenCursor(int(x), int(y), blink), nil
 }
 
-func (t *Terminal) HandleKey(cmd protocol.CommandPaneKey) {
-	if t.VT == nil || t.KeyEncoder == nil || t.PTY == nil {
-		panic("pane: key input before init")
+func (t *Terminal) HandleKey(cmd protocol.CommandPaneKey) error {
+	if err := t.requireInit(); err != nil {
+		return err
+	}
+	if t.KeyEncoder == nil {
+		return errTerminalNotInit
 	}
 	event, err := libghostty.NewKeyEvent()
 	if err != nil {
-		panic(fmt.Sprintf("pane: NewKeyEvent: %v", err))
+		return fmt.Errorf("pane: NewKeyEvent: %w", err)
 	}
 	defer event.Close()
 	event.SetAction(keyAction(cmd.Action))
@@ -218,18 +260,21 @@ func (t *Terminal) HandleKey(cmd protocol.CommandPaneKey) {
 	t.KeyEncoder.SetOptFromTerminal(t.VT)
 	encoded, err := t.KeyEncoder.Encode(event)
 	if err != nil {
-		panic(fmt.Sprintf("pane: key encode: %v", err))
+		return fmt.Errorf("pane: key encode: %w", err)
 	}
-	t.writePTY(encoded)
+	return t.writePTY(encoded)
 }
 
-func (t *Terminal) HandleMouse(cmd protocol.CommandPaneMouse) {
-	if t.VT == nil || t.MouseEncoder == nil || t.PTY == nil {
-		panic("pane: mouse input before init")
+func (t *Terminal) HandleMouse(cmd protocol.CommandPaneMouse) error {
+	if err := t.requireInit(); err != nil {
+		return err
+	}
+	if t.MouseEncoder == nil {
+		return errTerminalNotInit
 	}
 	event, err := libghostty.NewMouseEvent()
 	if err != nil {
-		panic(fmt.Sprintf("pane: NewMouseEvent: %v", err))
+		return fmt.Errorf("pane: NewMouseEvent: %w", err)
 	}
 	defer event.Close()
 	event.SetAction(mouseAction(cmd.Action))
@@ -252,29 +297,30 @@ func (t *Terminal) HandleMouse(cmd protocol.CommandPaneMouse) {
 	})
 	encoded, err := t.MouseEncoder.Encode(event)
 	if err != nil {
-		panic(fmt.Sprintf("pane: mouse encode: %v", err))
+		return fmt.Errorf("pane: mouse encode: %w", err)
 	}
-	t.writePTY(encoded)
+	return t.writePTY(encoded)
 }
 
-func (t *Terminal) HandlePaste(cmd protocol.CommandPanePaste) {
-	if t.PTY == nil {
-		panic("pane: paste input before init")
+func (t *Terminal) HandlePaste(cmd protocol.CommandPanePaste) error {
+	if err := t.requireInit(); err != nil {
+		return err
 	}
-	t.writePTY(cmd.Data)
+	return t.writePTY(cmd.Data)
 }
 
-func (t *Terminal) writePTY(data []byte) {
+func (t *Terminal) writePTY(data []byte) error {
 	if len(data) == 0 {
-		return
+		return nil
 	}
 	n, err := t.PTY.Write(data)
 	if err != nil {
-		panic(fmt.Sprintf("pane: pty write: %v", err))
+		return fmt.Errorf("pane: pty write: %w", err)
 	}
 	if n != len(data) {
-		panic(fmt.Sprintf("pane: short pty write %d != %d", n, len(data)))
+		return fmt.Errorf("pane: short pty write %d != %d", n, len(data))
 	}
+	return nil
 }
 
 func keyAction(action protocol.KeyAction) libghostty.KeyAction {
@@ -418,54 +464,60 @@ func (t *Terminal) Close() {
 	}
 }
 
-func (t *Terminal) screenLines() []protocol.EventPaneScreenLine {
-	if t.RenderState == nil {
-		panic("pane: terminal screen lines: nil render state")
-	}
+func (t *Terminal) screenLines() ([]protocol.EventPaneScreenLine, error) {
 	rowIter, err := libghostty.NewRenderStateRowIterator()
 	if err != nil {
-		panic(fmt.Sprintf("pane: NewRenderStateRowIterator: %v", err))
+		return nil, fmt.Errorf("pane: NewRenderStateRowIterator: %w", err)
 	}
 	defer rowIter.Close()
 	cells, err := libghostty.NewRenderStateRowCells()
 	if err != nil {
-		panic(fmt.Sprintf("pane: NewRenderStateRowCells: %v", err))
+		return nil, fmt.Errorf("pane: NewRenderStateRowCells: %w", err)
 	}
 	defer cells.Close()
 	if err := t.RenderState.RowIterator(rowIter); err != nil {
-		panic(fmt.Sprintf("pane: RenderState.RowIterator: %v", err))
+		return nil, fmt.Errorf("pane: RenderState.RowIterator: %w", err)
+	}
+	// Resolve libghostty's active 256-color palette so we can emit truecolor
+	// downstream and avoid the user's terminal palette reinterpreting indices.
+	palette, perr := t.RenderState.ColorPalette()
+	if perr != nil {
+		palette = nil
 	}
 	lines := make([]protocol.EventPaneScreenLine, 0, int(t.rows))
 	for row := 0; row < int(t.rows) && rowIter.Next(); row++ {
 		if err := rowIter.Cells(cells); err != nil {
-			panic(fmt.Sprintf("pane: RenderStateRowIterator.Cells: %v", err))
+			return nil, fmt.Errorf("pane: RowIterator.Cells: %w", err)
 		}
 		line := protocol.EventPaneScreenLine{Cells: make([]protocol.EventPaneScreenCell, 0, int(t.cols))}
 		var text strings.Builder
 		for col := 0; col < int(t.cols) && cells.Next(); col++ {
-			cell := screenCell(cells)
+			cell, err := screenCell(cells, palette)
+			if err != nil {
+				return nil, err
+			}
 			line.Cells = append(line.Cells, cell)
 			text.WriteString(cell.Text)
 		}
 		line.Text = text.String()
 		lines = append(lines, line)
 	}
-	return lines
+	return lines, nil
 }
 
-func screenCell(cells *libghostty.RenderStateRowCells) protocol.EventPaneScreenCell {
+func screenCell(cells *libghostty.RenderStateRowCells, palette *libghostty.Palette) (protocol.EventPaneScreenCell, error) {
 	graphemes, err := cells.Graphemes()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderStateRowCells.Graphemes: %v", err))
+		return protocol.EventPaneScreenCell{}, fmt.Errorf("pane: cell graphemes: %w", err)
 	}
 	style, err := cells.Style()
 	if err != nil {
-		panic(fmt.Sprintf("pane: RenderStateRowCells.Style: %v", err))
+		return protocol.EventPaneScreenCell{}, fmt.Errorf("pane: cell style: %w", err)
 	}
 	return protocol.EventPaneScreenCell{
 		Text:          graphemeString(graphemes),
-		Foreground:    screenColor(style.FgColor()),
-		Background:    screenColor(style.BgColor()),
+		Foreground:    screenColor(style.FgColor(), palette),
+		Background:    screenColor(style.BgColor(), palette),
 		Bold:          style.Bold(),
 		Italic:        style.Italic(),
 		Faint:         style.Faint(),
@@ -475,7 +527,7 @@ func screenCell(cells *libghostty.RenderStateRowCells) protocol.EventPaneScreenC
 		Underline:     style.Underline() != libghostty.UnderlineNone,
 		Strikethrough: style.Strikethrough(),
 		Overline:      style.Overline(),
-	}
+	}, nil
 }
 
 func graphemeString(graphemes []uint32) string {
@@ -489,9 +541,13 @@ func graphemeString(graphemes []uint32) string {
 	return string(runes)
 }
 
-func screenColor(color libghostty.StyleColor) protocol.EventPaneScreenColor {
+func screenColor(color libghostty.StyleColor, palette *libghostty.Palette) protocol.EventPaneScreenColor {
 	switch color.Tag {
 	case libghostty.StyleColorPalette:
+		if palette != nil {
+			rgb := palette[color.Palette]
+			return protocol.EventPaneScreenColor{Kind: "rgb", R: rgb.R, G: rgb.G, B: rgb.B}
+		}
 		return protocol.EventPaneScreenColor{Kind: "palette", Index: color.Palette}
 	case libghostty.StyleColorRGB:
 		return protocol.EventPaneScreenColor{Kind: "rgb", R: color.RGB.R, G: color.RGB.G, B: color.RGB.B}
