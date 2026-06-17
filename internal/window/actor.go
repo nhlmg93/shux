@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"shux/internal/actor"
+	"shux/internal/cfg"
 	"shux/internal/pane"
 	"shux/internal/protocol"
 )
@@ -17,7 +18,7 @@ type Actor struct {
 	Panes
 	SessionID protocol.SessionID
 	WindowID  protocol.WindowID
-	ShellPath string
+	Policy    cfg.Config
 	Layout    Layout
 	paneIDs   []protocol.PaneID
 	hub       actor.EventRef
@@ -26,21 +27,26 @@ type Actor struct {
 }
 
 func NewActor(hub actor.EventRef) *Actor {
-	return NewActorWithConfig(hub, "", "", "/bin/sh")
+	return NewActorWithPolicy(hub, "", "", cfg.DefaultConfig())
 }
 
 func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) *Actor {
+	return NewActorWithPolicy(hub, sessionID, windowID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("window: NewActor: invalid hub ref")
 	}
-	if shellPath == "" {
+	policy = policy.WithDefaults()
+	if policy.ShellPath == "" {
 		panic("window: NewActor: empty shell path")
 	}
 	return &Actor{
 		Panes:     actor.NewLifecycle[protocol.PaneID, protocol.Command]("window", "pane", protocol.PaneID.Valid),
 		SessionID: sessionID,
 		WindowID:  windowID,
-		ShellPath: shellPath,
+		Policy:    policy,
 		Layout:    NewLayout(80, 24),
 		hub:       hub,
 	}
@@ -83,7 +89,7 @@ func (a *Actor) handleCreatePane(ctx context.Context, m protocol.CommandCreatePa
 	}
 	pid := a.nextPaneID()
 	a.paneIDs = append(a.paneIDs, pid)
-	a.Init(pid, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, pid, a.ShellPath))
+	a.Init(pid, pane.StartWithPolicy(ctx, a.hub, m.SessionID, m.WindowID, pid, a.Policy))
 	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: pid})
 	if err := a.Layout.SetSinglePane(pid); err != nil {
 		panic(fmt.Sprintf("window: SetSinglePane after CreatePane: %v", err))
@@ -116,7 +122,7 @@ func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit
 	}
 	a.revision++
 	a.paneIDs = append(a.paneIDs, newID)
-	a.Init(newID, pane.StartWithConfig(ctx, a.hub, m.SessionID, m.WindowID, newID, a.ShellPath))
+	a.Init(newID, pane.StartWithPolicy(ctx, a.hub, m.SessionID, m.WindowID, newID, a.Policy))
 	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: newID})
 	for _, pid := range a.Layout.PaneIDs() {
 		r := a.mustRect(pid, "PaneSplit")
@@ -267,5 +273,9 @@ func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Co
 }
 
 func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithConfig(hub, sessionID, windowID, shellPath).Run)
+	return StartWithPolicy(ctx, hub, sessionID, windowID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, windowID, policy).Run)
 }

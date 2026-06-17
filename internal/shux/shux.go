@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"shux/internal/actor"
 	"shux/internal/hub"
+	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/supervisor"
 	"shux/internal/ui"
@@ -40,6 +41,9 @@ type Shux struct {
 	supervisor  actor.Ref[protocol.Command]
 	actorCancel context.CancelFunc
 	cache       *stateCache
+	luaRuntime  any // *lua.Runtime; kept alive for plugin autocmds
+
+	Autocmds *AutocmdRegistry
 
 	stateMu sync.Mutex
 	state   lifecycle
@@ -69,6 +73,14 @@ func NewShuxWithConfig(config Config) (*Shux, error) {
 	}, nil
 }
 
+func (a *Shux) SetLuaRuntime(rt any) {
+	a.luaRuntime = rt
+}
+
+func (a *Shux) SetAutocmds(r *AutocmdRegistry) {
+	a.Autocmds = r
+}
+
 func (a *Shux) Done() <-chan struct{} {
 	return a.shutdown
 }
@@ -92,6 +104,7 @@ func (a *Shux) DetachAllClients() int {
 }
 
 func (a *Shux) Close() error {
+	a.checkpoint()
 	a.stateMu.Lock()
 	if a.state == stateClosed {
 		a.stateMu.Unlock()
@@ -105,6 +118,10 @@ func (a *Shux) Close() error {
 	if cancel != nil {
 		cancel()
 	}
+	if rt, ok := a.luaRuntime.(interface{ Close() }); ok {
+		rt.Close()
+	}
+	a.luaRuntime = nil
 	return a.Logger.Close()
 }
 
@@ -175,6 +192,9 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		Supervisor: a.supervisor,
 		Ctx:        ctx,
 		OnExit:     setExitIntent,
+		MapLeader:  a.Config.MapLeader,
+		Keymaps:    a.Config.Keymaps,
+		Lua:        a.luaRuntime,
 	})
 	windowIDs := a.cache.WindowIDs(a.DefaultSessionID)
 	if len(windowIDs) == 0 {
@@ -205,6 +225,9 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		a.clientsMu.Unlock()
 		return nil, nil, fmt.Errorf("shux: register ui hub: %w", err)
 	}
+	if a.Autocmds != nil {
+		a.Autocmds.Emit(ctx, EventClientAttached, map[string]any{"client_id": string(clientID)})
+	}
 
 	cleanup := func() {
 		exitIntentMu.Lock()
@@ -217,6 +240,9 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		a.clientsMu.Unlock()
 
 		_ = a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: clientID})
+		if a.Autocmds != nil {
+			a.Autocmds.Emit(ctx, EventClientDetached, map[string]any{"client_id": string(clientID)})
+		}
 		if intent == ui.ExitQuit && remaining == 0 {
 			a.RequestShutdown()
 		}
@@ -237,31 +263,21 @@ func (a *Shux) BootstrapDefaultSession(ctx context.Context) error {
 		return err
 	}
 
-	events := make(protocol.EventChanAdapter, 8)
-	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: bootstrapClientID, Sink: events}); err != nil {
-		return err
-	}
-	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
-
-	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{})
-	if err != nil {
-		return err
-	}
-	window, err := bootstrapStep[protocol.EventWindowCreated](ctx, a.supervisor, events, protocol.CommandCreateWindow{SessionID: session.SessionID})
-	if err != nil {
-		return err
-	}
-	pane, err := bootstrapStep[protocol.EventPaneCreated](ctx, a.supervisor, events, protocol.CommandCreatePane{SessionID: session.SessionID, WindowID: window.WindowID})
-	if err != nil {
-		return err
+	if a.Config.Resurrection && a.Config.StateDir != "" {
+		m, ok, err := persist.LoadManifest(a.Config.StateDir)
+		if err != nil {
+			a.Logger.Printf("shux: manifest load failed: %v", err)
+		} else if ok {
+			if err := a.restoreFromManifest(ctx, m); err != nil {
+				a.Logger.Printf("shux: restore failed, fresh bootstrap: %v", err)
+				_ = persist.ClearResurrectionState(a.Config.StateDir)
+			} else {
+				return nil
+			}
+		}
 	}
 
-	a.DefaultSessionID = session.SessionID
-	a.DefaultWindowID = window.WindowID
-	a.DefaultPaneID = pane.PaneID
-	a.setState(stateReady)
-	a.Logger.Info("shux: bootstrap default session ready")
-	return nil
+	return a.bootstrapFresh(ctx)
 }
 
 func (a *Shux) Start(ctx context.Context) error {
@@ -288,7 +304,7 @@ func (a *Shux) Start(ctx context.Context) error {
 	}
 	a.hub = hubRef
 	a.cache = cache
-	a.supervisor = supervisor.StartWithConfig(actorCtx, &hubRef, a.Config.ShellPath)
+	a.supervisor = supervisor.StartWithPolicy(actorCtx, &hubRef, a.Config)
 	a.actorCancel = cancel
 	a.state = stateStarted
 	return nil

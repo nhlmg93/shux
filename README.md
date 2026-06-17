@@ -49,12 +49,7 @@ Implemented bindings:
 | `ctrl+b p` | Previous window. |
 | `ctrl+b 1` through `ctrl+b 9` | Select window by number. |
 | `ctrl+b 0` | Select window 10. |
-
-Reserved but not implemented yet:
-
-| Key | Planned action |
-| --- | --- |
-| `ctrl+b ?` | List key bindings. |
+| `ctrl+b ?` | List key bindings (stderr). |
 
 Notes:
 
@@ -62,3 +57,39 @@ Notes:
 - `ctrl+b` enters prefix mode and is not sent to the active pane.
 - Detach with `ctrl+b d` when you want to leave the session running.
 - Quit with `ctrl+b q` when you want to stop the shux backend.
+
+## Configuration (Lua)
+
+shux uses a Neovim-style Lua config loaded once at **daemon start**. If no config file exists, built-in defaults apply.
+
+```text
+~/.config/shux/
+  init.lua
+  lua/
+    options.lua
+    keymaps.lua
+  plugin/              # eager-loaded plugin scripts
+  pack/*/start/*/plugin/*.lua
+```
+
+Example `~/.config/shux/init.lua`:
+
+```lua
+shux.g.mapleader = "<C-b>"
+require("options")
+require("keymaps")
+```
+
+See [`runtime/example/`](runtime/example/) for a full starter config.
+
+Options (`shux.opt`):
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `shell` | `/bin/sh` | Pane shell (`--bash` overrides at spawn) |
+| `bind` | `127.0.0.1:23234` | Daemon listen address |
+| `scrollback` | `10000` | libghostty scrollback lines |
+| `state_dir` | XDG state dir | Resurrection journals + manifest |
+| `resurrection` | `true` | Record PTY output for restore |
+
+Plugins can register autocmds via `shux.api.shux_create_autocmd` and keymaps with Lua functions via `shux.keymap.set`.

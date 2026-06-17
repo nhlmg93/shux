@@ -9,15 +9,29 @@ import (
 	"charm.land/wish/v2"
 	"github.com/charmbracelet/ssh"
 	"shux/internal/client"
+	"shux/internal/lua"
 	"shux/internal/shux"
 	"shux/internal/sshkey"
 )
 
-func Run(ctx context.Context, addr string) error {
-	return RunWithConfig(ctx, addr, shux.DefaultConfig())
+func Run(ctx context.Context, opts lua.LoadOptions) error {
+	rt, err := lua.Load(opts)
+	if err != nil {
+		return fmt.Errorf("daemon: config: %w", err)
+	}
+	cfg := rt.Config.WithDefaults()
+	return RunWithRuntime(ctx, cfg.BindAddr, cfg, rt)
 }
 
 func RunWithConfig(ctx context.Context, addr string, config shux.Config) error {
+	return RunWithRuntime(ctx, addr, config, nil)
+}
+
+func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lua.Runtime) error {
+	config = config.WithDefaults()
+	if addr == "" {
+		addr = config.BindAddr
+	}
 	if !isLocalAddr(addr) {
 		return fmt.Errorf("daemon: refusing non-local bind address %q", addr)
 	}
@@ -26,14 +40,24 @@ func RunWithConfig(ctx context.Context, addr string, config shux.Config) error {
 		return err
 	}
 	if available {
+		if rt != nil {
+			rt.Close()
+		}
 		return nil
 	}
 
 	app, err := shux.NewShuxWithConfig(config)
 	if err != nil {
+		if rt != nil {
+			rt.Close()
+		}
 		return err
 	}
 	defer app.Close()
+	if rt != nil {
+		app.SetLuaRuntime(rt)
+		app.SetAutocmds(rt.Autocmds)
+	}
 
 	if err := app.Start(ctx); err != nil {
 		return err

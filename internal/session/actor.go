@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"shux/internal/actor"
+	"shux/internal/cfg"
 	"shux/internal/protocol"
 	"shux/internal/window"
 )
@@ -16,28 +17,33 @@ type Windows = *actor.Lifecycle[protocol.WindowID, protocol.Command]
 type Actor struct {
 	Windows
 	SessionID protocol.SessionID
-	ShellPath string
-	seq       uint64 // next window id suffix; only touched from Run goroutine
+	Policy    cfg.Config
+	seq       uint64
 	revision  uint64
 	windowIDs []protocol.WindowID
-	hub       actor.EventRef // optional lifecycle event sink (best-effort publish)
+	hub       actor.EventRef
 }
 
 func NewActor(hub actor.EventRef) *Actor {
-	return NewActorWithConfig(hub, "", "/bin/sh")
+	return NewActorWithPolicy(hub, "", cfg.DefaultConfig())
 }
 
 func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, shellPath string) *Actor {
+	return NewActorWithPolicy(hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("session: NewActor: invalid hub ref")
 	}
-	if shellPath == "" {
+	policy = policy.WithDefaults()
+	if policy.ShellPath == "" {
 		panic("session: NewActor: empty shell path")
 	}
 	return &Actor{
 		Windows:   actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
 		SessionID: sessionID,
-		ShellPath: shellPath,
+		Policy:    policy,
 		hub:       hub,
 	}
 }
@@ -70,7 +76,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreateWindow) {
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
-	a.Init(wid, window.StartWithConfig(ctx, a.hub, m.SessionID, wid, a.ShellPath))
+	a.Init(wid, window.StartWithPolicy(ctx, a.hub, m.SessionID, wid, a.Policy))
 	a.windowIDs = append(a.windowIDs, wid)
 	a.revision++
 	if a.hub != nil {
@@ -110,5 +116,9 @@ func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Co
 }
 
 func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, shellPath string) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithConfig(hub, sessionID, shellPath).Run)
+	return StartWithPolicy(ctx, hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, policy).Run)
 }

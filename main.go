@@ -9,10 +9,8 @@ import (
 	"golang.org/x/term"
 	"shux/internal/client"
 	"shux/internal/daemon"
-	"shux/internal/shux"
+	"shux/internal/lua"
 )
-
-const defaultAddr = "127.0.0.1:23234"
 
 var bashShell bool
 
@@ -30,7 +28,7 @@ var attachCmd = &cobra.Command{
 	Aliases: []string{"a", "attach-session"},
 	Short:   "Attach to the shux session",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return client.AttachOrSpawnWithOptions(cmd.Context(), defaultAddr, attachOptions())
+		return runAttach(cmd.Context())
 	},
 }
 
@@ -39,7 +37,7 @@ var detachCmd = &cobra.Command{
 	Aliases: []string{"detach-client"},
 	Short:   "Detach shux clients",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return client.Detach(cmd.Context(), defaultAddr)
+		return runDetach(cmd.Context())
 	},
 }
 
@@ -52,27 +50,48 @@ func main() {
 	cobra.CheckErr(rootCmd.Execute())
 }
 
+func loadOpts() lua.LoadOptions {
+	return lua.LoadOptions{Bash: bashShell}
+}
+
+func bindAddr() (string, error) {
+	rt, err := lua.Load(loadOpts())
+	if err != nil {
+		return "", err
+	}
+	addr := rt.Config.WithDefaults().BindAddr
+	rt.Close()
+	return addr, nil
+}
+
 func runRoot(ctx context.Context) error {
 	if isInteractiveTerminal() {
-		return client.AttachOrSpawnWithOptions(ctx, defaultAddr, attachOptions())
+		return runAttach(ctx)
 	}
-
 	if isDaemonChild() {
-		return daemon.RunWithConfig(ctx, defaultAddr, runtimeConfig())
+		return daemon.Run(ctx, loadOpts())
 	}
-
 	return fmt.Errorf("shux requires an interactive terminal")
+}
+
+func runAttach(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.AttachOrSpawnWithOptions(ctx, addr, attachOptions())
+}
+
+func runDetach(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.Detach(ctx, addr)
 }
 
 func attachOptions() client.AttachOptions {
 	return client.AttachOptions{Bash: bashShell}
-}
-
-func runtimeConfig() shux.Config {
-	if bashShell {
-		return shux.BashConfig()
-	}
-	return shux.DefaultConfig()
 }
 
 func isInteractiveTerminal() bool {

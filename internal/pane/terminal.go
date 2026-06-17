@@ -13,6 +13,8 @@ import (
 	"github.com/creack/pty"
 	"github.com/mitchellh/go-libghostty"
 	"shux/internal/actor"
+	"shux/internal/cfg"
+	"shux/internal/persist"
 	"shux/internal/protocol"
 )
 
@@ -28,6 +30,7 @@ type ptyOutput []byte
 // libghostty VT, render state, dimensions, and screen revision.
 type Terminal struct {
 	ShellPath string
+	MaxScrollback uint
 
 	VT           *libghostty.Terminal
 	RenderState  *libghostty.RenderState
@@ -35,17 +38,29 @@ type Terminal struct {
 	MouseEncoder *libghostty.MouseEncoder
 	PTY          *os.File
 	Shell        *exec.Cmd
+	Journal      *persist.Journal
 
 	cols     uint16
 	rows     uint16
 	revision uint64
 }
 
-func NewTerminal(shellPath string) *Terminal {
-	if shellPath == "" {
+func NewTerminal(policy cfg.Config, windowID protocol.WindowID, paneID protocol.PaneID) *Terminal {
+	policy = policy.WithDefaults()
+	if policy.ShellPath == "" {
 		panic("pane: NewTerminal: empty shell path")
 	}
-	return &Terminal{ShellPath: shellPath}
+	t := &Terminal{
+		ShellPath:     policy.ShellPath,
+		MaxScrollback: policy.Scrollback,
+	}
+	if policy.Resurrection && policy.StateDir != "" {
+		j, err := persist.OpenJournal(policy.StateDir, windowID, paneID)
+		if err == nil {
+			t.Journal = j
+		}
+	}
+	return t
 }
 
 func paneEnv(base []string) []string {
@@ -67,6 +82,7 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 	}
 	term, err := libghostty.NewTerminal(
 		libghostty.WithSize(cols, rows),
+		libghostty.WithMaxScrollback(t.MaxScrollback),
 		libghostty.WithWritePty(func(_ *libghostty.Terminal, data []byte) {
 			// Terminal applications query capabilities/colors with escape sequences.
 			// libghostty answers those queries through this callback; forward the
@@ -98,6 +114,15 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 		term.Close()
 		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: NewMouseEncoder: %w", err)
 	}
+	t.VT = term
+	t.RenderState = renderState
+	t.KeyEncoder = keyEncoder
+	t.MouseEncoder = mouseEncoder
+	t.cols = cols
+	t.rows = rows
+	if t.Journal != nil {
+		_ = persist.ReplayJournal(term, t.Journal.Path())
+	}
 	cmd := exec.Command(t.ShellPath)
 	cmd.Env = paneEnv(os.Environ())
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
@@ -108,26 +133,25 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 		term.Close()
 		return protocol.EventPaneScreenChanged{}, fmt.Errorf("pane: pty start %q: %w", t.ShellPath, err)
 	}
-	t.VT = term
-	t.RenderState = renderState
-	t.KeyEncoder = keyEncoder
-	t.MouseEncoder = mouseEncoder
 	t.PTY = ptyFile
 	t.Shell = cmd
 	t.cols = cols
 	t.rows = rows
 	t.revision++
-	go readPTY(ctx, self, ptyFile)
+	go readPTY(ctx, self, t, ptyFile)
 	return t.ScreenChanged()
 }
 
-func readPTY(ctx context.Context, self actor.Ref[protocol.Command], ptyFile *os.File) {
+func readPTY(ctx context.Context, self actor.Ref[protocol.Command], term *Terminal, ptyFile *os.File) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := ptyFile.Read(buf)
 		if n > 0 {
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
+			if term.Journal != nil {
+				_ = term.Journal.Append(chunk)
+			}
 			if sendErr := self.Send(ctx, ptyOutput(chunk)); sendErr != nil {
 				return
 			}
@@ -313,6 +337,9 @@ func (t *Terminal) writePTY(data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
+	if t.Journal != nil {
+		_ = t.Journal.Append(data)
+	}
 	n, err := t.PTY.Write(data)
 	if err != nil {
 		return fmt.Errorf("pane: pty write: %w", err)
@@ -437,6 +464,10 @@ func keyCode(key string) libghostty.Key {
 }
 
 func (t *Terminal) Close() {
+	if t.Journal != nil {
+		_ = t.Journal.Close()
+		t.Journal = nil
+	}
 	if t.PTY != nil {
 		_ = t.PTY.Close()
 		t.PTY = nil

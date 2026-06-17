@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"shux/internal/client"
 	"shux/internal/daemon"
+	"shux/internal/shux"
 )
 
 const sshCtrlB = 0x02
@@ -65,7 +66,7 @@ func TestSecondDaemonCandidateExitsCleanlyWhenShuxOwnsPort(t *testing.T) {
 	addr, stop := startTestDaemon(t)
 	defer stop()
 
-	if err := daemon.Run(t.Context(), addr); err != nil {
+	if err := daemon.RunWithConfig(t.Context(), addr, shux.DefaultConfig()); err != nil {
 		t.Fatalf("second daemon candidate should exit cleanly: %v", err)
 	}
 }
@@ -120,7 +121,7 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	addr := freeLoopbackAddr(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- daemon.Run(ctx, addr) }()
+	go func() { done <- daemon.RunWithConfig(ctx, addr, shux.DefaultConfig()) }()
 	defer cancel()
 
 	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
@@ -143,7 +144,7 @@ func startTestDaemon(t *testing.T) (string, func()) {
 	addr := freeLoopbackAddr(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- daemon.Run(ctx, addr) }()
+	go func() { done <- daemon.RunWithConfig(ctx, addr, shux.DefaultConfig()) }()
 	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
 		cancel()
 		t.Fatal(err)

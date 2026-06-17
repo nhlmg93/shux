@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"shux/internal/actor"
+	"shux/internal/cfg"
 	"shux/internal/protocol"
 )
 
@@ -26,12 +27,17 @@ func NewActor() *Actor {
 }
 
 func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) *Actor {
+	return NewActorWithPolicy(hub, sessionID, windowID, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("pane: NewActor: invalid hub ref")
 	}
+	policy = policy.WithDefaults()
 	return &Actor{
 		Hub:       hub,
-		Terminal:  NewTerminal(shellPath),
+		Terminal:  NewTerminal(policy, windowID, paneID),
 		SessionID: sessionID,
 		WindowID:  windowID,
 		PaneID:    paneID,
@@ -121,5 +127,9 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 }
 
 func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithConfig(hub, sessionID, windowID, paneID, shellPath).Run)
+	return StartWithPolicy(ctx, hub, sessionID, windowID, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+}
+
+func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, windowID, paneID, policy).Run)
 }

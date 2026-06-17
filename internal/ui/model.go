@@ -3,11 +3,11 @@ package ui
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/actor"
+	"shux/internal/cfg"
 	"shux/internal/protocol"
 )
 
@@ -63,6 +63,9 @@ type ModelConfig struct {
 	Supervisor actor.Ref[protocol.Command]
 	Ctx        context.Context
 	OnExit     func(ExitIntent)
+	MapLeader  string
+	Keymaps    *cfg.Keymaps
+	Lua        any // *lua.Runtime for Lua keymap callbacks; optional
 }
 
 type Model struct {
@@ -84,34 +87,48 @@ type Model struct {
 	Ctx           context.Context
 	OnExit        func(ExitIntent)
 	Prefix        bool
+	MapLeader     string
+	Keymaps       *cfg.Keymaps
+	Lua           any
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
 // together; passing one without the other is a programming bug.
-func NewModel(cfg ModelConfig) Model {
-	if cfg.Supervisor.Valid() && cfg.Ctx == nil {
+func NewModel(mc ModelConfig) Model {
+	if mc.Supervisor.Valid() && mc.Ctx == nil {
 		panic("ui: NewModel: supervisor without context")
 	}
-	if !cfg.Supervisor.Valid() && cfg.Ctx != nil {
+	if !mc.Supervisor.Valid() && mc.Ctx != nil {
 		panic("ui: NewModel: context without supervisor")
+	}
+	mapLeader := mc.MapLeader
+	if mapLeader == "" {
+		mapLeader = cfg.DefaultMapLeader
+	}
+	keymaps := mc.Keymaps
+	if keymaps == nil {
+		keymaps = cfg.DefaultKeymaps()
 	}
 	return Model{
 		Title:         "shux",
-		ClientID:      cfg.ClientID,
-		SessionID:     cfg.SessionID,
-		WindowID:      cfg.WindowID,
-		PaneID:        cfg.PaneID,
-		ActivePaneID:  cfg.PaneID,
+		ClientID:      mc.ClientID,
+		SessionID:     mc.SessionID,
+		WindowID:      mc.WindowID,
+		PaneID:        mc.PaneID,
+		ActivePaneID:  mc.PaneID,
 		Pending:       make(map[protocol.RequestID]pendingCommand),
-		Layout:        EmptyLayoutSnapshot(cfg.SessionID, cfg.WindowID),
+		Layout:        EmptyLayoutSnapshot(mc.SessionID, mc.WindowID),
 		Screens:       make(map[protocol.PaneID]protocol.EventPaneScreenChanged),
-		WindowIDs:     []protocol.WindowID{cfg.WindowID},
+		WindowIDs:     []protocol.WindowID{mc.WindowID},
 		ClosedWindows: make(map[protocol.WindowID]bool),
 		Layouts:       make(map[protocol.WindowID]LayoutSnapshot),
 		WindowScreens: make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged),
-		Supervisor:    cfg.Supervisor,
-		Ctx:           cfg.Ctx,
-		OnExit:        cfg.OnExit,
+		Supervisor:    mc.Supervisor,
+		Ctx:           mc.Ctx,
+		OnExit:        mc.OnExit,
+		MapLeader:     mapLeader,
+		Keymaps:       keymaps,
+		Lua:           mc.Lua,
 	}
 }
 
@@ -262,56 +279,21 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if !m.Prefix {
-		if key == "ctrl+b" {
+		if key == m.MapLeader {
 			m.Prefix = true
 			return m, nil
 		}
 		return m, m.dispatch(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), keyActionFromPress(msg)))
 	}
-	m.Prefix = false
-	if !m.Supervisor.Valid() {
-		return m, nil
+	return m.handlePrefixKey(normalizePrefixKey(key))
+}
+
+func normalizePrefixKey(key string) string {
+	// Bubble Tea reports the full chord (e.g. "ctrl+b d") after prefix; use last token.
+	if i := strings.LastIndex(key, " "); i >= 0 {
+		return strings.TrimSpace(key[i+1:])
 	}
-	switch key {
-	case "d":
-		if m.OnExit != nil {
-			m.OnExit(ExitDetach)
-		}
-		return m, tea.Quit
-	case "%":
-		return m.startPaneSplit(protocol.SplitVertical)
-	case "\"":
-		return m.startPaneSplit(protocol.SplitHorizontal)
-	case "o":
-		m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
-		m.Layout.ActivePane = m.ActivePaneID
-		return m, nil
-	case "x":
-		return m.startPaneClose(m.ActivePaneID)
-	case "q":
-		if m.OnExit != nil {
-			m.OnExit(ExitQuit)
-		}
-		return m, tea.Quit
-	case "c":
-		return m.startWindowCreate()
-	case "n":
-		m = m.switchWindowByOffset(1)
-		return m, m.currentWindowResizeCmd()
-	case "p":
-		m = m.switchWindowByOffset(-1)
-		return m, m.currentWindowResizeCmd()
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		m = m.switchWindowByNumber(int(key[0] - '0'))
-		return m, m.currentWindowResizeCmd()
-	case "0":
-		m = m.switchWindowByNumber(10)
-		return m, m.currentWindowResizeCmd()
-	case "?":
-		fmt.Fprintf(os.Stderr, "ui: prefix key %q not implemented yet\n", key)
-		return m, nil
-	}
-	return m, nil
+	return key
 }
 
 // dispatch returns a tea.Cmd that sends cmd to the supervisor when the model
