@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make git zig pkg-config gcc g++ libc6-dev
+
+      - name: Build libghostty
+        run: make libghostty
+
+      - name: Integration tests
+        run: make test-integration
+
+      - name: E2E tests
+        run: make test-e2e
+
+  test-sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sim tests (Docker)
+        run: make test-sim

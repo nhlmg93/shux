@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/wish/v2"
 	wishtea "charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/ssh"
+	"shux/internal/client"
 	"shux/internal/protocol"
 )
 
@@ -38,6 +40,17 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 				case "detach", "detach-client":
 					n := app.DetachAllClients()
 					_, _ = fmt.Fprintf(sess, "detached %d client(s)\n", n)
+					return
+				case "restart", "restart-daemon":
+					if err := app.BeginGracefulRestart(); err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					_, _ = fmt.Fprintln(sess, "restarting shux daemon...")
+					go func() {
+						time.Sleep(50 * time.Millisecond)
+						_ = app.FinishGracefulRestart(context.Background(), client.AttachOptions{})
+					}()
 					return
 				default:
 					wish.Fatalln(sess, "shux: unknown command")

@@ -41,9 +41,17 @@ var detachCmd = &cobra.Command{
 	},
 }
 
+var restartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Gracefully restart the shux daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRestart(cmd.Context())
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
-	rootCmd.AddCommand(attachCmd, detachCmd)
+	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd)
 }
 
 func main() {

@@ -80,6 +80,7 @@ func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lu
 	if err != nil {
 		return err
 	}
+	app.SetRestartShutdown(srv.Shutdown)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()

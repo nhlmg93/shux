@@ -115,6 +115,13 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 				if err := a.Terminal.HandlePaste(msg); err != nil {
 					a.logTerminalErr(err)
 				}
+			case protocol.CommandPaneScroll:
+				event, err := a.Terminal.Scroll(msg.Delta)
+				if err != nil {
+					a.logTerminalErr(err)
+					continue
+				}
+				a.sendScreen(ctx, event)
 			default:
 				panic(fmt.Sprintf("pane: unhandled command type %T", msg))
 			}

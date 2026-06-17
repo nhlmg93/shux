@@ -51,6 +51,8 @@ Implemented bindings:
 | `ctrl+b 0` | Select window 10. |
 | `ctrl+b ?` | List key bindings (stderr). |
 
+Scroll the active pane through scrollback with `Page Up` / `Page Down`, or the mouse wheel over a pane.
+
 Notes:
 
 - `ctrl+c` is not a shux quit key; it is sent to the active pane.

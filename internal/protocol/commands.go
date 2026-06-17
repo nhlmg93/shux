@@ -79,6 +79,17 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPanePaste: data too large")
 		}
 		return nil
+	case CommandPaneScroll:
+		if err := validatePaneTarget("CommandPaneScroll", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
+		}
+		if c.Delta == 0 {
+			return fmt.Errorf("protocol: CommandPaneScroll: zero delta")
+		}
+		if c.Delta < -1000 || c.Delta > 1000 {
+			return fmt.Errorf("protocol: CommandPaneScroll: delta out of range")
+		}
+		return nil
 	case CommandPaneSplit:
 		if !c.Meta.Valid() {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Meta")
@@ -168,6 +179,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPanePaste:
 		return c.SessionID, true
+	case CommandPaneScroll:
+		return c.SessionID, true
 	}
 	return "", false
 }
@@ -184,6 +197,8 @@ func RoutePaneID(cmd Command) (PaneID, bool) {
 	case CommandPaneMouse:
 		return c.PaneID, true
 	case CommandPanePaste:
+		return c.PaneID, true
+	case CommandPaneScroll:
 		return c.PaneID, true
 	}
 	return "", false
@@ -209,6 +224,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandPaneMouse:
 		return c.WindowID, true
 	case CommandPanePaste:
+		return c.WindowID, true
+	case CommandPaneScroll:
 		return c.WindowID, true
 	}
 	return "", false
@@ -385,6 +402,15 @@ type CommandPanePaste struct {
 	WindowID  WindowID
 	PaneID    PaneID
 	Data      []byte
+}
+
+// CommandPaneScroll scrolls the libghostty viewport within scrollback history.
+// Delta is in rows; negative scrolls up, positive scrolls down.
+type CommandPaneScroll struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Delta     int
 }
 
 // CommandPaneSplit requests splitting an explicit target pane. Client-originated

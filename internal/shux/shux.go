@@ -51,6 +51,8 @@ type Shux struct {
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
 
+	restartShutdown func(context.Context) error
+
 	clientsMu sync.Mutex
 	clients   map[protocol.ClientID]*tea.Program
 }
@@ -101,6 +103,10 @@ func (a *Shux) DetachAllClients() int {
 		p.Quit()
 	}
 	return len(programs)
+}
+
+func (a *Shux) SetRestartShutdown(fn func(context.Context) error) {
+	a.restartShutdown = fn
 }
 
 func (a *Shux) Close() error {

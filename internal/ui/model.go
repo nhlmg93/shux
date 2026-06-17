@@ -156,6 +156,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Data:      []byte(msg.Content),
 		})
 	case tea.MouseMsg:
+		if cmd, ok := m.scrollCommand(msg); ok {
+			return m, m.dispatch(cmd)
+		}
 		if cmd, ok := m.mouseCommand(msg); ok {
 			return m, m.dispatch(cmd)
 		}
@@ -282,6 +285,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == m.MapLeader {
 			m.Prefix = true
 			return m, nil
+		}
+		if cmd, ok := m.scrollKeyCommand(msg); ok {
+			return m, m.dispatch(cmd)
 		}
 		return m, m.dispatch(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), keyActionFromPress(msg)))
 	}
@@ -433,6 +439,63 @@ func runeString(r rune) string {
 		return ""
 	}
 	return string(r)
+}
+
+func (m Model) scrollKeyCommand(msg tea.KeyPressMsg) (protocol.CommandPaneScroll, bool) {
+	name := normalizeKeyName(msg.Key().String())
+	var delta int
+	switch name {
+	case "pageup", "pgup":
+		delta = -m.Layout.WindowRows / 2
+	case "pagedown", "pgdown":
+		delta = m.Layout.WindowRows / 2
+	default:
+		return protocol.CommandPaneScroll{}, false
+	}
+	if delta == 0 {
+		delta = -3
+	}
+	if delta > 0 && delta < 3 {
+		delta = 3
+	}
+	if delta < 0 && delta > -3 {
+		delta = -3
+	}
+	return protocol.CommandPaneScroll{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    m.ActivePaneID,
+		Delta:     delta,
+	}, true
+}
+
+func (m Model) scrollCommand(msg tea.MouseMsg) (protocol.CommandPaneScroll, bool) {
+	if _, ok := msg.(tea.MouseWheelMsg); !ok {
+		return protocol.CommandPaneScroll{}, false
+	}
+	mouse := msg.Mouse()
+	delta := 0
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		delta = -3
+	case tea.MouseWheelDown:
+		delta = 3
+	default:
+		return protocol.CommandPaneScroll{}, false
+	}
+	paneID := m.ActivePaneID
+	if pane, ok := m.paneAt(mouse.X, mouse.Y); ok {
+		paneID = pane.PaneID
+	}
+	if !paneID.Valid() {
+		return protocol.CommandPaneScroll{}, false
+	}
+	return protocol.CommandPaneScroll{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    paneID,
+		Delta:     delta,
+	}, true
 }
 
 func (m Model) mouseCommand(msg tea.MouseMsg) (protocol.CommandPaneMouse, bool) {

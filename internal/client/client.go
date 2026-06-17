@@ -198,6 +198,37 @@ func spawnDetached(opts AttachOptions) error {
 	return cmd.Start()
 }
 
+// SpawnAndWaitReady starts a detached daemon child and waits until it accepts SSH.
+func SpawnAndWaitReady(ctx context.Context, addr string, opts AttachOptions, timeout time.Duration) error {
+	if err := spawnDetached(opts); err != nil {
+		return err
+	}
+	return WaitReady(ctx, addr, timeout)
+}
+
+func Restart(ctx context.Context, addr string) error {
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput("restart-daemon")
+	if err != nil {
+		return fmt.Errorf("client: restart: %w: %s", err, out)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
 func WaitReady(ctx context.Context, addr string, timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()

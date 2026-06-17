@@ -333,6 +333,19 @@ func (t *Terminal) HandlePaste(cmd protocol.CommandPanePaste) error {
 	return t.writePTY(cmd.Data)
 }
 
+// Scroll moves the libghostty viewport through scrollback without writing to the PTY.
+func (t *Terminal) Scroll(delta int) (protocol.EventPaneScreenChanged, error) {
+	if err := t.requireInit(); err != nil {
+		return protocol.EventPaneScreenChanged{}, err
+	}
+	if delta == 0 {
+		return t.ScreenChanged()
+	}
+	t.VT.ScrollViewportDelta(delta)
+	t.revision++
+	return t.ScreenChanged()
+}
+
 func (t *Terminal) writePTY(data []byte) error {
 	if len(data) == 0 {
 		return nil
