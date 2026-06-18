@@ -283,12 +283,12 @@ type EventLayoutPane struct {
 // EventWindowLayoutChanged is emitted when a window’s cell geometry changes
 // (e.g. after resize or split). Hub fanout and publishers are wired separately.
 type EventWindowLayoutChanged struct {
-	SessionID SessionID
-	WindowID  WindowID
-	Revision  uint64
-	Cols      int
-	Rows      int
-	Panes     []EventLayoutPane
+	SessionID    SessionID
+	WindowID     WindowID
+	Revision     uint64
+	Cols         int
+	Rows         int
+	Panes        []EventLayoutPane
 	ZoomedPaneID PaneID
 	SavedPanes   []EventLayoutPane
 }
