@@ -22,15 +22,40 @@ func (a *Shux) checkpoint() {
 	if a.getState() != stateReady {
 		return
 	}
-	sessionID := a.DefaultSessionID
-	windows := a.cache.WindowIDs(sessionID)
-	layouts := make(map[string]persist.LayoutSnapshot, len(windows))
-	for _, wid := range windows {
-		if lay, ok := a.cache.LayoutSnapshot(sessionID, wid); ok {
-			layouts[string(wid)] = persist.LayoutFromEvent(lay)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	sessions, err := a.ListSessions(ctx)
+	if err != nil {
+		a.Logger.Printf("shux: checkpoint list sessions failed: %v", err)
+		return
+	}
+	snapshots := make([]persist.SessionManifest, 0, len(sessions))
+	for _, session := range sessions {
+		windows := a.cache.WindowIDs(session.SessionID)
+		if len(windows) == 0 {
+			continue
+		}
+		layouts := make(map[string]persist.LayoutSnapshot, len(windows))
+		for _, wid := range windows {
+			if lay, ok := a.cache.LayoutSnapshot(session.SessionID, wid); ok {
+				layouts[string(wid)] = persist.LayoutFromEvent(lay)
+			}
+		}
+		snapshots = append(snapshots, persist.BuildSessionManifest(session.Name, a.Config.StateDir, windows, layouts))
+	}
+	if len(snapshots) == 0 {
+		return
+	}
+	defaultName := a.DefaultSession
+	if defaultName == "" {
+		if name, ok := a.cache.SessionName(a.DefaultSessionID); ok {
+			defaultName = name
 		}
 	}
-	m := persist.BuildManifest(sessionID, a.Config.ShellPath, a.Config.StateDir, windows, layouts)
+	if defaultName == "" {
+		defaultName = snapshots[0].Name
+	}
+	m := persist.BuildManifestForSessions(a.Config.ShellPath, defaultName, snapshots)
 	if err := persist.SaveManifest(a.Config.StateDir, m); err != nil {
 		a.Logger.Printf("shux: checkpoint failed: %v", err)
 		return
@@ -49,7 +74,8 @@ func (a *Shux) bootstrapFresh(ctx context.Context) error {
 	}
 	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
 
-	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{})
+	const defaultSessionName = "main"
+	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{Name: defaultSessionName})
 	if err != nil {
 		return err
 	}
@@ -63,13 +89,15 @@ func (a *Shux) bootstrapFresh(ctx context.Context) error {
 	}
 
 	a.DefaultSessionID = session.SessionID
+	a.DefaultSession = session.Name
 	a.DefaultWindowID = window.WindowID
 	a.DefaultPaneID = pane.PaneID
 	a.setState(stateReady)
 	a.Logger.Info("shux: bootstrap default session ready")
 	if a.Autocmds != nil {
 		a.Autocmds.Emit(ctx, EventDaemonStarted, map[string]any{
-			"session_id": string(a.DefaultSessionID),
+			"session_id":   string(a.DefaultSessionID),
+			"session_name": a.DefaultSession,
 		})
 	}
 	return nil
@@ -82,36 +110,46 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 	}
 	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
 
-	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{})
-	if err != nil {
-		return fmt.Errorf("restore session: %w", err)
+	sessionWindows := make(map[string]protocol.WindowID, len(m.Sessions))
+	sessionPanes := make(map[string]protocol.PaneID, len(m.Sessions))
+	defaultName := m.DefaultSessionName
+	if defaultName == "" {
+		defaultName = m.Sessions[0].Name
 	}
-
-	var firstWindow protocol.WindowID
-	var firstPane protocol.PaneID
-	for i, wid := range m.WindowIDs {
-		layout, ok := m.Layouts[string(wid)]
-		if !ok || len(layout.Panes) == 0 {
-			return fmt.Errorf("restore window %s: missing layout", wid)
-		}
-		windowID, paneID, err := a.restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
+	for _, saved := range m.Sessions {
+		session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{Name: saved.Name})
 		if err != nil {
-			return fmt.Errorf("restore window %s: %w", wid, err)
+			return fmt.Errorf("restore session %q: %w", saved.Name, err)
 		}
-		if i == 0 {
-			firstWindow = windowID
-			firstPane = paneID
+		for _, wid := range saved.WindowIDs {
+			layout, ok := saved.Layouts[string(wid)]
+			if !ok || len(layout.Panes) == 0 {
+				return fmt.Errorf("restore session %q window %s: missing layout", saved.Name, wid)
+			}
+			windowID, paneID, err := a.restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
+			if err != nil {
+				return fmt.Errorf("restore session %q window %s: %w", saved.Name, wid, err)
+			}
+			if _, ok := sessionWindows[saved.Name]; !ok {
+				sessionWindows[saved.Name] = windowID
+				sessionPanes[saved.Name] = paneID
+			}
 		}
 	}
-
+	session, err := a.ResolveSession(ctx, defaultName)
+	if err != nil {
+		return err
+	}
 	a.DefaultSessionID = session.SessionID
-	a.DefaultWindowID = firstWindow
-	a.DefaultPaneID = firstPane
+	a.DefaultSession = session.Name
+	a.DefaultWindowID = sessionWindows[session.Name]
+	a.DefaultPaneID = sessionPanes[session.Name]
 	a.setState(stateReady)
 	a.Logger.Info("shux: restored session from manifest")
 	if a.Autocmds != nil {
 		a.Autocmds.Emit(ctx, EventDaemonStarted, map[string]any{
-			"session_id": string(a.DefaultSessionID),
+			"session_id":   string(a.DefaultSessionID),
+			"session_name": a.DefaultSession,
 		})
 	}
 	return nil

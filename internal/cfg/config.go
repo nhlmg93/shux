@@ -8,6 +8,7 @@ const (
 	DefaultBindAddr               = "127.0.0.1:23234"
 	DefaultMapLeader              = "ctrl+b"
 	DefaultScrollback             = 10_000
+	DefaultMaxSessions            = 8
 	DefaultJournalMaxMB           = 64
 	DefaultJournalReplayDelay     = 200 * time.Millisecond
 	DefaultPaneQuickSelectTimeout = 2 * time.Second
@@ -21,6 +22,7 @@ type Config struct {
 	BindAddr               string
 	MapLeader              string
 	Scrollback             uint
+	MaxSessions            uint
 	JournalMaxMB           uint
 	JournalReplayDelay     time.Duration
 	PaneQuickSelectTimeout time.Duration
@@ -35,6 +37,7 @@ func DefaultConfig() Config {
 		BindAddr:               DefaultBindAddr,
 		MapLeader:              DefaultMapLeader,
 		Scrollback:             DefaultScrollback,
+		MaxSessions:            DefaultMaxSessions,
 		JournalMaxMB:           DefaultJournalMaxMB,
 		JournalReplayDelay:     DefaultJournalReplayDelay,
 		PaneQuickSelectTimeout: DefaultPaneQuickSelectTimeout,
@@ -63,6 +66,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Scrollback == 0 {
 		c.Scrollback = DefaultScrollback
+	}
+	if c.MaxSessions == 0 {
+		c.MaxSessions = DefaultMaxSessions
 	}
 	if c.JournalMaxMB == 0 {
 		c.JournalMaxMB = DefaultJournalMaxMB

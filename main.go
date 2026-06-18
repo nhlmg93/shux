@@ -17,6 +17,8 @@ var listWindowsJSON bool
 var listPanesJSON bool
 var displayMessageJSON bool
 var controlMode bool
+var attachTarget string
+var sessionName string
 
 var rootCmd = &cobra.Command{
 	Use:     "shux",
@@ -33,6 +35,22 @@ var attachCmd = &cobra.Command{
 	Short:   "Attach to the shux session",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runAttach(cmd.Context())
+	},
+}
+
+var newSessionCmd = &cobra.Command{
+	Use:   "new-session",
+	Short: "Create a new named session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNewSession(cmd.Context())
+	},
+}
+
+var listSessionsCmd = &cobra.Command{
+	Use:   "list-sessions",
+	Short: "List daemon session names",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runListSessions(cmd.Context())
 	},
 }
 
@@ -84,7 +102,10 @@ func init() {
 	listPanesCmd.Flags().BoolVar(&listPanesJSON, "json", false, "print machine-readable JSON")
 	displayMessageCmd.Flags().BoolVar(&displayMessageJSON, "json", false, "print machine-readable JSON")
 	attachCmd.Flags().BoolVarP(&controlMode, "control", "C", false, "attach in experimental line-oriented control mode")
-	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, listWindowsCmd, listPanesCmd, displayMessageCmd)
+	attachCmd.Flags().StringVarP(&attachTarget, "target", "t", "", "attach to named session")
+	newSessionCmd.Flags().StringVarP(&sessionName, "session", "s", "", "session name")
+	_ = newSessionCmd.MarkFlagRequired("session")
+	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, newSessionCmd, listSessionsCmd, listWindowsCmd, listPanesCmd, displayMessageCmd)
 }
 
 func main() {
@@ -139,6 +160,29 @@ func runRestart(ctx context.Context) error {
 	return client.Restart(ctx, addr)
 }
 
+func runNewSession(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.NewSession(ctx, addr, attachOptions(), sessionName)
+}
+
+func runListSessions(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	sessions, err := client.ListSessions(ctx, addr, attachOptions())
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		fmt.Println(session)
+	}
+	return nil
+}
+
 func runListWindows(ctx context.Context, jsonOutput bool) error {
 	addr, err := bindAddr()
 	if err != nil {
@@ -164,7 +208,7 @@ func runDisplayMessage(ctx context.Context, format string, jsonOutput bool) erro
 }
 
 func attachOptions() client.AttachOptions {
-	return client.AttachOptions{Bash: bashShell, Control: controlMode}
+	return client.AttachOptions{Bash: bashShell, Control: controlMode, TargetSession: attachTarget}
 }
 
 func isInteractiveTerminal() bool {

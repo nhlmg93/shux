@@ -18,6 +18,9 @@ type Actor struct {
 	Policy cfg.Config
 	seq    uint64
 	hub    actor.EventRef
+	names  map[string]protocol.SessionID
+	ids    map[protocol.SessionID]string
+	order  []string
 }
 
 func NewActor(hub actor.EventRef) *Actor {
@@ -36,7 +39,53 @@ func NewActorWithPolicy(hub actor.EventRef, policy cfg.Config) *Actor {
 		Sessions: actor.NewLifecycle[protocol.SessionID, protocol.Command]("supervisor", "session", protocol.SessionID.Valid),
 		Policy:   policy,
 		hub:      hub,
+		names:    make(map[string]protocol.SessionID),
+		ids:      make(map[protocol.SessionID]string),
 	}
+}
+
+func (a *Actor) listSessionsSnapshot() []protocol.SessionDescriptor {
+	out := make([]protocol.SessionDescriptor, 0, len(a.order))
+	for _, name := range a.order {
+		sid, ok := a.names[name]
+		if !ok {
+			continue
+		}
+		out = append(out, protocol.SessionDescriptor{Name: name, SessionID: sid})
+	}
+	return out
+}
+
+func (a *Actor) autoSessionName() string {
+	for i := 1; ; i++ {
+		name := "session-" + strconv.Itoa(i)
+		if _, exists := a.names[name]; !exists {
+			return name
+		}
+	}
+}
+
+func (a *Actor) createSession(ctx context.Context, requestedName string) (protocol.SessionDescriptor, error) {
+	name := requestedName
+	if name == "" {
+		name = a.autoSessionName()
+	}
+	if _, exists := a.names[name]; exists {
+		return protocol.SessionDescriptor{}, fmt.Errorf("supervisor: session %q already exists", name)
+	}
+	if uint(len(a.names)) >= a.Policy.MaxSessions {
+		return protocol.SessionDescriptor{}, fmt.Errorf("supervisor: max sessions reached (%d)", a.Policy.MaxSessions)
+	}
+	a.seq++
+	sid := protocol.SessionID("s-" + strconv.FormatUint(a.seq, 10))
+	a.Init(sid, session.StartWithPolicy(ctx, a.hub, sid, a.Policy))
+	a.names[name] = sid
+	a.ids[sid] = name
+	a.order = append(a.order, name)
+	if a.hub != nil {
+		_ = a.hub.Send(ctx, protocol.EventSessionCreated{SessionID: sid, Name: name})
+	}
+	return protocol.SessionDescriptor{Name: name, SessionID: sid}, nil
 }
 
 func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
@@ -48,16 +97,21 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			if err := protocol.ValidateCommand(msg); err != nil {
 				panic(err)
 			}
-			switch msg.(type) {
+			switch msg := msg.(type) {
 			case protocol.CommandNoop:
 				continue
 			case protocol.CommandCreateSession:
-				a.seq++
-				sid := protocol.SessionID("s-" + strconv.FormatUint(a.seq, 10))
-				a.Init(sid, session.StartWithPolicy(ctx, a.hub, sid, a.Policy))
-				if a.hub != nil {
-					_ = a.hub.Send(ctx, protocol.EventSessionCreated{SessionID: sid})
+				created, err := a.createSession(ctx, msg.Name)
+				if msg.Reply != nil {
+					msg.Reply <- protocol.CommandCreateSessionResult{Session: created, Err: err}
+					continue
 				}
+				if err != nil {
+					panic(err)
+				}
+				continue
+			case protocol.CommandListSessions:
+				msg.Reply <- a.listSessionsSnapshot()
 				continue
 			}
 			if sid, ok := protocol.RouteSessionID(msg); ok {

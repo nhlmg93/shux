@@ -15,6 +15,7 @@ type (
 	screensByWindow  map[protocol.WindowID]paneScreenSnapshots
 	screensBySession map[protocol.SessionID]screensByWindow
 	windowsBySession map[protocol.SessionID][]protocol.WindowID
+	namesBySession   map[protocol.SessionID]string
 )
 
 // stateCache subscribes to hub events and holds the latest layout and screen
@@ -25,6 +26,7 @@ type stateCache struct {
 	layouts layoutsBySession
 	screens screensBySession
 	windows windowsBySession
+	names   namesBySession
 }
 
 func newStateCache() *stateCache {
@@ -32,6 +34,7 @@ func newStateCache() *stateCache {
 		layouts: make(layoutsBySession),
 		screens: make(screensBySession),
 		windows: make(windowsBySession),
+		names:   make(namesBySession),
 	}
 }
 
@@ -39,6 +42,8 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	switch event := e.(type) {
+	case protocol.EventSessionCreated:
+		c.names[event.SessionID] = event.Name
 	case protocol.EventSessionWindowsChanged:
 		c.windows[event.SessionID] = append([]protocol.WindowID(nil), event.Windows...)
 	case protocol.EventWindowClosed:
@@ -115,4 +120,11 @@ func (c *stateCache) ScreenSnapshots(sessionID protocol.SessionID, windowID prot
 		snapshots = append(snapshots, screen)
 	}
 	return snapshots
+}
+
+func (c *stateCache) SessionName(sessionID protocol.SessionID) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	name, ok := c.names[sessionID]
+	return name, ok
 }

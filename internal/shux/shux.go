@@ -33,6 +33,7 @@ type Shux struct {
 	Config Config
 
 	DefaultSessionID protocol.SessionID
+	DefaultSession   string
 	DefaultWindowID  protocol.WindowID
 	DefaultPaneID    protocol.PaneID
 
@@ -173,8 +174,15 @@ func (a *Shux) AttachClient(ctx context.Context, clientID protocol.ClientID, opt
 }
 
 func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID, opts ...tea.ProgramOption) (*tea.Program, func(), error) {
+	return a.NewClientProgramForSession(ctx, clientID, a.DefaultSessionID, opts...)
+}
+
+func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol.ClientID, sessionID protocol.SessionID, opts ...tea.ProgramOption) (*tea.Program, func(), error) {
 	if clientID == "" {
 		return nil, nil, fmt.Errorf("shux: empty client id")
+	}
+	if !sessionID.Valid() {
+		return nil, nil, fmt.Errorf("shux: invalid session id")
 	}
 	switch a.getState() {
 	case stateClosed:
@@ -195,11 +203,21 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		exitIntent = intent
 		exitIntentMu.Unlock()
 	}
+	windowIDs := a.cache.WindowIDs(sessionID)
+	if len(windowIDs) == 0 {
+		return nil, nil, fmt.Errorf("shux: session %q has no windows", sessionID)
+	}
+	windowID := windowIDs[0]
+	layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
+	if !ok || len(layout.Panes) == 0 {
+		return nil, nil, fmt.Errorf("shux: session %q has no panes", sessionID)
+	}
+	paneID := layout.Panes[0].PaneID
 	model := ui.NewModel(ui.ModelConfig{
 		ClientID:               clientID,
-		SessionID:              a.DefaultSessionID,
-		WindowID:               a.DefaultWindowID,
-		PaneID:                 a.DefaultPaneID,
+		SessionID:              sessionID,
+		WindowID:               windowID,
+		PaneID:                 paneID,
 		Supervisor:             a.supervisor,
 		Ctx:                    ctx,
 		OnExit:                 setExitIntent,
@@ -208,16 +226,12 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		Lua:                    a.luaRuntime,
 		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
 	})
-	windowIDs := a.cache.WindowIDs(a.DefaultSessionID)
-	if len(windowIDs) == 0 {
-		windowIDs = []protocol.WindowID{a.DefaultWindowID}
-	}
 	model = model.WithWindowIDs(windowIDs)
 	for _, windowID := range windowIDs {
-		if layout, ok := a.cache.LayoutSnapshot(a.DefaultSessionID, windowID); ok {
+		if layout, ok := a.cache.LayoutSnapshot(sessionID, windowID); ok {
 			model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
 		}
-		for _, screen := range a.cache.ScreenSnapshots(a.DefaultSessionID, windowID) {
+		for _, screen := range a.cache.ScreenSnapshots(sessionID, windowID) {
 			model = model.WithPaneScreen(screen)
 		}
 	}
