@@ -88,6 +88,8 @@ type ModelConfig struct {
 	PaneQuickSelectTimeout time.Duration
 	UI                     cfg.UIConfig
 	TreeSnapshot           TreeSnapshotProvider
+	RunCommand             func(ctx context.Context, argv []string) error
+	LoadSessionSnapshot    func(sessionID protocol.SessionID) tea.Msg
 }
 
 type Model struct {
@@ -120,6 +122,8 @@ type Model struct {
 	PaneQuickSelectEnabled bool
 	PaneQuickSelectTimeout time.Duration
 	UI                     cfg.UIConfig
+	RunCommand             func(ctx context.Context, argv []string) error
+	LoadSessionSnapshot    func(sessionID protocol.SessionID) tea.Msg
 	paneQuickSelectNonce   uint64
 	CopyMode               bool
 	CopyCursor             copyPoint
@@ -178,6 +182,8 @@ func NewModel(mc ModelConfig) Model {
 		Lua:                    mc.Lua,
 		PaneQuickSelectTimeout: quickSelectTimeout,
 		UI:                     ui,
+		RunCommand:             mc.RunCommand,
+		LoadSessionSnapshot:    mc.LoadSessionSnapshot,
 		Search:                 newSearchState(),
 		TreeSnapshot:           mc.TreeSnapshot,
 	}
@@ -196,7 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.KeyReleaseMsg:
-		if m.RenameMode != renameNone || m.PaneQuickSelectEnabled || m.TreeView.Open {
+		if m.RenameMode != renameNone || m.PaneQuickSelectEnabled || m.TreeView.Open || m.CommandOpen {
 			return m, nil
 		}
 		if !m.Prefix {
@@ -248,6 +254,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildTreeItems()
 		m.TreeView.Cursor = m.treeCursorForCurrent()
+	case KeymapsUpdatedMsg:
+		if msg.Keymaps != nil {
+			m.Keymaps = msg.Keymaps
+		}
+	case ClientUIMsg:
+		switch msg.Action {
+		case ClientUIActionCommandPrompt:
+			return m.startCommandPrompt(), nil
+		case ClientUIActionChooseTree:
+			switch msg.TreeMode {
+			case ClientUITreeSessionsCollapsed:
+				return m.startTreeView(treeViewSessionsCollapsed)
+			case ClientUITreeWindowsCollapsed:
+				return m.startTreeView(treeViewWindowsCollapsed)
+			default:
+				return m.startTreeView(treeViewDefault)
+			}
+		case ClientUIActionSwitchSession:
+			if msg.SessionID.Valid() && m.LoadSessionSnapshot != nil {
+				return m, func() tea.Msg { return m.LoadSessionSnapshot(msg.SessionID) }
+			}
+		}
+	case SessionSnapshotMsg:
+		return m.applySessionSnapshot(msg), nil
 	}
 	return m, nil
 }

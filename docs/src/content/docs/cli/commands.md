@@ -130,6 +130,26 @@ These mirror common `tmux` CLI operations. Most accept `-t TARGET` where `TARGET
 | `rename-window [-t TARGET] NAME` | Rename window |
 | `rename-pane [-t TARGET] NAME` | Rename pane |
 | `list-commands` | List remote commands |
+| `kill-server` | Shut down the daemon |
+| `source-file PATH` | Reload Lua configuration |
+| `list-clients` | List attached clients |
+| `switch-client -t SESSION` | Switch attached client to another session |
+| `show-options [OPTION]` | Show daemon options |
+| `set-option OPTION VALUE` | Set a runtime option (`statusline` today) |
+| `show-environment [SESSION]` | Show session environment variables |
+| `set-environment [-t SESSION] VAR VALUE` | Set session environment |
+| `list-keys` | List prefix key bindings |
+| `bind-key KEY ACTION` | Bind a prefix key at runtime |
+| `list-buffers` | List paste buffers |
+| `paste-buffer [-t TARGET] [-b NAME]` | Paste buffer into pane |
+| `resize-pane [-t TARGET] [-L\|-R\|-U\|-D] [N]` | Resize pane edges |
+| `swap-pane [-t TARGET] [-L\|-R\|-U\|-D]` | Swap with neighbor pane |
+| `break-pane [-t TARGET]` | Break pane into new window |
+| `join-pane -t DEST [-s SOURCE]` | Move pane into another window |
+| `select-layout [-t TARGET] PRESET` | Apply layout (`even-horizontal`, `even-vertical`, `main-horizontal`) |
+| `choose-tree [-s\|-w]` | Open tree picker on attached client |
+| `command-prompt` | Open `:` command line on attached client |
+| `display-menu` | Placeholder (use tree or prefix bindings) |
 
 ```bash
 shux has-session -t main

@@ -39,12 +39,12 @@ const (
 	ActionToggleSyncPanes BuiltinKeyAction = "toggle_sync_panes"
 	ActionChooseTreeSession BuiltinKeyAction = "choose_tree_session"
 	ActionChooseTreeWindow  BuiltinKeyAction = "choose_tree_window"
-	ActionCommandPrompt  BuiltinKeyAction = "command_prompt"
-	ActionListKeymaps     BuiltinKeyAction = "list_keymaps"
-	ActionRenameWindow    BuiltinKeyAction = "rename_window"
-	ActionRenamePane      BuiltinKeyAction = "rename_pane"
-	ActionCopyModeToggle  BuiltinKeyAction = "copy_mode_toggle"
-	ActionPasteRegister   BuiltinKeyAction = "paste_register"
+	ActionCommandPrompt     BuiltinKeyAction = "command_prompt"
+	ActionListKeymaps       BuiltinKeyAction = "list_keymaps"
+	ActionRenameWindow      BuiltinKeyAction = "rename_window"
+	ActionRenamePane        BuiltinKeyAction = "rename_pane"
+	ActionCopyModeToggle    BuiltinKeyAction = "copy_mode_toggle"
+	ActionPasteRegister     BuiltinKeyAction = "paste_register"
 
 	ActionCopyLeft          BuiltinKeyAction = "copy_left"
 	ActionCopyDown          BuiltinKeyAction = "copy_down"
@@ -168,6 +168,7 @@ func DefaultKeymaps() *Keymaps {
 	setPrefix("8", ActionSelectWindow8, "Select window 8")
 	setPrefix("9", ActionSelectWindow9, "Select window 9")
 	setPrefix("0", ActionSelectWindow10, "Select window 10")
+	setPrefix("*", ActionToggleSyncPanes, "Toggle synchronize panes")
 	setPrefix("s", ActionChooseTreeSession, "Tree view (sessions collapsed)")
 	setPrefix("w", ActionChooseTreeWindow, "Tree view (windows collapsed)")
 	setPrefix(",", ActionRenameWindow, "Rename active window")

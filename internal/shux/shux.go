@@ -3,6 +3,7 @@ package shux
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -57,6 +58,9 @@ type Shux struct {
 
 	clientsMu sync.Mutex
 	clients   map[protocol.ClientID]*tea.Program
+	clientReg *clientRegistry
+	buffers   *bufferStore
+	sessionEnv *sessionEnvStore
 
 	checkpoints *checkpointWatcher
 }
@@ -72,10 +76,13 @@ func NewShuxWithConfig(config Config) (*Shux, error) {
 	}
 
 	return &Shux{
-		Logger:   logger,
-		Config:   config.WithDefaults(),
-		shutdown: make(chan struct{}),
-		clients:  make(map[protocol.ClientID]*tea.Program),
+		Logger:     logger,
+		Config:     config.WithDefaults(),
+		shutdown:   make(chan struct{}),
+		clients:    make(map[protocol.ClientID]*tea.Program),
+		clientReg:  newClientRegistry(),
+		buffers:    newBufferStore(),
+		sessionEnv: newSessionEnvStore(),
 	}, nil
 }
 
@@ -250,6 +257,13 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
 		UI:                     a.Config.UI,
 		TreeSnapshot:           a.uiTreeSnapshot,
+		RunCommand: func(runCtx context.Context, argv []string) error {
+			_, err := a.HandleRemoteCommand(runCtx, argv, io.Discard)
+			return err
+		},
+		LoadSessionSnapshot: func(sid protocol.SessionID) tea.Msg {
+			return a.sessionSnapshotMsg(sid)
+		},
 	})
 	model = model.WithWindowIDs(windowIDs)
 	for wid, name := range a.cache.WindowNames(sessionID) {
@@ -274,6 +288,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		return nil, nil, fmt.Errorf("shux: duplicate client id %q", clientID)
 	}
 	a.clients[clientID] = p
+	a.clientReg.Register(clientID, sessionID)
 	a.clientsMu.Unlock()
 
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
@@ -293,6 +308,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 
 		a.clientsMu.Lock()
 		delete(a.clients, clientID)
+		a.clientReg.Unregister(clientID)
 		remaining := len(a.clients)
 		a.clientsMu.Unlock()
 

@@ -19,6 +19,12 @@ type PaneInfo struct {
 	Rows        int       `json:"rows"`
 }
 
+type ClientInfo struct {
+	Index     int       `json:"index"`
+	ClientID  ClientID  `json:"client_id"`
+	SessionID SessionID `json:"session_id"`
+}
+
 type DisplayMessageContext struct {
 	SessionID   SessionID `json:"session_id"`
 	WindowID    WindowID  `json:"window_id"`

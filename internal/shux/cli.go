@@ -65,7 +65,7 @@ func (a *Shux) HandleRemoteCommand(ctx context.Context, command []string, out io
 	case "list-commands", "lscm":
 		return true, a.cliListCommands(out)
 	default:
-		return false, nil
+		return a.handleExtendedCLI(ctx, command[0], command[1:], out)
 	}
 }
 
@@ -514,6 +514,11 @@ func (a *Shux) cliListCommands(out io.Writer) error {
 		"split-window", "kill-pane", "select-pane", "list-panes",
 		"send-keys", "capture-pane", "display-message",
 		"rename-window", "rename-pane", "list-commands",
+		"kill-server", "source-file", "list-clients", "switch-client",
+		"show-options", "set-option", "show-environment", "set-environment",
+		"list-keys", "bind-key", "list-buffers", "set-buffer", "paste-buffer",
+		"resize-pane", "swap-pane", "move-pane", "break-pane", "join-pane",
+		"select-layout", "choose-tree", "command-prompt", "display-menu",
 		"query", "control-mode", "restart", "restart-daemon",
 	} {
 		if _, err := fmt.Fprintln(out, cmd); err != nil {

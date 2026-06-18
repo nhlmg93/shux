@@ -194,6 +194,165 @@ var listCommandsCmd = &cobra.Command{
 	},
 }
 
+var killServerCmd = &cobra.Command{
+	Use:   "kill-server",
+	Short: "Shut down the shux daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), "kill-server")
+	},
+}
+
+var sourceFileCmd = &cobra.Command{
+	Use:   "source-file PATH",
+	Short: "Reload shux configuration from a Lua file",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"source-file"}, args...)...)
+	},
+}
+
+var listClientsCmd = &cobra.Command{
+	Use:   "list-clients",
+	Short: "List attached clients",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), "list-clients")
+	},
+}
+
+var switchClientCmd = &cobra.Command{
+	Use:   "switch-client",
+	Short: "Switch the attached client to another session",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"switch-client", "-t", cliTarget}, args...)...)
+	},
+}
+
+var showOptionsCmd = &cobra.Command{
+	Use:   "show-options [option]",
+	Short: "Show daemon options",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"show-options"}, args...)...)
+	},
+}
+
+var setOptionCmd = &cobra.Command{
+	Use:   "set-option OPTION VALUE",
+	Short: "Set a runtime option",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"set-option"}, args...)...)
+	},
+}
+
+var showEnvironmentCmd = &cobra.Command{
+	Use:   "show-environment [session]",
+	Short: "Show session environment variables",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"show-environment"}, args...)...)
+	},
+}
+
+var setEnvironmentCmd = &cobra.Command{
+	Use:   "set-environment [flags] VAR VALUE",
+	Short: "Set a session environment variable",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		argv := []string{"set-environment"}
+		if cliTarget != "" {
+			argv = append(argv, "-t", cliTarget)
+		}
+		return runRemoteCLI(cmd.Context(), append(argv, args...)...)
+	},
+}
+
+var listKeysCmd = &cobra.Command{
+	Use:   "list-keys",
+	Short: "List prefix key bindings",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), "list-keys")
+	},
+}
+
+var bindKeyCmd = &cobra.Command{
+	Use:   "bind-key KEY ACTION",
+	Short: "Bind a prefix key to an action",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"bind-key"}, args...)...)
+	},
+}
+
+var listBuffersCmd = &cobra.Command{
+	Use:   "list-buffers",
+	Short: "List paste buffers",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), "list-buffers")
+	},
+}
+
+var pasteBufferCmd = &cobra.Command{
+	Use:   "paste-buffer",
+	Short: "Paste a buffer into a pane",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		argv := []string{"paste-buffer"}
+		if cliTarget != "" {
+			argv = append(argv, "-t", cliTarget)
+		}
+		return runRemoteCLI(cmd.Context(), append(argv, args...)...)
+	},
+}
+
+var resizePaneCmd = &cobra.Command{
+	Use:   "resize-pane [flags]",
+	Short: "Resize the active pane",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		argv := []string{"resize-pane"}
+		if cliTarget != "" {
+			argv = append(argv, "-t", cliTarget)
+		}
+		return runRemoteCLI(cmd.Context(), append(argv, args...)...)
+	},
+}
+
+var swapPaneCmd = &cobra.Command{
+	Use:   "swap-pane [direction]",
+	Short: "Swap the active pane with a neighbor",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		argv := []string{"swap-pane"}
+		if cliTarget != "" {
+			argv = append(argv, "-t", cliTarget)
+		}
+		return runRemoteCLI(cmd.Context(), append(argv, args...)...)
+	},
+}
+
+var selectLayoutCmd = &cobra.Command{
+	Use:   "select-layout [preset]",
+	Short: "Apply a layout preset to the active window",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		argv := []string{"select-layout"}
+		if cliTarget != "" {
+			argv = append(argv, "-t", cliTarget)
+		}
+		return runRemoteCLI(cmd.Context(), append(argv, args...)...)
+	},
+}
+
+var chooseTreeCmd = &cobra.Command{
+	Use:   "choose-tree",
+	Short: "Open the session/window/pane tree on an attached client",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"choose-tree"}, args...)...)
+	},
+}
+
+var commandPromptCmd = &cobra.Command{
+	Use:   "command-prompt",
+	Short: "Open the command prompt on an attached client",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRemoteCLI(cmd.Context(), append([]string{"command-prompt"}, args...)...)
+	},
+}
+
 // ps lists live daemon state (running sessions / panes).
 var psCmd = &cobra.Command{
 	Use:   "ps",
@@ -305,10 +464,21 @@ func init() {
 	rmCmd.Flags().BoolVar(&rmJSON, "json", false, "print machine-readable JSON")
 	rmCmd.Flags().BoolVar(&rmForce, "force", false, "remove store even when the daemon is running")
 	checkpointCmd.Flags().BoolVar(&checkpointJSON, "json", false, "print machine-readable JSON")
+	switchClientCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "session to attach client to")
+	_ = switchClientCmd.MarkFlagRequired("target")
+	setEnvironmentCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "session target")
+	for _, c := range []*cobra.Command{pasteBufferCmd, resizePaneCmd, swapPaneCmd, selectLayoutCmd} {
+		c.Flags().StringVarP(&cliTarget, "target", "t", "", "target session:window.pane")
+	}
 	rootCmd.AddCommand(
 		attachCmd, detachCmd, restartCmd, newSessionCmd, killSessionCmd, hasSessionCmd,
 		newWindowCmd, killWindowCmd, killPaneCmd, selectWindowCmd, splitWindowCmd,
 		sendKeysCmd, capturePaneCmd, listCommandsCmd,
+		killServerCmd, sourceFileCmd, listClientsCmd, switchClientCmd,
+		showOptionsCmd, setOptionCmd, showEnvironmentCmd, setEnvironmentCmd,
+		listKeysCmd, bindKeyCmd, listBuffersCmd, pasteBufferCmd,
+		resizePaneCmd, swapPaneCmd, selectLayoutCmd,
+		chooseTreeCmd, commandPromptCmd,
 		psCmd, lsCmd, pruneCmd, rmCmd, checkpointCmd,
 		listSessionsCmd, listWindowsCmd, listPanesCmd,
 		displayMessageCmd, renameWindowCmd, renamePaneCmd,
@@ -546,6 +716,19 @@ func runListCommands(ctx context.Context) error {
 		return err
 	}
 	return client.ListCommands(ctx, addr)
+}
+
+func runRemoteCLI(ctx context.Context, argv ...string) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	out, err := client.RunControlCommand(ctx, addr, argv...)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
 }
 
 func attachOptions() client.AttachOptions {

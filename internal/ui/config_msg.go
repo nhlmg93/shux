@@ -6,3 +6,8 @@ import "shux/internal/cfg"
 type ConfigUpdatedMsg struct {
 	UI cfg.UIConfig
 }
+
+// KeymapsUpdatedMsg pushes runtime keymap changes to attached clients.
+type KeymapsUpdatedMsg struct {
+	Keymaps *cfg.Keymaps
+}
