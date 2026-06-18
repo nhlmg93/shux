@@ -20,22 +20,19 @@ type Actor struct {
 	WindowID      protocol.WindowID
 	WindowOrdinal int
 	Policy        cfg.Config
-	Layout    Layout
-	paneIDs   []protocol.PaneID
-	hub       actor.EventRef
-	seq       uint64
-	revision  uint64
+	SessionRef    actor.Ref[protocol.Command]
+	Layout        Layout
+	paneIDs       []protocol.PaneID
+	hub           actor.EventRef
+	seq           uint64
+	revision      uint64
 }
 
 func NewActor(hub actor.EventRef) *Actor {
-	return NewActorWithPolicy(hub, "", "", 1, cfg.DefaultConfig())
+	return NewActorWithPolicy(actor.Ref[protocol.Command]{}, hub, "", "", 1, cfg.DefaultConfig())
 }
 
-func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, windowID, 1, cfg.Config{ShellPath: shellPath}.WithDefaults())
-}
-
-func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) *Actor {
+func NewActorWithPolicy(sessionRef actor.Ref[protocol.Command], hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("window: NewActor: invalid hub ref")
 	}
@@ -52,6 +49,7 @@ func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, window
 		WindowID:      windowID,
 		WindowOrdinal: windowOrdinal,
 		Policy:        policy,
+		SessionRef:    sessionRef,
 		Layout:        NewLayout(80, 24),
 		hub:           hub,
 	}
@@ -161,6 +159,12 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 	a.revision++
 	a.emit(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
 	if lastPane {
+		if err := a.SessionRef.Send(ctx, protocol.CommandWindowClosed{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+		}); err != nil && ctx.Err() == nil {
+			panic(fmt.Sprintf("window: notify session close %s: %v", m.WindowID, err))
+		}
 		a.emit(ctx, protocol.EventWindowClosed{SessionID: m.SessionID, WindowID: m.WindowID})
 		return
 	}
@@ -277,10 +281,6 @@ func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Co
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
 }
 
-func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, windowID, 1, cfg.Config{ShellPath: shellPath}.WithDefaults())
-}
-
-func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, windowID, windowOrdinal, policy).Run)
+func StartWithPolicy(ctx context.Context, sessionRef actor.Ref[protocol.Command], hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(sessionRef, hub, sessionID, windowID, windowOrdinal, policy).Run)
 }

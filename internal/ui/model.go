@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/actor"
 	"shux/internal/cfg"
+	"shux/internal/luabind"
 	"shux/internal/protocol"
 )
 
@@ -65,7 +66,7 @@ type ModelConfig struct {
 	OnExit     func(ExitIntent)
 	MapLeader  string
 	Keymaps    *cfg.Keymaps
-	Lua        any // *lua.Runtime for Lua keymap callbacks; optional
+	Lua        luabind.Runtime // optional
 }
 
 type Model struct {
@@ -78,7 +79,6 @@ type Model struct {
 	Pending       map[protocol.RequestID]pendingCommand
 	NextRequest   protocol.RequestID
 	Layout        LayoutSnapshot
-	Screens       map[protocol.PaneID]protocol.EventPaneScreenChanged
 	WindowIDs     []protocol.WindowID
 	ClosedWindows map[protocol.WindowID]bool
 	Layouts       map[protocol.WindowID]LayoutSnapshot
@@ -89,7 +89,7 @@ type Model struct {
 	Prefix        bool
 	MapLeader     string
 	Keymaps       *cfg.Keymaps
-	Lua           any
+	Lua           luabind.Runtime
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
@@ -118,7 +118,6 @@ func NewModel(mc ModelConfig) Model {
 		ActivePaneID:  mc.PaneID,
 		Pending:       make(map[protocol.RequestID]pendingCommand),
 		Layout:        EmptyLayoutSnapshot(mc.SessionID, mc.WindowID),
-		Screens:       make(map[protocol.PaneID]protocol.EventPaneScreenChanged),
 		WindowIDs:     []protocol.WindowID{mc.WindowID},
 		ClosedWindows: make(map[protocol.WindowID]bool),
 		Layouts:       make(map[protocol.WindowID]LayoutSnapshot),
@@ -229,10 +228,12 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 		}
 		return m.WithPaneScreen(e), nil
 	case protocol.EventPaneClosed:
+		if screens := m.WindowScreens[e.WindowID]; screens != nil {
+			delete(screens, e.PaneID)
+		}
 		if e.WindowID != m.WindowID {
 			return m, nil
 		}
-		delete(m.Screens, e.PaneID)
 		if m.ActivePaneID == e.PaneID {
 			m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
 		}
@@ -445,9 +446,9 @@ func (m Model) scrollKeyCommand(msg tea.KeyPressMsg) (protocol.CommandPaneScroll
 	name := normalizeKeyName(msg.Key().String())
 	var delta int
 	switch name {
-	case "pageup", "pgup":
+	case "pageup":
 		delta = -m.Layout.WindowRows / 2
-	case "pagedown", "pgdown":
+	case "pagedown":
 		delta = m.Layout.WindowRows / 2
 	default:
 		return protocol.CommandPaneScroll{}, false
@@ -576,7 +577,7 @@ func (m *Model) rememberPending(pending pendingCommand) protocol.RequestID {
 }
 
 func (m Model) WithWindowIDs(ids []protocol.WindowID) Model {
-	m.WindowIDs = m.WindowIDs[:0]
+	m.WindowIDs = nil
 	for _, wid := range ids {
 		if wid.Valid() && !m.ClosedWindows[wid] {
 			m.WindowIDs = append(m.WindowIDs, wid)
@@ -636,6 +637,10 @@ func (m *Model) storePaneScreen(screen protocol.EventPaneScreenChanged) {
 	screens[screen.PaneID] = screen
 }
 
+func (m Model) activeScreens() map[protocol.PaneID]protocol.EventPaneScreenChanged {
+	return m.WindowScreens[m.WindowID]
+}
+
 func (m Model) switchWindow(windowID protocol.WindowID) Model {
 	if !windowID.Valid() || windowID == m.WindowID {
 		return m
@@ -651,12 +656,6 @@ func (m Model) switchWindow(windowID protocol.WindowID) Model {
 	}
 	if rows > 0 {
 		m.Layout.WindowRows = rows
-	}
-	m.Screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
-	if screens := m.WindowScreens[windowID]; screens != nil {
-		for pid, screen := range screens {
-			m.Screens[pid] = screen
-		}
 	}
 	m.ActivePaneID = normalizeActivePane("", m.Layout.Panes)
 	m.Layout.ActivePane = m.ActivePaneID
@@ -710,14 +709,7 @@ func (m Model) WithLayoutSnapshot(snap LayoutSnapshot) Model {
 }
 
 func (m Model) WithPaneScreen(screen protocol.EventPaneScreenChanged) Model {
-	if m.Screens == nil {
-		m.Screens = make(map[protocol.PaneID]protocol.EventPaneScreenChanged)
-	}
 	m.storePaneScreen(screen)
-	if screen.WindowID != m.WindowID {
-		return m
-	}
-	m.Screens[screen.PaneID] = screen
 	return m
 }
 
@@ -747,7 +739,7 @@ func cycleActivePane(active protocol.PaneID, panes []LayoutPane) protocol.PaneID
 }
 
 func (m Model) paneScreen(paneID protocol.PaneID) protocol.EventPaneScreenChanged {
-	screen, ok := m.Screens[paneID]
+	screen, ok := m.activeScreens()[paneID]
 	if !ok {
 		return protocol.EventPaneScreenChanged{}
 	}
@@ -759,7 +751,7 @@ func (m Model) activeCursor() *tea.Cursor {
 	if paneID == "" {
 		paneID = m.ActivePaneID
 	}
-	screen, ok := m.Screens[paneID]
+	screen, ok := m.activeScreens()[paneID]
 	if !ok || !screen.Cursor.Visible {
 		return nil
 	}

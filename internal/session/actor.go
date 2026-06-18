@@ -28,10 +28,6 @@ func NewActor(hub actor.EventRef) *Actor {
 	return NewActorWithPolicy(hub, "", cfg.DefaultConfig())
 }
 
-func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
-}
-
 func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("session: NewActor: invalid hub ref")
@@ -48,7 +44,7 @@ func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy
 	}
 }
 
-func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -61,7 +57,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			case protocol.CommandNoop:
 				continue
 			case protocol.CommandCreateWindow:
-				a.handleCreateWindow(ctx, m)
+				a.handleCreateWindow(ctx, self, m)
+				continue
+			case protocol.CommandWindowClosed:
+				a.handleWindowClosed(ctx, m)
 				continue
 			}
 			if wid, ok := protocol.RouteWindowID(msg); ok {
@@ -73,12 +72,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 	}
 }
 
-func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreateWindow) {
+func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.Command], m protocol.CommandCreateWindow) {
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
 	a.windowIDs = append(a.windowIDs, wid)
 	ordinal := len(a.windowIDs)
-	a.Init(wid, window.StartWithPolicy(ctx, a.hub, m.SessionID, wid, ordinal, a.Policy))
+	a.Init(wid, window.StartWithPolicy(ctx, self, a.hub, m.SessionID, wid, ordinal, a.Policy))
 	a.revision++
 	if a.hub != nil {
 		_ = a.hub.Send(ctx, protocol.EventWindowCreated{
@@ -99,6 +98,23 @@ func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreate
 	}
 }
 
+func (a *Actor) handleWindowClosed(ctx context.Context, m protocol.CommandWindowClosed) {
+	removed := false
+	for i, wid := range a.windowIDs {
+		if wid == m.WindowID {
+			a.windowIDs = append(a.windowIDs[:i], a.windowIDs[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		panic("session: close window: missing window id")
+	}
+	a.Windows.Delete(m.WindowID)
+	a.revision++
+	a.emitWindowsChanged(ctx, m.SessionID)
+}
+
 func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.SessionID) {
 	if a.hub == nil {
 		return
@@ -114,10 +130,6 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 // StartWithHub is [Start] with optional hub; lifecycle events are best-effort when hub is non-nil.
 func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
-}
-
-func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
 func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) actor.Ref[protocol.Command] {

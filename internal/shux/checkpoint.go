@@ -40,9 +40,6 @@ func (w *checkpointWatcher) schedule() {
 	if w.app.getState() != stateReady {
 		return
 	}
-	if !w.app.Config.Resurrection || w.app.Config.StateDir == "" {
-		return
-	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.timer != nil {

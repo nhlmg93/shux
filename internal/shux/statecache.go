@@ -25,7 +25,6 @@ type stateCache struct {
 	layouts layoutsBySession
 	screens screensBySession
 	windows windowsBySession
-	closed  map[protocol.SessionID]map[protocol.WindowID]bool
 }
 
 func newStateCache() *stateCache {
@@ -33,7 +32,6 @@ func newStateCache() *stateCache {
 		layouts: make(layoutsBySession),
 		screens: make(screensBySession),
 		windows: make(windowsBySession),
-		closed:  make(map[protocol.SessionID]map[protocol.WindowID]bool),
 	}
 }
 
@@ -42,7 +40,7 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 	defer c.mu.Unlock()
 	switch event := e.(type) {
 	case protocol.EventSessionWindowsChanged:
-		c.windows[event.SessionID] = c.filterClosed(event.SessionID, event.Windows)
+		c.windows[event.SessionID] = append([]protocol.WindowID(nil), event.Windows...)
 	case protocol.EventWindowClosed:
 		c.removeWindow(event.SessionID, event.WindowID)
 	case protocol.EventWindowLayoutChanged:
@@ -68,24 +66,7 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 	return nil
 }
 
-func (c *stateCache) filterClosed(sessionID protocol.SessionID, windows []protocol.WindowID) []protocol.WindowID {
-	closed := c.closed[sessionID]
-	out := make([]protocol.WindowID, 0, len(windows))
-	for _, wid := range windows {
-		if closed == nil || !closed[wid] {
-			out = append(out, wid)
-		}
-	}
-	return out
-}
-
 func (c *stateCache) removeWindow(sessionID protocol.SessionID, windowID protocol.WindowID) {
-	closed := c.closed[sessionID]
-	if closed == nil {
-		closed = make(map[protocol.WindowID]bool)
-		c.closed[sessionID] = closed
-	}
-	closed[windowID] = true
 	windows := c.windows[sessionID]
 	for i, wid := range windows {
 		if wid == windowID {

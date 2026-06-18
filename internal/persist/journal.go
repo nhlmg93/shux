@@ -10,7 +10,9 @@ type Journal struct {
 	path     string
 	f        *os.File
 	maxBytes uint64
-	mu       sync.Mutex
+	// bytesSinceStat tracks appended bytes since last cap stat check.
+	bytesSinceStat uint64
+	mu             sync.Mutex
 }
 
 func (j *Journal) Path() string {
@@ -29,7 +31,34 @@ func (j *Journal) Append(data []byte) error {
 	if _, err := j.f.Write(data); err != nil {
 		return err
 	}
+	if j.maxBytes == 0 {
+		return nil
+	}
+	j.bytesSinceStat += uint64(len(data))
+	if j.bytesSinceStat < j.capCheckThresholdLocked() {
+		return nil
+	}
+	j.bytesSinceStat = 0
 	return j.enforceCapLocked()
+}
+
+func (j *Journal) capCheckThresholdLocked() uint64 {
+	if j.maxBytes == 0 {
+		return 0
+	}
+	// Amortize costly stat/read/trim operations; keep checks frequent enough for
+	// small journals while reducing overhead on hot append paths.
+	threshold := j.maxBytes / 8
+	if threshold < 4*1024 {
+		threshold = 4 * 1024
+	}
+	if threshold > 64*1024 {
+		threshold = 64 * 1024
+	}
+	if threshold > j.maxBytes {
+		threshold = j.maxBytes
+	}
+	return threshold
 }
 
 func (j *Journal) enforceCapLocked() error {

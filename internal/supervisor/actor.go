@@ -77,12 +77,6 @@ func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Co
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
 }
 
-func StartWithConfig(ctx context.Context, hub actor.EventRef, shellPath string) actor.Ref[protocol.Command] {
-	p := cfg.DefaultConfig()
-	p.ShellPath = shellPath
-	return StartWithPolicy(ctx, hub, p)
-}
-
 func StartWithPolicy(ctx context.Context, hub actor.EventRef, policy cfg.Config) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, policy).Run)
 }
