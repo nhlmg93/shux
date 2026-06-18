@@ -45,6 +45,7 @@ func TestLoad_userInitLuaOverridesOptions(t *testing.T) {
 	initLua := `shux.opt.shell = "/bin/bash"
 shux.g.mapleader = "<C-a>"
 shux.keymap.set("prefix", "<leader>d", "detach", { desc = "custom detach" })
+shux.keymap.set("copy_mode", "y", function() end, { desc = "custom yank" })
 `
 	if err := os.WriteFile(filepath.Join(configDir, "init.lua"), []byte(initLua), 0o600); err != nil {
 		t.Fatal(err)
@@ -65,6 +66,10 @@ shux.keymap.set("prefix", "<leader>d", "detach", { desc = "custom detach" })
 	b, ok := rt.Config.Keymaps.Lookup("prefix", "d")
 	if !ok || b.Desc != "custom detach" {
 		t.Fatalf("binding = %#v ok=%v", b, ok)
+	}
+	copyBinding, ok := rt.Config.Keymaps.Lookup("copy_mode", "y")
+	if !ok || copyBinding.Desc != "custom yank" || copyBinding.LuaCallback == 0 {
+		t.Fatalf("copy binding = %#v ok=%v", copyBinding, ok)
 	}
 }
 

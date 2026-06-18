@@ -32,6 +32,7 @@ const (
 	ActionFocusPaneDown   = cfg.ActionFocusPaneDown
 	ActionDisplayPanes    = cfg.ActionDisplayPanes
 	ActionClosePane       = cfg.ActionClosePane
+	ActionTogglePaneZoom  = cfg.ActionTogglePaneZoom
 	ActionNewWindow       = cfg.ActionNewWindow
 	ActionNextWindow      = cfg.ActionNextWindow
 	ActionPreviousWindow  = cfg.ActionPreviousWindow
@@ -46,6 +47,22 @@ const (
 	ActionSelectWindow9   = cfg.ActionSelectWindow9
 	ActionSelectWindow10  = cfg.ActionSelectWindow10
 	ActionListKeymaps     = cfg.ActionListKeymaps
+	ActionCopyModeToggle  = cfg.ActionCopyModeToggle
+	ActionPasteRegister   = cfg.ActionPasteRegister
+
+	ActionCopyLeft          = cfg.ActionCopyLeft
+	ActionCopyDown          = cfg.ActionCopyDown
+	ActionCopyUp            = cfg.ActionCopyUp
+	ActionCopyRight         = cfg.ActionCopyRight
+	ActionCopyWordForward   = cfg.ActionCopyWordForward
+	ActionCopyWordBackward  = cfg.ActionCopyWordBackward
+	ActionCopyTop           = cfg.ActionCopyTop
+	ActionCopyBottom        = cfg.ActionCopyBottom
+	ActionCopyPageUp        = cfg.ActionCopyPageUp
+	ActionCopyPageDown      = cfg.ActionCopyPageDown
+	ActionCopySelectStart   = cfg.ActionCopySelectStart
+	ActionCopyYankSelection = cfg.ActionCopyYankSelection
+	ActionCopyCancel        = cfg.ActionCopyCancel
 )
 
 type KeymapBinding = cfg.KeymapBinding

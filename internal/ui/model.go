@@ -103,6 +103,10 @@ type Model struct {
 	PaneQuickSelectEnabled bool
 	PaneQuickSelectTimeout time.Duration
 	paneQuickSelectNonce   uint64
+	CopyMode               bool
+	CopyCursor             copyPoint
+	CopySelection          copySelection
+	CopyRegister           string
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
@@ -260,7 +264,11 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 		if e.WindowID != m.WindowID {
 			return m, nil
 		}
-		return m.WithPaneScreen(e), nil
+		m = m.WithPaneScreen(e)
+		if m.CopyMode && e.PaneID == m.ActivePaneID {
+			m.clampCopyModeCursor(e)
+		}
+		return m, nil
 	case protocol.EventPaneClosed:
 		if screens := m.WindowScreens[e.WindowID]; screens != nil {
 			delete(screens, e.PaneID)
@@ -332,6 +340,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key == m.MapLeader {
 			m.Prefix = true
 			return m, nil
+		}
+		if m.CopyMode {
+			return m.handleCopyModeKeyPress(msg)
 		}
 		if cmd, ok := m.scrollKeyCommand(msg); ok {
 			return m, m.dispatch(cmd)
@@ -969,7 +980,11 @@ func (m Model) viewString() string {
 						quickLabel = "[" + label + "]"
 					}
 				}
-				canvas.drawPaneWithScreenEvent(p, active, quickLabel, m.paneScreen(p.PaneID))
+				screen := m.paneScreen(p.PaneID)
+				if m.CopyMode && active {
+					screen = m.copyModeScreenOverlay(screen)
+				}
+				canvas.drawPaneWithScreenEvent(p, active, quickLabel, screen)
 			}
 		}
 		paneView = canvas.String()

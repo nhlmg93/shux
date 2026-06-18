@@ -27,6 +27,8 @@ Press the prefix, then a second key to run a shux command. The prefix is not sen
 | `ctrl+b 1` through `ctrl+b 9` | Select window by number. |
 | `ctrl+b 0` | Select window 10. |
 | `ctrl+b ?` | List key bindings (stderr). |
+| `ctrl+b [` | Enter or exit copy mode. |
+| `ctrl+b ]` | Paste from the shux copy register into the active pane. |
 
 ## Notes
 

@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"shux/internal/actor"
+	"shux/internal/cfg"
 	"shux/internal/luabind"
 	"shux/internal/protocol"
 )
@@ -182,5 +186,115 @@ func TestPaneQuickSelectDigitStartsFocusCommand(t *testing.T) {
 	}
 	if got.Pending[got.NextRequest].Kind != pendingPaneFocus {
 		t.Fatalf("pending kind = %v, want pane focus", got.Pending[got.NextRequest].Kind)
+	}
+}
+
+func TestDispatchBuiltinCopyModeToggle(t *testing.T) {
+	m := NewModel(ModelConfig{
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	}).WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 80,
+		WindowRows: 24,
+		Panes:      []LayoutPane{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
+	})
+	m = m.WithPaneScreen(protocol.EventPaneScreenChanged{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+		PaneID:    "p-1",
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
+		Lines:     []protocol.EventPaneScreenLine{{Text: "hello world"}},
+		Cursor:    protocol.NewEventPaneScreenCursor(0, 0, false),
+	})
+
+	m, _ = m.dispatchBuiltin(cfg.ActionCopyModeToggle)
+	if !m.CopyMode {
+		t.Fatal("expected copy mode enabled")
+	}
+	m, _ = m.dispatchBuiltin(cfg.ActionCopyModeToggle)
+	if m.CopyMode {
+		t.Fatal("expected copy mode disabled")
+	}
+}
+
+func TestCopyModeYankSelectionStoresRegister(t *testing.T) {
+	m := NewModel(ModelConfig{
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	}).WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 80,
+		WindowRows: 24,
+		Panes:      []LayoutPane{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
+	})
+	m = m.WithPaneScreen(protocol.EventPaneScreenChanged{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+		PaneID:    "p-1",
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
+		Lines:     []protocol.EventPaneScreenLine{{Text: "hello world"}},
+		Cursor:    protocol.NewEventPaneScreenCursor(0, 0, false),
+	})
+	m = m.enterCopyMode()
+	m.CopySelection = copySelection{Anchor: copyPoint{Row: 0, Col: 0}, Active: true}
+	m.CopyCursor = copyPoint{Row: 0, Col: 4}
+
+	var exit bool
+	m, _, exit = m.dispatchCopyBuiltin(cfg.ActionCopyYankSelection)
+	if !exit {
+		t.Fatal("expected yank to request copy-mode exit")
+	}
+	if m.CopyRegister != "hello" {
+		t.Fatalf("copy register = %q", m.CopyRegister)
+	}
+}
+
+func TestDispatchBuiltinPasteRegisterSendsPanePaste(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan protocol.Command, 1)
+	ref := actor.Start[protocol.Command](ctx, func(_ context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+		cmd := <-inbox
+		got <- cmd
+	})
+
+	m := NewModel(ModelConfig{
+		SessionID:  protocol.SessionID("s-1"),
+		WindowID:   protocol.WindowID("w-1"),
+		PaneID:     protocol.PaneID("p-1"),
+		Supervisor: ref,
+		Ctx:        ctx,
+	})
+	m.CopyRegister = "clipboard-text"
+	m.ActivePaneID = "p-1"
+
+	_, cmd := m.dispatchBuiltin(cfg.ActionPasteRegister)
+	if cmd == nil {
+		t.Fatal("expected dispatch command")
+	}
+	cmd()
+
+	waitCtx, waitCancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer waitCancel()
+	select {
+	case sent := <-got:
+		paste, ok := sent.(protocol.CommandPanePaste)
+		if !ok {
+			t.Fatalf("unexpected command type %T", sent)
+		}
+		if string(paste.Data) != "clipboard-text" {
+			t.Fatalf("paste data = %q", string(paste.Data))
+		}
+	case <-waitCtx.Done():
+		t.Fatal("timed out waiting for pane paste command")
 	}
 }
