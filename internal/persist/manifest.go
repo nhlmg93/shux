@@ -89,10 +89,11 @@ func LayoutFromEvent(e protocol.EventWindowLayoutChanged) LayoutSnapshot {
 	}
 }
 
-// JournalPath returns the on-disk path for a pane journal.
-// windowOrdinal is the 1-based index of the window in the session window list.
+// JournalPath returns the on-disk path for a pane journal. Pane IDs are stable
+// across break/join moves, so journals are keyed by pane ID rather than window ordinal.
 func JournalPath(stateDir string, windowOrdinal int, paneID protocol.PaneID) string {
-	name := fmt.Sprintf("win%d_%s.journal", windowOrdinal, paneID)
+	_ = windowOrdinal
+	name := fmt.Sprintf("%s.journal", paneID)
 	return filepath.Join(stateDir, "panes", name)
 }
 
