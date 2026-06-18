@@ -39,11 +39,15 @@ const (
 	QueryListPanes       QueryMethod = "list-panes"
 	QueryDisplayMessage  QueryMethod = "display-message"
 	QueryCheckpointState QueryMethod = "checkpoint-state"
+	QueryHasSession      QueryMethod = "has-session"
+	QueryCapturePane     QueryMethod = "capture-pane"
 )
 
 type QueryRequest struct {
-	Method QueryMethod `json:"method"`
-	Format string      `json:"format,omitempty"`
+	Method      QueryMethod `json:"method"`
+	Format      string      `json:"format,omitempty"`
+	SessionName string      `json:"session,omitempty"`
+	Target      string      `json:"target,omitempty"`
 }
 
 type StateCheckpointInfo struct {
@@ -55,4 +59,13 @@ type QueryResponse struct {
 	Panes      []PaneInfo           `json:"panes,omitempty"`
 	Display    *DisplayMessageInfo  `json:"display,omitempty"`
 	Checkpoint *StateCheckpointInfo `json:"checkpoint,omitempty"`
+	Exists     *bool                `json:"exists,omitempty"`
+	Capture    *CapturePaneInfo     `json:"capture,omitempty"`
+}
+
+type CapturePaneInfo struct {
+	SessionID SessionID `json:"session_id"`
+	WindowID  WindowID  `json:"window_id"`
+	PaneID    PaneID    `json:"pane_id"`
+	Text      string    `json:"text"`
 }

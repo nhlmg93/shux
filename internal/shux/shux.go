@@ -249,6 +249,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		Lua:                    a.luaRuntime,
 		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
 		UI:                     a.Config.UI,
+		TreeSnapshot:           a.uiTreeSnapshot,
 	})
 	model = model.WithWindowIDs(windowIDs)
 	for wid, name := range a.cache.WindowNames(sessionID) {

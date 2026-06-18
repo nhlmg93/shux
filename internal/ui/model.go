@@ -87,6 +87,7 @@ type ModelConfig struct {
 	Lua                    luabind.Runtime // optional
 	PaneQuickSelectTimeout time.Duration
 	UI                     cfg.UIConfig
+	TreeSnapshot           TreeSnapshotProvider
 }
 
 type Model struct {
@@ -109,6 +110,8 @@ type Model struct {
 	Ctx                    context.Context
 	OnExit                 func(ExitIntent)
 	Prefix                 bool
+	CommandOpen            bool
+	CommandInput           string
 	RenameMode             renameMode
 	RenameInput            string
 	MapLeader              string
@@ -123,6 +126,8 @@ type Model struct {
 	CopySelection          copySelection
 	CopyRegister           string
 	Search                 searchState
+	TreeView               TreeView
+	TreeSnapshot           TreeSnapshotProvider
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
@@ -174,6 +179,7 @@ func NewModel(mc ModelConfig) Model {
 		PaneQuickSelectTimeout: quickSelectTimeout,
 		UI:                     ui,
 		Search:                 newSearchState(),
+		TreeSnapshot:           mc.TreeSnapshot,
 	}
 }
 
@@ -190,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.KeyReleaseMsg:
-		if m.RenameMode != renameNone || m.PaneQuickSelectEnabled {
+		if m.RenameMode != renameNone || m.PaneQuickSelectEnabled || m.TreeView.Open {
 			return m, nil
 		}
 		if !m.Prefix {
@@ -225,6 +231,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case ConfigUpdatedMsg:
 		m.UI = msg.UI.WithDefaults()
+	case treeSnapshotMsg:
+		if msg.Err != nil {
+			m.TreeView.Snapshot = m.treeSnapshotFromModel()
+		} else {
+			m.TreeView.Snapshot = msg.Data
+			for wid, panes := range msg.Data.Screens {
+				for pid, screen := range panes {
+					m.storePaneScreen(screen)
+					if wid == m.WindowID {
+						m = m.WithPaneScreen(screen)
+					}
+					_ = pid
+				}
+			}
+		}
+		m.rebuildTreeItems()
+		m.TreeView.Cursor = m.treeCursorForCurrent()
 	}
 	return m, nil
 }
@@ -233,9 +256,18 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 	switch e := e.(type) {
 	case protocol.EventSessionWindowsChanged:
 		if e.SessionID != m.SessionID {
+			if m.TreeView.Open {
+				m = m.treeUpdateSessionWindows(e.SessionID, e.Windows)
+				m.rebuildTreeItems()
+			}
 			return m, nil
 		}
-		return m.WithWindowIDs(e.Windows), nil
+		m = m.WithWindowIDs(e.Windows)
+		if m.TreeView.Open {
+			m = m.treeUpdateSessionWindows(e.SessionID, e.Windows)
+			m.rebuildTreeItems()
+		}
+		return m, nil
 	case protocol.EventWindowCreated:
 		if e.SessionID != m.SessionID {
 			return m, nil
@@ -379,8 +411,14 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.CommandOpen {
+		return m.handleCommandKey(msg)
+	}
 	if m.RenameMode != renameNone {
 		return m.handleRenameKey(msg)
+	}
+	if m.TreeView.Open {
+		return m.handleTreeViewKey(msg)
 	}
 	key := msg.String()
 	if m.PaneQuickSelectEnabled {
@@ -463,6 +501,16 @@ func (m Model) startPaneClose(paneID protocol.PaneID) (Model, tea.Cmd) {
 		SessionID: m.SessionID,
 		WindowID:  m.WindowID,
 		PaneID:    paneID,
+	})
+}
+
+func (m Model) startWindowClose() (Model, tea.Cmd) {
+	if !m.ClientID.Valid() || !m.WindowID.Valid() {
+		return m, nil
+	}
+	return m, m.dispatch(protocol.CommandKillWindow{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
 	})
 }
 
@@ -1086,7 +1134,10 @@ func (m Model) viewString() string {
 	var paneView string
 	if paneRows > 0 {
 		canvas := newRuneCanvas(cols, paneRows, m.UI)
-		if len(m.Layout.Panes) == 0 {
+		if m.TreeView.Open {
+			m.drawTreeView(canvas)
+			paneView = canvas.String()
+		} else if len(m.Layout.Panes) == 0 {
 			canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
 		} else {
 			if m.UI.DrawsWindowBorders() {
@@ -1115,13 +1166,19 @@ func (m Model) viewString() string {
 				canvas.drawInternalSplitLines(m.Layout.Panes, m.Layout.ActivePane)
 			}
 		}
-		if m.CopyMode {
-			canvas.drawOverlayStatus(m.copyModeOverlayANSI(), m.copyModeStatusText())
+		if !m.TreeView.Open {
+			if m.CopyMode {
+				canvas.drawOverlayStatus(m.copyModeOverlayANSI(), m.copyModeStatusText())
+			}
+			if prompt := m.commandPrompt(); prompt != "" {
+				canvas.drawOverlayStatus(m.copyModeOverlayANSI(), prompt)
+			} else if prompt := m.renamePrompt(); prompt != "" {
+				canvas.drawOverlayStatus(m.copyModeOverlayANSI(), prompt)
+			}
 		}
-		if prompt := m.renamePrompt(); prompt != "" {
-			canvas.drawOverlayStatus(m.copyModeOverlayANSI(), prompt)
+		if paneView == "" {
+			paneView = canvas.String()
 		}
-		paneView = canvas.String()
 	}
 	statusRow := ""
 	if m.UI.Statusline {

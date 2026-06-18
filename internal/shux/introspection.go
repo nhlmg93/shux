@@ -7,11 +7,10 @@ import (
 	"shux/internal/protocol"
 )
 
-func (a *Shux) ListWindows() []protocol.WindowInfo {
-	if a.cache == nil {
+func (a *Shux) ListWindowsForSession(sessionID protocol.SessionID) []protocol.WindowInfo {
+	if a.cache == nil || !sessionID.Valid() {
 		return nil
 	}
-	sessionID := a.DefaultSessionID
 	windowIDs := a.cache.WindowIDs(sessionID)
 	windows := make([]protocol.WindowInfo, 0, len(windowIDs))
 	for i, windowID := range windowIDs {
@@ -30,11 +29,10 @@ func (a *Shux) ListWindows() []protocol.WindowInfo {
 	return windows
 }
 
-func (a *Shux) ListPanes() []protocol.PaneInfo {
-	if a.cache == nil {
+func (a *Shux) ListPanesForSession(sessionID protocol.SessionID) []protocol.PaneInfo {
+	if a.cache == nil || !sessionID.Valid() {
 		return nil
 	}
-	sessionID := a.DefaultSessionID
 	windowIDs := a.cache.WindowIDs(sessionID)
 	panes := make([]protocol.PaneInfo, 0, len(windowIDs))
 	for i, windowID := range windowIDs {
@@ -49,33 +47,43 @@ func (a *Shux) ListPanes() []protocol.PaneInfo {
 				WindowID:    windowID,
 				WindowIndex: i + 1,
 				PaneID:      pane.PaneID,
-				Col:         pane.Col,
-				Row:         pane.Row,
-				Cols:        pane.Cols,
-				Rows:        pane.Rows,
+				Col:         int(pane.Col),
+				Row:         int(pane.Row),
+				Cols:        int(pane.Cols),
+				Rows:        int(pane.Rows),
 			})
 		}
 	}
 	return panes
 }
 
-func (a *Shux) DisplayMessageContext() protocol.DisplayMessageContext {
+func (a *Shux) ListWindows() []protocol.WindowInfo {
+	return a.ListWindowsForSession(a.DefaultSessionID)
+}
+
+func (a *Shux) ListPanes() []protocol.PaneInfo {
+	return a.ListPanesForSession(a.DefaultSessionID)
+}
+
+func (a *Shux) DisplayMessageContextFor(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) protocol.DisplayMessageContext {
 	ctx := protocol.DisplayMessageContext{
-		SessionID:   a.DefaultSessionID,
-		WindowID:    a.DefaultWindowID,
+		SessionID:   sessionID,
+		WindowID:    windowID,
 		WindowIndex: 1,
-		PaneID:      a.DefaultPaneID,
+		PaneID:      paneID,
 		PaneIndex:   1,
 	}
-	for _, window := range a.ListWindows() {
+	for _, window := range a.ListWindowsForSession(sessionID) {
 		if window.WindowID == ctx.WindowID {
 			ctx.WindowIndex = window.Index
 			break
 		}
 	}
-	panes := a.ListPanes()
+	panes := a.ListPanesForSession(sessionID)
 	for _, pane := range panes {
 		if pane.PaneID == ctx.PaneID {
+			ctx.WindowID = pane.WindowID
+			ctx.WindowIndex = pane.WindowIndex
 			ctx.PaneIndex = pane.Index
 			return ctx
 		}
@@ -89,9 +97,14 @@ func (a *Shux) DisplayMessageContext() protocol.DisplayMessageContext {
 	return ctx
 }
 
+func (a *Shux) DisplayMessageContext() protocol.DisplayMessageContext {
+	return a.DisplayMessageContextFor(a.DefaultSessionID, a.DefaultWindowID, a.DefaultPaneID)
+}
+
 func FormatDisplayMessage(format string, ctx protocol.DisplayMessageContext) string {
 	replacements := []string{
 		"#{session_id}", string(ctx.SessionID),
+		"#{session_name}", string(ctx.SessionID),
 		"#{window_id}", string(ctx.WindowID),
 		"#{window_index}", strconv.Itoa(ctx.WindowIndex),
 		"#{pane_id}", string(ctx.PaneID),

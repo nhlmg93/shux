@@ -358,13 +358,13 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 	a.revision++
 	a.emit(ctx, protocol.EventPaneClosed{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: m.PaneID})
 	if lastPane {
+		a.emit(ctx, protocol.EventWindowClosed{SessionID: m.SessionID, WindowID: m.WindowID})
 		if err := a.SessionRef.Send(ctx, protocol.CommandWindowClosed{
 			SessionID: m.SessionID,
 			WindowID:  m.WindowID,
 		}); err != nil && ctx.Err() == nil {
 			panic(fmt.Sprintf("window: notify session close %s: %v", m.WindowID, err))
 		}
-		a.emit(ctx, protocol.EventWindowClosed{SessionID: m.SessionID, WindowID: m.WindowID})
 		return
 	}
 	for _, pid := range a.Layout.PaneIDs() {

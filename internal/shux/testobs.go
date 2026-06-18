@@ -109,6 +109,23 @@ func (a *Shux) PaneScreenText(sessionID protocol.SessionID, windowID protocol.Wi
 	return "", false
 }
 
+// TestCheckpoint writes resurrection state immediately (tests).
+func (a *Shux) TestCheckpoint() {
+	a.checkpoint()
+}
+
+// FirstPaneID returns the first pane in a window layout snapshot (tests).
+func (a *Shux) FirstPaneID(sessionID protocol.SessionID, windowID protocol.WindowID) (protocol.PaneID, bool) {
+	if a.cache == nil {
+		return "", false
+	}
+	layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
+	if !ok || len(layout.Panes) == 0 {
+		return "", false
+	}
+	return layout.Panes[0].PaneID, true
+}
+
 func (a *Shux) WindowName(sessionID protocol.SessionID, windowID protocol.WindowID) (string, bool) {
 	if a.cache == nil {
 		return "", false

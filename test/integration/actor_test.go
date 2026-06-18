@@ -1182,6 +1182,65 @@ func TestPaneInputCommandsRouteThroughActorTree(t *testing.T) {
 	}
 }
 
+func TestHub_killWindow_updatesSessionWindowList(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-kill-window")
+	testutil.MustSend(t, ctx, ref, protocol.CommandCreateWindow{
+		SessionID: initSessionID,
+		AutoPane:  true,
+	})
+	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: protocol.WindowID("w-2")})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  2,
+		Windows:   []protocol.WindowID{initWindowID, "w-2"},
+	})
+	drainAutoPaneFollowup(t, events, "w-2")
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandKillWindow{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+	})
+	assertEvent(t, events, protocol.EventPaneClosed{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventWindowClosed{SessionID: initSessionID, WindowID: initWindowID})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  3,
+		Windows:   []protocol.WindowID{"w-2"},
+	})
+}
+
+func TestHub_windowSwap_updatesSessionWindowList(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-window-swap")
+	testutil.MustSend(t, ctx, ref, protocol.CommandCreateWindow{
+		SessionID: initSessionID,
+		AutoPane:  true,
+	})
+	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: protocol.WindowID("w-2")})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  2,
+		Windows:   []protocol.WindowID{initWindowID, "w-2"},
+	})
+	drainAutoPaneFollowup(t, events, "w-2")
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowSwap{
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		WithWindowID: "w-2",
+	})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  3,
+		Windows:   []protocol.WindowID{"w-2", initWindowID},
+	})
+}
+
 func TestHub_paneMove_breakAndJoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -1406,6 +1465,35 @@ func bootstrapWindow(t *testing.T, ctx context.Context, ref commandSender, event
 			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
 		},
 	})
+}
+
+func drainAutoPaneFollowup(t *testing.T, events <-chan protocol.Event, windowID protocol.WindowID) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case evt := <-events:
+			switch e := evt.(type) {
+			case protocol.EventPaneScreenChanged:
+				continue
+			case protocol.EventPaneCreated:
+				if e.WindowID != windowID {
+					t.Fatalf("unexpected pane created: %#v", evt)
+				}
+			case protocol.EventWindowLayoutChanged:
+				if e.WindowID != windowID {
+					t.Fatalf("unexpected layout changed: %#v", evt)
+				}
+				if len(e.Panes) > 0 {
+					return
+				}
+			default:
+				t.Fatalf("unexpected event while draining auto pane for %s: %#v", windowID, evt)
+			}
+		case <-deadline:
+			t.Fatalf("timed out draining auto pane followup for %s", windowID)
+		}
+	}
 }
 
 func drainCancel(cancel context.CancelFunc) {

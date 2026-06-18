@@ -85,6 +85,40 @@ func TestValidateCommand_paneZoomToggle(t *testing.T) {
 	}
 }
 
+func TestValidateCommandWindowSwap(t *testing.T) {
+	cmd := CommandWindowSwap{
+		SessionID:    "s-1",
+		WindowID:     "w-1",
+		WithWindowID: "w-2",
+	}
+	if err := ValidateCommand(cmd); err != nil {
+		t.Fatalf("ValidateCommand(CommandWindowSwap) error: %v", err)
+	}
+	sid, ok := RouteSessionID(cmd)
+	if !ok || sid != "s-1" {
+		t.Fatalf("RouteSessionID = (%q, %v)", sid, ok)
+	}
+	if _, ok := RouteWindowID(cmd); ok {
+		t.Fatal("CommandWindowSwap should not route to a window actor")
+	}
+}
+
+func TestRouteIDs_includeKillWindow(t *testing.T) {
+	cmd := CommandKillWindow{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+	}
+	if sid, ok := RouteSessionID(cmd); !ok || sid != "s-1" {
+		t.Fatalf("RouteSessionID(kill window) = (%q, %v), want (s-1, true)", sid, ok)
+	}
+	if wid, ok := RouteWindowID(cmd); !ok || wid != "w-1" {
+		t.Fatalf("RouteWindowID(kill window) = (%q, %v), want (w-1, true)", wid, ok)
+	}
+	if pid, ok := RoutePaneID(cmd); ok || pid != "" {
+		t.Fatalf("RoutePaneID(kill window) = (%q, %v), want (\"\", false)", pid, ok)
+	}
+}
+
 func TestRouteIDs_includePaneZoomToggle(t *testing.T) {
 	cmd := CommandPaneZoomToggle{
 		SessionID: "s-1",
