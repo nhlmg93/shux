@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shux/internal/client"
 	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/shux"
@@ -75,5 +76,39 @@ func TestSim_fourPaneDailyDriverResurrection(t *testing.T) {
 		if !app2.WaitPaneScreen(sid, wid, pid, marker, testutil.TestWaitTimeout) {
 			t.Fatalf("restored pane %s missing marker %q", pid, marker)
 		}
+	}
+}
+
+func TestSim_gracefulRestartL3KeepsBackgroundPaneProcess(t *testing.T) {
+	dir := t.TempDir()
+	cfg := simPolicy(dir, true)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate daemon wiring for in-process L3 handoff.
+	app.SetRestartHandoff(func(context.Context) error { return nil })
+
+	sid, wid := app.DefaultSessionID, app.DefaultWindowID
+	runPaneCommands(t, ctx, app, sid, wid, []paneCommand{
+		{Pane: app.DefaultPaneID, Cmd: "(sleep 1; printf SHUX_SIM_L3_OK) &", Want: "$"},
+	})
+
+	if err := app.BeginGracefulRestart(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.FinishGracefulRestart(ctx, client.AttachOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if !app.WaitPaneScreen(sid, wid, app.DefaultPaneID, "SHUX_SIM_L3_OK", 2*time.Second) {
+		t.Fatal("expected background process output after l3 restart handoff")
 	}
 }
