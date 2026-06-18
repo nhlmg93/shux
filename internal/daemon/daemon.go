@@ -81,6 +81,11 @@ func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lu
 		return err
 	}
 	app.SetRestartShutdown(srv.Shutdown)
+	app.SetRestartHandoff(func(context.Context) error {
+		// L3 handoff keeps the daemon process (and pane PTYs) alive. Transport
+		// remains up; clients are detached by shux restart and can reattach.
+		return nil
+	})
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()

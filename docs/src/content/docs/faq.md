@@ -23,9 +23,13 @@ In `shux.opt.state_dir`, which defaults to your XDG state directory. Journals an
 
 Each daemon binds to `shux.opt.bind` (default `127.0.0.1:23234`). Use a different bind address in config for multiple instances.
 
+## Does process state survive `shux restart`?
+
+Yes, on a graceful restart path shux uses L3 handoff so pane PTYs and long-running shell processes stay alive. If L3 is unavailable (for example a cold daemon start after crash/reboot), shux falls back to L2 layout + journal replay.
+
 ## Is shux production-ready?
 
-shux is an early MVP: suitable for daily-driver experimentation on a single machine with L2 resurrection (layout + scrollback replay). Process reattach (L3) is not implemented yet. Expect occasional breaking changes.
+shux is an early MVP suitable for daily-driver experimentation on a single machine. Resurrection now supports L3 for graceful restart and L2 fallback for cold starts; expect occasional breaking changes.
 
 ## Where is the full documentation?
 

@@ -195,6 +195,55 @@ func TestResurrection_journalReplayOnRestore(t *testing.T) {
 	}
 }
 
+func TestResurrection_l3ManifestFallsBackToL2Replay(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+	marker := "SHUX_L3_FALLBACK"
+
+	layout := persist.LayoutSnapshot{
+		WindowID: "w-1",
+		Cols:     80,
+		Rows:     24,
+		Panes:    []persist.LayoutPaneSnapshot{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
+	}
+	j, err := persist.OpenJournal(dir, 1, "p-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Append([]byte(marker + "\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	m := persist.BuildManifestWithTier(
+		protocol.SessionID("s-1"),
+		cfg.ShellPath,
+		dir,
+		[]protocol.WindowID{"w-1"},
+		map[string]persist.LayoutSnapshot{"w-1": layout},
+		"l3",
+		"cold restart requires l2 replay",
+	)
+	if err := persist.SaveManifest(dir, m); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !app.WaitPaneScreen(app.DefaultSessionID, app.DefaultWindowID, "p-1", marker, testutil.TestWaitTimeout) {
+		t.Fatalf("fallback restore missing marker %q", marker)
+	}
+}
+
 func TestResurrection_eventDrivenCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
