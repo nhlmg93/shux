@@ -45,7 +45,7 @@ test: test-unit test-integration test-e2e test-sim-native
 test-unit: libghostty
 	$(QUIET)$(GO_TEST) $(GO_TEST_UNIT_FLAGS) ./internal/...
 
-test-sim: libghostty
+test-sim:
 	$(QUIET)docker build -f Dockerfile.sim.env -t shux-test .
 	$(QUIET)docker rm -f shux-test-sim-run 2>/dev/null || true
 	$(QUIET)docker run --rm --name shux-test-sim-run shux-test
