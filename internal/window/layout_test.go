@@ -52,6 +52,47 @@ func TestLayoutSwapPaneByDirection(t *testing.T) {
 	}
 }
 
+func TestLayoutSwapPaneByDirectionAllDirections(t *testing.T) {
+	layout := newFourPaneLayout(t)
+
+	neighbor, err := layout.SwapPaneByDirection("p-1", protocol.PaneDirectionRight)
+	if err != nil {
+		t.Fatalf("SwapPaneByDirection(right) error: %v", err)
+	}
+	if neighbor != "p-2" {
+		t.Fatalf("neighbor(right) = %q, want %q", neighbor, "p-2")
+	}
+	assertRect(t, layout, "p-1", Rect{Col: 40, Row: 0, Cols: 40, Rows: 12})
+
+	neighbor, err = layout.SwapPaneByDirection("p-1", protocol.PaneDirectionDown)
+	if err != nil {
+		t.Fatalf("SwapPaneByDirection(down) error: %v", err)
+	}
+	if neighbor != "p-4" {
+		t.Fatalf("neighbor(down) = %q, want %q", neighbor, "p-4")
+	}
+	assertRect(t, layout, "p-1", Rect{Col: 40, Row: 12, Cols: 40, Rows: 12})
+
+	neighbor, err = layout.SwapPaneByDirection("p-1", protocol.PaneDirectionLeft)
+	if err != nil {
+		t.Fatalf("SwapPaneByDirection(left) error: %v", err)
+	}
+	if neighbor != "p-3" {
+		t.Fatalf("neighbor(left) = %q, want %q", neighbor, "p-3")
+	}
+	assertRect(t, layout, "p-1", Rect{Col: 0, Row: 12, Cols: 40, Rows: 12})
+
+	neighbor, err = layout.SwapPaneByDirection("p-1", protocol.PaneDirectionUp)
+	if err != nil {
+		t.Fatalf("SwapPaneByDirection(up) error: %v", err)
+	}
+	if neighbor != "p-2" {
+		t.Fatalf("neighbor(up) = %q, want %q", neighbor, "p-2")
+	}
+	assertRect(t, layout, "p-1", Rect{Col: 0, Row: 0, Cols: 40, Rows: 12})
+	assertLayoutInvariants(t, layout)
+}
+
 func FuzzLayoutInvariants(f *testing.F) {
 	f.Add([]byte{0, 0, 3, 2, 4, 1})
 	f.Add([]byte{0, 0, 0, 3, 4, 4, 2, 1, 3})
