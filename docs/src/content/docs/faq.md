@@ -25,7 +25,7 @@ Each daemon binds to `shux.opt.bind` (default `127.0.0.1:23234`). Use a differen
 
 ## Is shux production-ready?
 
-No. shux is experimental. Expect breaking changes while the recovery model and plugin API mature.
+shux is an early MVP: suitable for daily-driver experimentation on a single machine with L2 resurrection (layout + scrollback replay). Process reattach (L3) is not implemented yet. Expect occasional breaking changes.
 
 ## Where is the full documentation?
 

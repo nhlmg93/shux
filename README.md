@@ -4,18 +4,18 @@ shux is an experimental terminal multiplexer with a tmux-like attach flow, Neovi
 
 ## Documentation
 
-**Canonical docs:** [https://nhlmg93.github.io/shux/](https://nhlmg93.github.io/shux/)
+**Canonical docs:** [https://nhlmg93.github.io/](https://nhlmg93.github.io/)
 
-- [Getting started](https://nhlmg93.github.io/shux/getting-started/install/)
-- [Keybindings](https://nhlmg93.github.io/shux/using/keybindings/)
-- [Configuration](https://nhlmg93.github.io/shux/configuration/overview/)
-- [Resurrection](https://nhlmg93.github.io/shux/resurrection/overview/)
-- [CLI reference](https://nhlmg93.github.io/shux/cli/commands/)
+- [Getting started](https://nhlmg93.github.io/getting-started/install/)
+- [Keybindings](https://nhlmg93.github.io/using/keybindings/)
+- [Configuration](https://nhlmg93.github.io/configuration/overview/)
+- [Resurrection](https://nhlmg93.github.io/resurrection/overview/)
+- [CLI reference](https://nhlmg93.github.io/cli/commands/)
 
 Build and preview docs locally:
 
 ```bash
-make docs-dev    # http://localhost:4321/shux/
+make docs-dev    # http://localhost:4321/
 ```
 
 Example config: [`runtime/example/`](runtime/example/)

@@ -10,6 +10,7 @@ shux.opt.shell = "/bin/sh"
 shux.opt.bind = "127.0.0.1:23234"
 shux.opt.scrollback = 10000
 shux.opt.journal_max_mb = 64
+shux.opt.journal_replay_delay_ms = 200
 shux.opt.resurrection = true
 
 local state = shux.fn.stdpath("state")
@@ -26,6 +27,7 @@ end
 | `bind` | `127.0.0.1:23234` | Daemon listen address |
 | `scrollback` | `10000` | libghostty scrollback lines |
 | `journal_max_mb` | `64` | Max on-disk journal size per pane (resurrection) |
+| `journal_replay_delay_ms` | `200` | Delay before replaying journals into a respawned pane |
 | `state_dir` | XDG state dir | Resurrection journals + manifest directory |
 | `resurrection` | `true` | Record PTY output for restore |
 

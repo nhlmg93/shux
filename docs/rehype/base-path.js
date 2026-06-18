@@ -1,7 +1,7 @@
 import { visit } from 'unist-util-visit';
 
 /** Prepend Astro base path to root-relative links in authored markdown. */
-export function rehypeBasePath(base = '/shux') {
+export function rehypeBasePath(base = '/') {
 	const prefix = base.replace(/\/$/, '');
 
 	return (tree) => {

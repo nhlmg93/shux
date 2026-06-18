@@ -3,11 +3,11 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { rehypeBasePath } from './rehype/base-path.js';
 
-const base = '/shux';
+const base = '/';
 
 // https://astro.build/config
 export default defineConfig({
-	site: 'https://nhlmg93.github.io/shux',
+	site: 'https://nhlmg93.github.io',
 	base,
 	markdown: {
 		rehypePlugins: [[rehypeBasePath, base]],

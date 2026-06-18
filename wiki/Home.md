@@ -6,13 +6,13 @@ shux is an experimental terminal multiplexer with a tmux-like attach flow, Neovi
 
 **Canonical user documentation** lives on the Starlight site (versioned in the repository):
 
-**[https://nhlmg93.github.io/shux/](https://nhlmg93.github.io/shux/)**
+**[https://nhlmg93.github.io/](https://nhlmg93.github.io/)**
 
 Start here:
 
-- [Install and build](https://nhlmg93.github.io/shux/getting-started/install/)
-- [First run](https://nhlmg93.github.io/shux/getting-started/first-run/)
-- [Resurrection / recovery](https://nhlmg93.github.io/shux/resurrection/overview/)
+- [Install and build](https://nhlmg93.github.io/getting-started/install/)
+- [First run](https://nhlmg93.github.io/getting-started/first-run/)
+- [Resurrection / recovery](https://nhlmg93.github.io/resurrection/overview/)
 
 ## Repository
 

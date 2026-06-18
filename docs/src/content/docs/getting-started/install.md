@@ -31,6 +31,13 @@ make
 
 The first build compiles libghostty from source (this can take a few minutes). The resulting binary is `./shux` in the repository root.
 
+Install to `/usr/local/bin` (or another prefix):
+
+```bash
+make install
+# or: make install PREFIX=$HOME/.local
+```
+
 ## Verify
 
 ```bash
