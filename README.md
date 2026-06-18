@@ -2,7 +2,7 @@
 
 shux is an experimental terminal multiplexer with a tmux-like attach flow, Neovim-style Lua configuration, and a resurrection layer for durable session recovery.
 
-![Four-pane layout, detach, and reattach with scrollback restored](demo/vhs/shux-demo.gif)
+![Four-pane layout, detach, and reattach with scrollback restored](demo/shux-demo.gif)
 
 ## Documentation
 
@@ -30,8 +30,6 @@ make
 ```
 
 Detach with `ctrl+b d`, quit with `ctrl+b q`. See the docs for full usage.
-
-Regenerate the demo GIF with [VHS](https://github.com/charmbracelet/vhs) (`make demo`; needs `vhs`, `ttyd`, and `ffmpeg`).
 
 ## Status
 
