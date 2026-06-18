@@ -69,6 +69,20 @@ Integration-style tests should be focused on Sessions/Window/Pane/Config/Plugin 
 - Always run full test suite and ci check before pushing.
 - Write thoughtful but brief commit messages describing what the commit introduces
 
+### Debugging and troubleshooting
+
+When reproducing UI, attach/detach, or resurrection bugs, prefer observable, repeatable tools:
+
+- **[VHS](https://github.com/charmbracelet/vhs)** — script terminal sessions as `.tape` files and render GIFs/videos. Useful for reproducing multiplexer flows (splits, detach, reattach) and for README demos. See `demo/vhs/` and `make demo` (needs `vhs`, `ttyd`, `ffmpeg`).
+- **shux logs** — the daemon writes structured lines to `~/.local/share/shux/shux.log`. Client spawn failures append to `~/.cache/shux/daemon.log`.
+
+**Clean up after yourself.** Debug artifacts are fine while investigating, but do not leave them behind once the bug is fixed:
+
+- Remove scratch `.tape` files, test GIFs/MP4s, and one-off helper scripts you added only for the investigation.
+- Do not commit ephemeral demo/runtime output (`demo/vhs/state/`, `demo/vhs/daemon.log`, etc.); these are gitignored for a reason.
+- If you temporarily changed demo config, env vars, or logging verbosity to reproduce the issue, revert those changes before finishing.
+- Only keep permanent fixtures (e.g. a regression test, or an intentional demo under `demo/vhs/`) when they belong in the repo long-term.
+
 ## External Reference Checkouts
 
 When you need upstream implementation/reference material, these repositories should be available under `/tmp`:

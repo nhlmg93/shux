@@ -1,6 +1,7 @@
 Output demo/vhs/shux-demo.gif
 
 Require bash
+Require node
 
 Set Shell "bash"
 Set FontSize 16
@@ -29,13 +30,13 @@ Type "echo '  docs | less README'"
 Enter
 Sleep 500ms
 
-# Split right: long-running process pane.
+# Split right: start a real long-running Node process.
 Ctrl+B
 Type "%"
 Sleep 400ms
-Type "echo '  node | long-running process'"
+Type "node demo/vhs/node-heartbeat.js"
 Enter
-Sleep 500ms
+Sleep 2.5s
 
 # Split bottom-left: editor pane.
 Ctrl+B
@@ -75,7 +76,7 @@ Type "clear"
 Enter
 Type "./demo/vhs/run-shux.sh"
 Enter
-Wait+Screen@30s /shell \| run commands here/
+Wait+Screen@30s /node \| heartbeat/
 Show
 Sleep 3s
 
