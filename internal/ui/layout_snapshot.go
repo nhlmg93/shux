@@ -10,6 +10,7 @@ type LayoutSnapshot struct {
 	Revision   uint64
 	WindowCols int
 	WindowRows int
+	SyncPanes  bool
 	ActivePane protocol.PaneID
 	Panes      []LayoutPane
 	Title      string
@@ -47,6 +48,7 @@ func LayoutSnapshotFromEvent(e protocol.EventWindowLayoutChanged) LayoutSnapshot
 		Revision:   e.Revision,
 		WindowCols: e.Cols,
 		WindowRows: e.Rows,
+		SyncPanes:  e.SyncPanes,
 		Panes:      panes,
 	}
 }

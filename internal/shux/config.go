@@ -47,6 +47,7 @@ const (
 	ActionSelectWindow8   = cfg.ActionSelectWindow8
 	ActionSelectWindow9   = cfg.ActionSelectWindow9
 	ActionSelectWindow10  = cfg.ActionSelectWindow10
+	ActionToggleSyncPanes = cfg.ActionToggleSyncPanes
 	ActionListKeymaps     = cfg.ActionListKeymaps
 	ActionRenameWindow    = cfg.ActionRenameWindow
 	ActionRenamePane      = cfg.ActionRenamePane

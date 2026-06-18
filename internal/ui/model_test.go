@@ -323,3 +323,45 @@ func TestPaneRenameUpdatesPaneLabel(t *testing.T) {
 		t.Fatalf("expected renamed pane label in view, got %q", view)
 	}
 }
+
+func TestViewShowsSyncIndicatorWhenEnabled(t *testing.T) {
+	m := NewModel(ModelConfig{
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	}).WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 40,
+		WindowRows: 10,
+		SyncPanes:  true,
+		Panes: []LayoutPane{
+			{PaneID: "p-1", Col: 0, Row: 0, Cols: 40, Rows: 10},
+		},
+	})
+
+	if !strings.Contains(m.View().Content, "[SYNC:ON]") {
+		t.Fatalf("view should include sync indicator; got %q", m.View().Content)
+	}
+}
+
+func TestViewShowsSyncIndicatorWhenDisabled(t *testing.T) {
+	m := NewModel(ModelConfig{
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	}).WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 40,
+		WindowRows: 10,
+		SyncPanes:  false,
+		Panes: []LayoutPane{
+			{PaneID: "p-1", Col: 0, Row: 0, Cols: 40, Rows: 10},
+		},
+	})
+
+	if !strings.Contains(m.View().Content, "[SYNC:OFF]") {
+		t.Fatalf("view should include sync-off indicator; got %q", m.View().Content)
+	}
+}

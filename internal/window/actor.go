@@ -30,6 +30,7 @@ type Actor struct {
 	revision      uint64
 	zoomedPaneID  protocol.PaneID
 	savedLayout   *Layout
+	syncPanes     bool
 }
 
 type PaneTransfer struct {
@@ -114,6 +115,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleCreatePane(ctx, m)
 			case protocol.CommandWindowResize:
 				a.handleWindowResize(ctx, m)
+			case protocol.CommandWindowToggleSyncPanes:
+				a.handleWindowToggleSyncPanes(ctx, m)
 			case protocol.CommandPaneSplit:
 				a.handlePaneSplit(ctx, m)
 			case protocol.CommandPaneFocus:
@@ -132,6 +135,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleWindowRename(ctx, m)
 			case protocol.CommandPaneRename:
 				a.handlePaneRename(ctx, m)
+			case protocol.CommandPaneKey:
+				a.handlePaneKey(ctx, m)
 			default:
 				if pid, ok := protocol.RoutePaneID(msg); ok {
 					_ = a.Panes.Must(pid).Send(ctx, msg)
@@ -263,6 +268,24 @@ func (a *Actor) handleWindowResize(ctx context.Context, m protocol.CommandWindow
 		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "WindowResize"), false)
 	}
 	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) handleWindowToggleSyncPanes(ctx context.Context, m protocol.CommandWindowToggleSyncPanes) {
+	a.syncPanes = !a.syncPanes
+	a.revision++
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) handlePaneKey(ctx context.Context, m protocol.CommandPaneKey) {
+	if !a.syncPanes {
+		_ = a.Panes.Must(m.PaneID).Send(ctx, m)
+		return
+	}
+	for _, pid := range a.Layout.PaneIDs() {
+		cmd := m
+		cmd.PaneID = pid
+		_ = a.Panes.Must(pid).Send(ctx, cmd)
+	}
 }
 
 func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit) {
@@ -490,6 +513,7 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 		Revision:     a.revision,
 		Cols:         int(a.Layout.WindowCols),
 		Rows:         int(a.Layout.WindowRows),
+		SyncPanes:    a.syncPanes,
 		Panes:        panes,
 		ZoomedPaneID: a.zoomedPaneID,
 		SavedPanes:   savedPanes,

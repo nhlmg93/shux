@@ -321,6 +321,7 @@ type EventWindowLayoutChanged struct {
 	Revision     uint64
 	Cols         int
 	Rows         int
+	SyncPanes    bool
 	Panes        []EventLayoutPane
 	ZoomedPaneID PaneID
 	SavedPanes   []EventLayoutPane
