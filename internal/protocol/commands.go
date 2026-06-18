@@ -38,6 +38,8 @@ func ValidateCommand(cmd Command) error {
 			return err
 		}
 		return validateSize("CommandWindowResize", c.Cols, c.Rows)
+	case CommandWindowClosed:
+		return validateWindowTarget("CommandWindowClosed", c.SessionID, c.WindowID)
 	case CommandPaneKey:
 		if err := validatePaneTarget("CommandPaneKey", c.SessionID, c.WindowID, c.PaneID); err != nil {
 			return err
@@ -163,6 +165,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 	switch c := cmd.(type) {
 	case CommandCreateWindow:
 		return c.SessionID, true
+	case CommandWindowClosed:
+		return c.SessionID, true
 	case CommandCreatePane:
 		return c.SessionID, true
 	case CommandWindowResize:
@@ -205,8 +209,8 @@ func RoutePaneID(cmd Command) (PaneID, bool) {
 }
 
 // RouteWindowID returns the WindowID a command should be forwarded to.
-// Reports false for commands that the session handles directly (CommandCreateWindow)
-// or for unknown types.
+// Reports false for commands that the session handles directly
+// (CommandCreateWindow, CommandWindowClosed) or for unknown types.
 func RouteWindowID(cmd Command) (WindowID, bool) {
 	switch c := cmd.(type) {
 	case CommandCreatePane:
@@ -298,6 +302,13 @@ type CommandWindowResize struct {
 	WindowID  WindowID
 	Cols      uint16
 	Rows      uint16
+}
+
+// CommandWindowClosed notifies the session that a window is gone and should be
+// removed from session-level window bookkeeping.
+type CommandWindowClosed struct {
+	SessionID SessionID
+	WindowID  WindowID
 }
 
 // KeyAction is a semantic keyboard event phase.

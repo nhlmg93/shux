@@ -44,7 +44,7 @@ func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy
 	}
 }
 
-func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,7 +57,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			case protocol.CommandNoop:
 				continue
 			case protocol.CommandCreateWindow:
-				a.handleCreateWindow(ctx, m)
+				a.handleCreateWindow(ctx, self, m)
+				continue
+			case protocol.CommandWindowClosed:
+				a.handleWindowClosed(ctx, m)
 				continue
 			}
 			if wid, ok := protocol.RouteWindowID(msg); ok {
@@ -69,12 +72,12 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 	}
 }
 
-func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreateWindow) {
+func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.Command], m protocol.CommandCreateWindow) {
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
 	a.windowIDs = append(a.windowIDs, wid)
 	ordinal := len(a.windowIDs)
-	a.Init(wid, window.StartWithPolicy(ctx, a.hub, m.SessionID, wid, ordinal, a.Policy))
+	a.Init(wid, window.StartWithPolicy(ctx, self, a.hub, m.SessionID, wid, ordinal, a.Policy))
 	a.revision++
 	if a.hub != nil {
 		_ = a.hub.Send(ctx, protocol.EventWindowCreated{
@@ -93,6 +96,23 @@ func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreate
 		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandWindowResize{SessionID: m.SessionID, WindowID: wid, Cols: cols, Rows: rows})
 		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandCreatePane{SessionID: m.SessionID, WindowID: wid})
 	}
+}
+
+func (a *Actor) handleWindowClosed(ctx context.Context, m protocol.CommandWindowClosed) {
+	removed := false
+	for i, wid := range a.windowIDs {
+		if wid == m.WindowID {
+			a.windowIDs = append(a.windowIDs[:i], a.windowIDs[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		panic("session: close window: missing window id")
+	}
+	a.Windows.Delete(m.WindowID)
+	a.revision++
+	a.emitWindowsChanged(ctx, m.SessionID)
 }
 
 func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.SessionID) {

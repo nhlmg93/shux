@@ -273,6 +273,23 @@ func TestHub_fansOutPaneScreenChanged(t *testing.T) {
 	assertEvent(t, events, want)
 }
 
+func TestHub_windowClose_updatesSessionWindowList(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-window-close")
+	if err := ref.Send(ctx, protocol.CommandPaneClose{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPaneID})
+	assertCloseRelatedEvents(t, events)
+}
+
 func TestPaneInputCommandsRouteThroughActorTree(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -365,4 +382,39 @@ func assertEvent(t *testing.T, events <-chan protocol.Event, want protocol.Event
 			t.Fatalf("timed out waiting for %#v", want)
 		}
 	}
+}
+
+func assertCloseRelatedEvents(t *testing.T, events <-chan protocol.Event) {
+	t.Helper()
+
+	got1 := nextEvent(t, events)
+	got2 := nextEvent(t, events)
+	if hasWindowClosed(got1) && hasSessionWindowPruned(got2) {
+		return
+	}
+	if hasWindowClosed(got2) && hasSessionWindowPruned(got1) {
+		return
+	}
+	t.Fatalf("close events = [%#v, %#v], want EventWindowClosed and zero-window EventSessionWindowsChanged", got1, got2)
+}
+
+func nextEvent(t *testing.T, events <-chan protocol.Event) protocol.Event {
+	t.Helper()
+	select {
+	case evt := <-events:
+		return evt
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event")
+		return nil
+	}
+}
+
+func hasWindowClosed(evt protocol.Event) bool {
+	closed, ok := evt.(protocol.EventWindowClosed)
+	return ok && closed.SessionID == initSessionID && closed.WindowID == initWindowID
+}
+
+func hasSessionWindowPruned(evt protocol.Event) bool {
+	changed, ok := evt.(protocol.EventSessionWindowsChanged)
+	return ok && changed.SessionID == initSessionID && changed.Revision == 2 && len(changed.Windows) == 0
 }
