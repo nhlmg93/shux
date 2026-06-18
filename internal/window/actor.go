@@ -19,9 +19,11 @@ type Actor struct {
 	SessionID     protocol.SessionID
 	WindowID      protocol.WindowID
 	WindowOrdinal int
+	Name          string
 	Policy        cfg.Config
 	SessionRef    actor.Ref[protocol.Command]
 	Layout        Layout
+	PaneNames     map[protocol.PaneID]string
 	paneIDs       []protocol.PaneID
 	hub           actor.EventRef
 	seq           uint64
@@ -83,6 +85,7 @@ func NewActorWithPolicy(sessionRef actor.Ref[protocol.Command], hub actor.EventR
 		Policy:        policy,
 		SessionRef:    sessionRef,
 		Layout:        NewLayout(80, 24),
+		PaneNames:     make(map[protocol.PaneID]string),
 		hub:           hub,
 	}
 }
@@ -125,6 +128,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handlePaneClose(ctx, m)
 			case protocol.CommandPaneZoomToggle:
 				a.handlePaneZoomToggle(ctx, m)
+			case protocol.CommandWindowRename:
+				a.handleWindowRename(ctx, m)
+			case protocol.CommandPaneRename:
+				a.handlePaneRename(ctx, m)
 			default:
 				if pid, ok := protocol.RoutePaneID(msg); ok {
 					_ = a.Panes.Must(pid).Send(ctx, msg)
@@ -225,6 +232,7 @@ func (a *Actor) handleCreatePane(ctx context.Context, m protocol.CommandCreatePa
 	}
 	pid := a.nextPaneID()
 	a.paneIDs = append(a.paneIDs, pid)
+	a.PaneNames[pid] = ""
 	a.Init(pid, pane.StartWithPolicy(ctx, a.hub, m.SessionID, m.WindowID, a.WindowOrdinal, pid, a.Policy))
 	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: pid})
 	if err := a.Layout.SetSinglePane(pid); err != nil {
@@ -272,6 +280,7 @@ func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit
 	}
 	a.revision++
 	a.paneIDs = append(a.paneIDs, newID)
+	a.PaneNames[newID] = ""
 	a.Init(newID, pane.StartWithPolicy(ctx, a.hub, m.SessionID, m.WindowID, a.WindowOrdinal, newID, a.Policy))
 	a.emit(ctx, protocol.EventPaneCreated{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: newID})
 	for _, pid := range a.Layout.PaneIDs() {
@@ -300,6 +309,7 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 	}
 	_ = a.Panes.Must(m.PaneID).Send(ctx, m)
 	a.Panes.Delete(m.PaneID)
+	delete(a.PaneNames, m.PaneID)
 	for i, pid := range a.paneIDs {
 		if pid == m.PaneID {
 			a.paneIDs = append(a.paneIDs[:i], a.paneIDs[i+1:]...)
@@ -307,7 +317,7 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 		}
 	}
 	a.revision++
-	a.emit(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
+	a.emit(ctx, protocol.EventPaneClosed{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: m.PaneID})
 	if lastPane {
 		if err := a.SessionRef.Send(ctx, protocol.CommandWindowClosed{
 			SessionID: m.SessionID,
@@ -429,6 +439,20 @@ func (a *Actor) restoreZoomLayout(ctx context.Context, sid protocol.SessionID, w
 	}
 	a.emitLayout(ctx, sid, wid)
 	return true
+}
+
+func (a *Actor) handleWindowRename(ctx context.Context, m protocol.CommandWindowRename) {
+	a.Name = m.Name
+	a.emit(ctx, protocol.EventWindowRenamed{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Name:      m.Name,
+	})
+}
+
+func (a *Actor) handlePaneRename(ctx context.Context, m protocol.CommandPaneRename) {
+	a.PaneNames[m.PaneID] = m.Name
+	_ = a.Panes.Must(m.PaneID).Send(ctx, m)
 }
 
 func (a *Actor) nextPaneID() protocol.PaneID {

@@ -16,12 +16,13 @@ type Windows = *actor.Lifecycle[protocol.WindowID, protocol.Command]
 
 type Actor struct {
 	Windows
-	SessionID protocol.SessionID
-	Policy    cfg.Config
-	seq       uint64
-	revision  uint64
-	windowIDs []protocol.WindowID
-	hub       actor.EventRef
+	SessionID   protocol.SessionID
+	Policy      cfg.Config
+	WindowNames map[protocol.WindowID]string
+	seq         uint64
+	revision    uint64
+	windowIDs   []protocol.WindowID
+	hub         actor.EventRef
 }
 
 func NewActor(hub actor.EventRef) *Actor {
@@ -40,6 +41,7 @@ func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy
 		Windows:   actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
 		SessionID: sessionID,
 		Policy:    policy,
+		WindowNames: make(map[protocol.WindowID]string),
 		hub:       hub,
 	}
 }
@@ -65,6 +67,8 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 			case protocol.CommandPaneMove:
 				a.handlePaneMove(ctx, self, m)
 				continue
+			case protocol.CommandWindowRename:
+				a.WindowNames[m.WindowID] = m.Name
 			}
 			if wid, ok := protocol.RouteWindowID(msg); ok {
 				if !a.hasWindow(wid) {
@@ -82,6 +86,7 @@ func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
 	a.windowIDs = append(a.windowIDs, wid)
+	a.WindowNames[wid] = ""
 	ordinal := len(a.windowIDs)
 	a.Init(wid, window.StartWithPolicy(ctx, self, a.hub, m.SessionID, wid, ordinal, a.Policy))
 	a.revision++
@@ -163,6 +168,7 @@ func (a *Actor) handleWindowClosed(ctx context.Context, m protocol.CommandWindow
 		panic("session: close window: missing window id")
 	}
 	a.Windows.Delete(m.WindowID)
+	delete(a.WindowNames, m.WindowID)
 	a.revision++
 	a.emitWindowsChanged(ctx, m.SessionID)
 }

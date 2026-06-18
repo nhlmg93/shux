@@ -28,7 +28,9 @@ func (w *checkpointWatcher) DeliverEvent(_ context.Context, e protocol.Event) er
 	switch e.(type) {
 	case protocol.EventWindowLayoutChanged,
 		protocol.EventSessionWindowsChanged,
-		protocol.EventWindowCreated:
+		protocol.EventWindowCreated,
+		protocol.EventWindowRenamed,
+		protocol.EventPaneRenamed:
 		w.schedule()
 	}
 	return nil

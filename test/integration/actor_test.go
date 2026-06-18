@@ -1142,7 +1142,7 @@ func TestHub_windowClose_updatesSessionWindowList(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventPaneClosed{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
 	assertCloseRelatedEvents(t, events)
 }
 
@@ -1271,6 +1271,36 @@ func TestHub_paneMove_breakAndJoin(t *testing.T) {
 		SessionID: initSessionID,
 		Revision:  3,
 		Windows:   []protocol.WindowID{initWindowID},
+	})
+}
+
+func TestHub_windowAndPaneRenameEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-rename")
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowRename{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Name:      "dev",
+	})
+	assertEvent(t, events, protocol.EventWindowRenamed{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Name:      "dev",
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneRename{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+		Name:      "shell",
+	})
+	assertEvent(t, events, protocol.EventPaneRenamed{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+		Name:      "shell",
 	})
 }
 

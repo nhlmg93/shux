@@ -27,6 +27,10 @@ func TestManifest_roundtrip(t *testing.T) {
 				},
 			},
 		},
+		map[protocol.WindowID]string{"w-1": "editor"},
+		map[protocol.WindowID]map[protocol.PaneID]string{
+			"w-1": {"p-1": "logs"},
+		},
 	)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
@@ -45,6 +49,12 @@ func TestManifest_roundtrip(t *testing.T) {
 	}
 	if got.PaneJournals[key] != wantPath {
 		t.Fatalf("legacy journal map: %v", got.PaneJournals)
+	}
+	if got.WindowNames["w-1"] != "editor" {
+		t.Fatalf("window name = %q", got.WindowNames["w-1"])
+	}
+	if got.PaneNames[persist.PaneNameMapKey("w-1", "p-1")] != "logs" {
+		t.Fatalf("pane name = %q", got.PaneNames[persist.PaneNameMapKey("w-1", "p-1")])
 	}
 }
 
@@ -115,6 +125,8 @@ func TestBuildManifest_ordinalWithGapWindowID(t *testing.T) {
 				Panes:    []persist.LayoutPaneSnapshot{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
 			},
 		},
+		nil,
+		nil,
 	)
 	want := persist.JournalPath(dir, 1, "p-1")
 	if m.Sessions[0].PaneJournals[persist.JournalMapKey(1, "p-1")] != want {
@@ -129,7 +141,7 @@ func TestClearResurrectionState(t *testing.T) {
 	dir := t.TempDir()
 	m := persist.BuildManifest("s-1", "/bin/sh", dir, []protocol.WindowID{"w-1"}, map[string]persist.LayoutSnapshot{
 		"w-1": {WindowID: "w-1", Cols: 80, Rows: 24, Panes: []persist.LayoutPaneSnapshot{{PaneID: "p-1"}}},
-	})
+	}, nil, nil)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
 	}

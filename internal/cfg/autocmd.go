@@ -14,8 +14,10 @@ const (
 	EventClientDetached      AutocmdEvent = "ClientDetached"
 	EventPaneCreated         AutocmdEvent = "PaneCreated"
 	EventPaneClosed          AutocmdEvent = "PaneClosed"
+	EventPaneRenamed         AutocmdEvent = "PaneRenamed"
 	EventWindowCreated       AutocmdEvent = "WindowCreated"
 	EventWindowClosed        AutocmdEvent = "WindowClosed"
+	EventWindowRenamed       AutocmdEvent = "WindowRenamed"
 	EventWindowLayoutChanged AutocmdEvent = "WindowLayoutChanged"
 )
 

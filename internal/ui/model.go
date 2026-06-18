@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -31,6 +32,14 @@ const (
 	pendingPaneClose
 	pendingWindowCreate
 	pendingPaneFocus
+)
+
+type renameMode uint8
+
+const (
+	renameNone renameMode = iota
+	renameWindow
+	renamePane
 )
 
 type pendingCommand struct {
@@ -90,6 +99,8 @@ type Model struct {
 	NextRequest            protocol.RequestID
 	Layout                 LayoutSnapshot
 	WindowIDs              []protocol.WindowID
+	WindowNames            map[protocol.WindowID]string
+	PaneNames              map[protocol.WindowID]map[protocol.PaneID]string
 	ClosedWindows          map[protocol.WindowID]bool
 	Layouts                map[protocol.WindowID]LayoutSnapshot
 	WindowScreens          map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged
@@ -97,6 +108,8 @@ type Model struct {
 	Ctx                    context.Context
 	OnExit                 func(ExitIntent)
 	Prefix                 bool
+	RenameMode             renameMode
+	RenameInput            string
 	MapLeader              string
 	Keymaps                *cfg.Keymaps
 	Lua                    luabind.Runtime
@@ -141,6 +154,8 @@ func NewModel(mc ModelConfig) Model {
 		Pending:                make(map[protocol.RequestID]pendingCommand),
 		Layout:                 EmptyLayoutSnapshot(mc.SessionID, mc.WindowID),
 		WindowIDs:              []protocol.WindowID{mc.WindowID},
+		WindowNames:            make(map[protocol.WindowID]string),
+		PaneNames:              make(map[protocol.WindowID]map[protocol.PaneID]string),
 		ClosedWindows:          make(map[protocol.WindowID]bool),
 		Layouts:                make(map[protocol.WindowID]LayoutSnapshot),
 		WindowScreens:          make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged),
@@ -168,7 +183,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.KeyReleaseMsg:
-		if m.PaneQuickSelectEnabled {
+		if m.RenameMode != renameNone || m.PaneQuickSelectEnabled {
 			return m, nil
 		}
 		if !m.Prefix {
@@ -225,12 +240,30 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case protocol.EventPaneCreated:
-		if e.SessionID != m.SessionID || e.WindowID != m.WindowID {
+		if e.SessionID != m.SessionID {
 			return m, nil
 		}
-		if !m.ActivePaneID.Valid() {
+		if m.PaneNames[e.WindowID] == nil {
+			m.PaneNames[e.WindowID] = make(map[protocol.PaneID]string)
+		}
+		if e.WindowID == m.WindowID && !m.ActivePaneID.Valid() {
 			m.ActivePaneID = e.PaneID
 		}
+		return m, nil
+	case protocol.EventWindowRenamed:
+		if e.SessionID != m.SessionID {
+			return m, nil
+		}
+		m.WindowNames[e.WindowID] = e.Name
+		return m, nil
+	case protocol.EventPaneRenamed:
+		if e.SessionID != m.SessionID {
+			return m, nil
+		}
+		if m.PaneNames[e.WindowID] == nil {
+			m.PaneNames[e.WindowID] = make(map[protocol.PaneID]string)
+		}
+		m.PaneNames[e.WindowID][e.PaneID] = e.Name
 		return m, nil
 	case protocol.EventWindowClosed:
 		if e.SessionID != m.SessionID {
@@ -272,6 +305,9 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case protocol.EventPaneClosed:
+		if panes := m.PaneNames[e.WindowID]; panes != nil {
+			delete(panes, e.PaneID)
+		}
 		if screens := m.WindowScreens[e.WindowID]; screens != nil {
 			delete(screens, e.PaneID)
 		}
@@ -334,6 +370,9 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.RenameMode != renameNone {
+		return m.handleRenameKey(msg)
+	}
 	key := msg.String()
 	if m.PaneQuickSelectEnabled {
 		return m.handlePaneQuickSelectKey(normalizePrefixKey(key))
@@ -430,6 +469,72 @@ func (m Model) startPaneSplit(dir protocol.SplitDirection) (Model, tea.Cmd) {
 		TargetPaneID: m.ActivePaneID,
 		Direction:    dir,
 	})
+}
+
+func (m Model) startWindowRename() (Model, tea.Cmd) {
+	m.RenameMode = renameWindow
+	m.RenameInput = m.WindowNames[m.WindowID]
+	return m, nil
+}
+
+func (m Model) startPaneRename() (Model, tea.Cmd) {
+	m.RenameMode = renamePane
+	m.RenameInput = m.paneName(m.WindowID, m.ActivePaneID)
+	return m, nil
+}
+
+func (m Model) handleRenameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Key().String() {
+	case "esc":
+		m.RenameMode = renameNone
+		m.RenameInput = ""
+		return m, nil
+	case "enter":
+		name := strings.TrimSpace(m.RenameInput)
+		mode := m.RenameMode
+		m.RenameMode = renameNone
+		m.RenameInput = ""
+		if mode == renameWindow {
+			return m, m.dispatch(protocol.CommandWindowRename{
+				SessionID: m.SessionID,
+				WindowID:  m.WindowID,
+				Name:      name,
+			})
+		}
+		return m, m.dispatch(protocol.CommandPaneRename{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+			PaneID:    m.ActivePaneID,
+			Name:      name,
+		})
+	case "backspace":
+		if m.RenameInput == "" {
+			return m, nil
+		}
+		_, size := utf8.DecodeLastRuneInString(m.RenameInput)
+		if size <= 0 {
+			m.RenameInput = ""
+		} else {
+			m.RenameInput = m.RenameInput[:len(m.RenameInput)-size]
+		}
+		return m, nil
+	}
+	if msg.Key().Text == "" {
+		return m, nil
+	}
+	m.RenameInput += msg.Key().Text
+	return m, nil
+}
+
+func (m Model) renamePrompt() string {
+	switch m.RenameMode {
+	case renameWindow:
+		return "rename-window: " + m.RenameInput
+	case renamePane:
+		return "rename-pane: " + m.RenameInput
+	default:
+		return ""
+	}
 }
 
 func (m Model) startPaneResize(edge protocol.PaneResizeEdge) (Model, tea.Cmd) {
@@ -988,11 +1093,14 @@ func (m Model) viewString() string {
 					screen = m.copyModeScreenOverlay(screen)
 				}
 				overlay := m.searchOverlayForPane(p.PaneID)
-				canvas.drawPaneWithScreenEvent(p, active, quickLabel, screen, overlay)
+				canvas.drawPaneWithScreenEvent(p, m.paneLabel(p), active, quickLabel, screen, overlay)
 			}
 		}
 		if m.CopyMode {
 			canvas.drawOverlayStatus(copyModeStatusANSI, m.copyModeStatusText())
+		}
+		if prompt := m.renamePrompt(); prompt != "" {
+			canvas.drawOverlayStatus(copyModeStatusANSI, prompt)
 		}
 		paneView = canvas.String()
 	}
@@ -1100,6 +1208,9 @@ func (m Model) windowIndex() int {
 }
 
 func (m Model) windowName() string {
+	if name := strings.TrimSpace(m.WindowNames[m.WindowID]); name != "" {
+		return name
+	}
 	title := strings.TrimSpace(m.Layout.Title)
 	if title != "" && title != m.Title {
 		return title
@@ -1115,10 +1226,24 @@ func (m Model) activePaneLabel() string {
 	if !paneID.Valid() {
 		paneID = m.ActivePaneID
 	}
+	if name := m.paneName(m.WindowID, paneID); name != "" {
+		return name
+	}
 	if paneID.Valid() {
 		return string(paneID)
 	}
 	return "none"
+}
+
+func (m Model) paneName(windowID protocol.WindowID, paneID protocol.PaneID) string {
+	if panes := m.PaneNames[windowID]; panes != nil {
+		return panes[paneID]
+	}
+	return ""
+}
+
+func (m Model) paneLabel(p LayoutPane) string {
+	return labelForPane(p.PaneID, m.paneName(m.WindowID, p.PaneID), p)
 }
 
 func (m Model) hostname() string {

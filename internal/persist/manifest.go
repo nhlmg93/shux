@@ -48,6 +48,8 @@ type Manifest struct {
 type SessionManifest struct {
 	Name         string                    `json:"name"`
 	WindowIDs    []protocol.WindowID       `json:"window_ids"`
+	WindowNames  map[string]string         `json:"window_names,omitempty"`
+	PaneNames    map[string]string         `json:"pane_names,omitempty"`
 	Layouts      map[string]LayoutSnapshot `json:"layouts"`
 	PaneJournals map[string]string         `json:"pane_journals"`
 }
@@ -55,6 +57,10 @@ type SessionManifest struct {
 // JournalMapKey identifies a pane journal within a manifest by session window ordinal.
 func JournalMapKey(windowOrdinal int, paneID protocol.PaneID) string {
 	return fmt.Sprintf("%d/%s", windowOrdinal, paneID)
+}
+
+func PaneNameMapKey(windowID protocol.WindowID, paneID protocol.PaneID) string {
+	return fmt.Sprintf("%s/%s", windowID, paneID)
 }
 
 // LayoutFromEvent converts a hub layout event into a manifest snapshot.
@@ -140,7 +146,7 @@ func ClearResurrectionState(stateDir string) error {
 // BuildManifest assembles a manifest from exported session snapshots.
 func BuildManifest(sessionID protocol.SessionID, shellPath, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) Manifest {
 	return BuildManifestForSessions(shellPath, string(sessionID), []SessionManifest{
-		BuildSessionManifest(string(sessionID), stateDir, windows, layouts),
+		BuildSessionManifest(string(sessionID), stateDir, windows, layouts, nil, nil),
 	})
 }
 
@@ -160,22 +166,40 @@ func BuildManifestForSessions(shellPath, defaultSessionName string, sessions []S
 	}
 }
 
-func BuildSessionManifest(name, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) SessionManifest {
+func BuildSessionManifest(
+	name, stateDir string,
+	windows []protocol.WindowID,
+	layouts map[string]LayoutSnapshot,
+	windowNames map[protocol.WindowID]string,
+	paneNames map[protocol.WindowID]map[protocol.PaneID]string,
+) SessionManifest {
 	journals := make(map[string]string)
+	manifestWindowNames := make(map[string]string)
+	manifestPaneNames := make(map[string]string)
 	for i, wid := range windows {
 		ordinal := i + 1
 		layout, ok := layouts[string(wid)]
 		if !ok {
 			continue
 		}
+		if name, ok := windowNames[wid]; ok {
+			manifestWindowNames[string(wid)] = name
+		}
 		for _, p := range layout.Panes {
 			pid := protocol.PaneID(p.PaneID)
 			journals[JournalMapKey(ordinal, pid)] = JournalPath(stateDir, ordinal, pid)
+			if byWindow := paneNames[wid]; byWindow != nil {
+				if name, ok := byWindow[pid]; ok {
+					manifestPaneNames[PaneNameMapKey(wid, pid)] = name
+				}
+			}
 		}
 	}
 	return SessionManifest{
 		Name:         name,
 		WindowIDs:    append([]protocol.WindowID(nil), windows...),
+		WindowNames:  manifestWindowNames,
+		PaneNames:    manifestPaneNames,
 		Layouts:      layouts,
 		PaneJournals: journals,
 	}

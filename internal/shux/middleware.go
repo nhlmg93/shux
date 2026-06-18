@@ -196,6 +196,39 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						}
 						targetSessionID = target.SessionID
 					}
+				case "rename-window":
+					if len(command) < 2 {
+						wish.Fatalln(sess, "usage: rename-window <name>")
+						return
+					}
+					name := strings.TrimSpace(strings.Join(command[1:], " "))
+					if err := app.supervisor.Send(sess.Context(), protocol.CommandWindowRename{
+						SessionID: app.DefaultSessionID,
+						WindowID:  app.DefaultWindowID,
+						Name:      name,
+					}); err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					_, _ = fmt.Fprintln(sess, "renamed window")
+					return
+				case "rename-pane":
+					if len(command) < 2 {
+						wish.Fatalln(sess, "usage: rename-pane <name>")
+						return
+					}
+					name := strings.TrimSpace(strings.Join(command[1:], " "))
+					if err := app.supervisor.Send(sess.Context(), protocol.CommandPaneRename{
+						SessionID: app.DefaultSessionID,
+						WindowID:  app.DefaultWindowID,
+						PaneID:    app.DefaultPaneID,
+						Name:      name,
+					}); err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					_, _ = fmt.Fprintln(sess, "renamed pane")
+					return
 				default:
 					wish.Fatalln(sess, "shux: unknown command")
 					return

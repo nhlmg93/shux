@@ -63,10 +63,20 @@ func ValidateEvent(event Event) error {
 			return err
 		}
 		return validateWindowPaneFields("EventPaneCreated", e.WindowID, e.PaneID)
+	case EventWindowRenamed:
+		if err := validateWindowTarget("EventWindowRenamed", e.SessionID, e.WindowID); err != nil {
+			return err
+		}
+		return validateName("EventWindowRenamed", e.Name)
+	case EventPaneRenamed:
+		if err := validatePaneTarget("EventPaneRenamed", e.SessionID, e.WindowID, e.PaneID); err != nil {
+			return err
+		}
+		return validateName("EventPaneRenamed", e.Name)
 	case EventWindowClosed:
 		return validateWindowTarget("EventWindowClosed", e.SessionID, e.WindowID)
 	case EventPaneClosed:
-		return validateWindowPaneFields("EventPaneClosed", e.WindowID, e.PaneID)
+		return validatePaneTarget("EventPaneClosed", e.SessionID, e.WindowID, e.PaneID)
 	case EventPaneCloseLastRequested:
 		if err := validateRequestMeta("EventPaneCloseLastRequested", e.ClientID, e.RequestID); err != nil {
 			return err
@@ -256,6 +266,21 @@ type EventPaneCreated struct {
 	PaneID    PaneID
 }
 
+// EventWindowRenamed is emitted after a window's name changes.
+type EventWindowRenamed struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Name      string
+}
+
+// EventPaneRenamed is emitted after a pane's name changes.
+type EventPaneRenamed struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Name      string
+}
+
 // EventWindowClosed is emitted after the last pane in a window is closed.
 type EventWindowClosed struct {
 	SessionID SessionID
@@ -264,8 +289,9 @@ type EventWindowClosed struct {
 
 // EventPaneClosed is emitted after a pane is removed from its window.
 type EventPaneClosed struct {
-	WindowID WindowID
-	PaneID   PaneID
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
 }
 
 // EventPaneCloseLastRequested asks the originating client to exit/quit because

@@ -18,6 +18,7 @@ type Actor struct {
 	SessionID protocol.SessionID
 	WindowID  protocol.WindowID
 	PaneID    protocol.PaneID
+	Name      string
 }
 
 // CommandRehome updates pane routing identity after session-coordinated moves.
@@ -139,6 +140,16 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 					continue
 				}
 				a.sendScreen(ctx, event)
+			case protocol.CommandPaneRename:
+				a.Name = msg.Name
+				if a.Hub != nil {
+					_ = a.Hub.Send(ctx, protocol.EventPaneRenamed{
+						SessionID: a.SessionID,
+						WindowID:  a.WindowID,
+						PaneID:    a.PaneID,
+						Name:      msg.Name,
+					})
+				}
 			default:
 				panic(fmt.Sprintf("pane: unhandled command type %T", msg))
 			}

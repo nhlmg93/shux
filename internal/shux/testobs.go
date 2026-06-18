@@ -108,3 +108,19 @@ func (a *Shux) PaneScreenText(sessionID protocol.SessionID, windowID protocol.Wi
 	}
 	return "", false
 }
+
+func (a *Shux) WindowName(sessionID protocol.SessionID, windowID protocol.WindowID) (string, bool) {
+	if a.cache == nil {
+		return "", false
+	}
+	name, ok := a.cache.WindowNames(sessionID)[windowID]
+	return name, ok
+}
+
+func (a *Shux) PaneName(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) (string, bool) {
+	if a.cache == nil {
+		return "", false
+	}
+	name, ok := a.cache.PaneNames(sessionID, windowID)[paneID]
+	return name, ok
+}

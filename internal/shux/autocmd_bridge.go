@@ -32,10 +32,23 @@ func (b *autocmdBridge) DeliverEvent(ctx context.Context, e protocol.Event) erro
 			"window_id": string(e.WindowID),
 			"pane_id":   string(e.PaneID),
 		})
+	case protocol.EventPaneRenamed:
+		b.app.Autocmds.Emit(ctx, EventPaneRenamed, map[string]any{
+			"session_id": string(e.SessionID),
+			"window_id":  string(e.WindowID),
+			"pane_id":    string(e.PaneID),
+			"name":       e.Name,
+		})
 	case protocol.EventWindowCreated:
 		b.app.Autocmds.Emit(ctx, EventWindowCreated, map[string]any{
 			"session_id": string(e.SessionID),
 			"window_id":  string(e.WindowID),
+		})
+	case protocol.EventWindowRenamed:
+		b.app.Autocmds.Emit(ctx, EventWindowRenamed, map[string]any{
+			"session_id": string(e.SessionID),
+			"window_id":  string(e.WindowID),
+			"name":       e.Name,
 		})
 	case protocol.EventWindowClosed:
 		b.app.Autocmds.Emit(ctx, EventWindowClosed, map[string]any{
