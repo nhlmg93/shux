@@ -90,9 +90,8 @@ func normalizeCopyKey(msg tea.KeyPressMsg) string {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			return "shift+" + key
 		}
-	default:
-		return key
 	}
+	return key
 }
 
 func (m Model) dispatchCopyBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd, bool) {
