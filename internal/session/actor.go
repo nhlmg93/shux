@@ -62,8 +62,14 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 			case protocol.CommandWindowClosed:
 				a.handleWindowClosed(ctx, m)
 				continue
+			case protocol.CommandPaneMove:
+				a.handlePaneMove(ctx, self, m)
+				continue
 			}
 			if wid, ok := protocol.RouteWindowID(msg); ok {
+				if !a.hasWindow(wid) {
+					continue
+				}
 				_ = a.Windows.Must(wid).Send(ctx, msg)
 				continue
 			}
@@ -72,7 +78,7 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 	}
 }
 
-func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.Command], m protocol.CommandCreateWindow) {
+func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.Command], m protocol.CommandCreateWindow) protocol.WindowID {
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
 	a.windowIDs = append(a.windowIDs, wid)
@@ -95,6 +101,52 @@ func (a *Actor) handleCreateWindow(ctx context.Context, self actor.Ref[protocol.
 		}
 		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandWindowResize{SessionID: m.SessionID, WindowID: wid, Cols: cols, Rows: rows})
 		_ = a.Windows.Must(wid).Send(ctx, protocol.CommandCreatePane{SessionID: m.SessionID, WindowID: wid})
+	}
+	return wid
+}
+
+func (a *Actor) handlePaneMove(ctx context.Context, self actor.Ref[protocol.Command], m protocol.CommandPaneMove) {
+	targetWindowID := m.TargetWindowID
+	if !targetWindowID.Valid() {
+		targetWindowID = a.handleCreateWindow(ctx, self, protocol.CommandCreateWindow{SessionID: m.SessionID})
+	}
+	if targetWindowID == m.SourceWindowID {
+		panic("session: pane move: source and target windows are identical")
+	}
+	detachReply := make(chan window.DetachPaneResult, 1)
+	if err := a.Windows.Must(m.SourceWindowID).Send(ctx, window.CommandDetachPane{
+		SessionID: m.SessionID,
+		WindowID:  m.SourceWindowID,
+		PaneID:    m.PaneID,
+		Reply:     detachReply,
+	}); err != nil {
+		panic(fmt.Sprintf("session: pane move detach send: %v", err))
+	}
+	var detached window.DetachPaneResult
+	select {
+	case <-ctx.Done():
+		return
+	case detached = <-detachReply:
+	}
+	if detached.Err != nil {
+		panic(detached.Err)
+	}
+	attachReply := make(chan error, 1)
+	if err := a.Windows.Must(targetWindowID).Send(ctx, window.CommandAttachPane{
+		SessionID: m.SessionID,
+		WindowID:  targetWindowID,
+		Transfer:  detached.Transfer,
+		Reply:     attachReply,
+	}); err != nil {
+		panic(fmt.Sprintf("session: pane move attach send: %v", err))
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case err := <-attachReply:
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -121,6 +173,15 @@ func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.Sessi
 	}
 	windows := append([]protocol.WindowID(nil), a.windowIDs...)
 	_ = a.hub.Send(ctx, protocol.EventSessionWindowsChanged{SessionID: sessionID, Revision: a.revision, Windows: windows})
+}
+
+func (a *Actor) hasWindow(windowID protocol.WindowID) bool {
+	for _, wid := range a.windowIDs {
+		if wid == windowID {
+			return true
+		}
+	}
+	return false
 }
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {

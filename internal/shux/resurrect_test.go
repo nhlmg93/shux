@@ -372,3 +372,87 @@ func TestResurrection_checkpointPersistsResizedPaneGeometry(t *testing.T) {
 		t.Fatal("restored layout missing two panes")
 	}
 }
+func TestResurrection_movePaneBreakJoinRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/sh")
+	token := "SHUX_MOVE_TOKEN_13"
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app1, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app1.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app1.TestSupervisor()
+	sid := app1.DefaultSessionID
+	wid1 := app1.DefaultWindowID
+	var splitReq protocol.RequestID
+	testutil.SendSplit(t, ctx, ref, &splitReq, "move-pane-test", sid, wid1, app1.DefaultPaneID, protocol.SplitVertical)
+	if !app1.WaitLayoutPanes(sid, wid1, 2, testutil.TestWaitTimeout) {
+		t.Fatal("expected split window with two panes")
+	}
+
+	movedPaneID := protocol.PaneID("p-2")
+	testutil.SendPaste(t, ctx, ref, sid, wid1, movedPaneID, "export SHUX_MOVE_TOKEN_13=ok\n")
+	if !app1.WaitPaneScreen(sid, wid1, movedPaneID, token, testutil.TestWaitTimeout) {
+		t.Fatal("source pane missing move marker before break")
+	}
+
+	testutil.SendMove(t, ctx, ref, sid, wid1, "", movedPaneID)
+	if !app1.WaitWindowCount(sid, 2, testutil.TestWaitTimeout) {
+		t.Fatalf("window count after break = %d, want 2", app1.WindowCount(sid))
+	}
+	var wid2 protocol.WindowID
+	for _, wid := range app1.WindowIDs(sid) {
+		if wid != wid1 {
+			wid2 = wid
+			break
+		}
+	}
+	if !wid2.Valid() {
+		t.Fatal("break-pane did not create a second window")
+	}
+	testutil.SendPaste(t, ctx, ref, sid, wid2, movedPaneID, "printf '%s\\n' \"$SHUX_MOVE_TOKEN_13\"\n")
+	if !app1.WaitPaneScreen(sid, wid2, movedPaneID, token, testutil.TestWaitTimeout) {
+		t.Fatal("moved pane in break window lost PTY environment")
+	}
+
+	testutil.SendMove(t, ctx, ref, sid, wid2, wid1, movedPaneID)
+	if !app1.WaitWindowCount(sid, 1, testutil.TestWaitTimeout) {
+		t.Fatalf("window count after join = %d, want 1", app1.WindowCount(sid))
+	}
+	if !app1.WaitLayoutPanes(sid, wid1, 2, testutil.TestWaitTimeout) {
+		t.Fatal("joined target window missing moved pane")
+	}
+	testutil.SendPaste(t, ctx, ref, sid, wid1, movedPaneID, "printf '%s\\n' \"$SHUX_MOVE_TOKEN_13\"\n")
+	if !app1.WaitPaneScreen(sid, wid1, movedPaneID, token, testutil.TestWaitTimeout) {
+		t.Fatal("joined pane lost PTY environment")
+	}
+
+	if err := app1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app2, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app2.Close()
+	if err := app2.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !app2.WaitWindowCount(app2.DefaultSessionID, 1, testutil.TestWaitTimeout) {
+		t.Fatalf("restored window count = %d, want 1", app2.WindowCount(app2.DefaultSessionID))
+	}
+	if !app2.WaitLayoutPanes(app2.DefaultSessionID, app2.DefaultWindowID, 2, testutil.TestWaitTimeout) {
+		t.Fatal("restored layout missing moved pane")
+	}
+	if !app2.WaitPaneScreen(app2.DefaultSessionID, app2.DefaultWindowID, movedPaneID, token, testutil.TestWaitTimeout) {
+		t.Fatal("restored moved pane missing journal marker")
+	}
+}

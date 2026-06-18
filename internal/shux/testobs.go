@@ -74,6 +74,21 @@ func (a *Shux) WindowCount(sessionID protocol.SessionID) int {
 	return len(a.cache.WindowIDs(sessionID))
 }
 
+// WaitWindowCount waits until a session has exactly want windows.
+func (a *Shux) WaitWindowCount(sessionID protocol.SessionID, want int, timeout time.Duration) bool {
+	return pollUntil(timeout, 10*time.Millisecond, func() bool {
+		return a.WindowCount(sessionID) == want
+	})
+}
+
+// WindowIDs returns the current ordered window list for tests.
+func (a *Shux) WindowIDs(sessionID protocol.SessionID) []protocol.WindowID {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.WindowIDs(sessionID)
+}
+
 // PaneScreenText returns the cached screen text for a pane. It is intended for
 // integration tests observing resurrection replay.
 func (a *Shux) PaneScreenText(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) (string, bool) {

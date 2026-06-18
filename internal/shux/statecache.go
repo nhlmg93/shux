@@ -55,6 +55,19 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 			c.layouts[event.SessionID] = windows
 		}
 		windows[event.WindowID] = event
+		if sessionScreens := c.screens[event.SessionID]; sessionScreens != nil {
+			if panes := sessionScreens[event.WindowID]; panes != nil {
+				alive := make(map[protocol.PaneID]struct{}, len(event.Panes))
+				for _, pane := range event.Panes {
+					alive[pane.PaneID] = struct{}{}
+				}
+				for paneID := range panes {
+					if _, ok := alive[paneID]; !ok {
+						delete(panes, paneID)
+					}
+				}
+			}
+		}
 	case protocol.EventPaneScreenChanged:
 		windows := c.screens[event.SessionID]
 		if windows == nil {
