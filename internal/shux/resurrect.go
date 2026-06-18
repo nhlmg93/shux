@@ -67,7 +67,11 @@ func (a *Shux) bootstrapFresh(ctx context.Context) error {
 	a.DefaultPaneID = pane.PaneID
 	a.setState(stateReady)
 	a.Logger.Info("shux: bootstrap default session ready")
-	a.emitDaemonStarted(ctx)
+	if a.Autocmds != nil {
+		a.Autocmds.Emit(ctx, EventDaemonStarted, map[string]any{
+			"session_id": string(a.DefaultSessionID),
+		})
+	}
 	return nil
 }
 
@@ -105,16 +109,12 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 	a.DefaultPaneID = firstPane
 	a.setState(stateReady)
 	a.Logger.Info("shux: restored session from manifest")
-	a.emitDaemonStarted(ctx)
-	return nil
-}
-
-func (a *Shux) emitDaemonStarted(ctx context.Context) {
 	if a.Autocmds != nil {
 		a.Autocmds.Emit(ctx, EventDaemonStarted, map[string]any{
 			"session_id": string(a.DefaultSessionID),
 		})
 	}
+	return nil
 }
 
 func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], events <-chan protocol.Event, sessionID protocol.SessionID, layout persist.LayoutSnapshot) (protocol.WindowID, protocol.PaneID, error) {
@@ -135,8 +135,8 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		return "", "", err
 	}
 
-	firstPane := protocol.PaneID(sortedLayoutPanes(layout.Panes)[0].PaneID)
 	targetPanes := sortedLayoutPanes(layout.Panes)
+	firstPane := protocol.PaneID(targetPanes[0].PaneID)
 	currentCount := 1
 	for currentCount < len(targetPanes) {
 		layoutSnap, ok := a.cache.LayoutSnapshot(sessionID, window.WindowID)
@@ -148,9 +148,9 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		if !ok {
 			return "", "", fmt.Errorf("cannot infer split for pane %s", next.PaneID)
 		}
-		bootstrapSplitReq++
+		a.bootstrapReq++
 		if err := super.Send(ctx, protocol.CommandPaneSplit{
-			Meta:         protocol.CommandMeta{ClientID: bootstrapClientID, RequestID: bootstrapSplitReq},
+			Meta:         protocol.CommandMeta{ClientID: bootstrapClientID, RequestID: a.bootstrapReq},
 			SessionID:    sessionID,
 			WindowID:     window.WindowID,
 			TargetPaneID: parent,
@@ -183,22 +183,8 @@ func (a *Shux) waitLayoutPanes(ctx context.Context, sessionID protocol.SessionID
 }
 
 func findSplitTarget(current protocol.EventWindowLayoutChanged, target persist.LayoutPaneSnapshot) (protocol.PaneID, protocol.SplitDirection, bool) {
-	parent, dir, ok := findSplitTargetSnaps(layoutPanesFromEvent(current.Panes), target)
+	parent, dir, ok := findSplitTargetSnaps(persist.LayoutFromEvent(current).Panes, target)
 	return protocol.PaneID(parent), dir, ok
-}
-
-func layoutPanesFromEvent(panes []protocol.EventLayoutPane) []persist.LayoutPaneSnapshot {
-	out := make([]persist.LayoutPaneSnapshot, len(panes))
-	for i, p := range panes {
-		out[i] = persist.LayoutPaneSnapshot{
-			PaneID: string(p.PaneID),
-			Col:    p.Col,
-			Row:    p.Row,
-			Cols:   p.Cols,
-			Rows:   p.Rows,
-		}
-	}
-	return out
 }
 
 func findSplitTargetSnaps(current []persist.LayoutPaneSnapshot, target persist.LayoutPaneSnapshot) (string, protocol.SplitDirection, bool) {

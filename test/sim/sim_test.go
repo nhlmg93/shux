@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"shux/internal/cfg"
 	"shux/internal/hub"
 	"shux/internal/protocol"
 	"shux/internal/supervisor"
@@ -22,14 +21,6 @@ const (
 )
 
 const simFuzzSteps = 24
-
-func simShellPolicy() cfg.Config {
-	c := cfg.DefaultConfig()
-	c.ShellPath = "/bin/sh"
-	c.JournalReplayDelay = 0
-	c.Resurrection = false
-	return c
-}
 
 func TestSim_deterministicSessionWindowPaneFuzz(t *testing.T) {
 	runDeterministicSimFuzz(t, 0x5eed5eed)
@@ -47,7 +38,7 @@ func runDeterministicSimFuzz(t *testing.T, seed int64) {
 	rec := newSimRecorder(t, events)
 	defer rec.stop()
 
-	ref := supervisor.StartWithPolicy(ctx, &eref, simShellPolicy())
+	ref := supervisor.StartWithPolicy(ctx, &eref, simPolicy("", false))
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{
 		Meta:      protocol.CommandMeta{ClientID: simClientID, RequestID: 1},
@@ -139,8 +130,7 @@ func TestSim_shellPTYInputOutputAndResize(t *testing.T) {
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-pty", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
-	policy := simShellPolicy()
-	ref := supervisor.StartWithPolicy(ctx, &eref, policy)
+	ref := supervisor.StartWithPolicy(ctx, &eref, simPolicy("", false))
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{SessionID: simSessionID})
 	sendSim(t, ctx, ref, protocol.CommandCreatePane{SessionID: simSessionID, WindowID: simWindowID})

@@ -16,16 +16,23 @@ func (a *Shux) TestSupervisor() actor.Ref[protocol.Command] {
 	return a.supervisor
 }
 
-// WaitPaneScreen waits until a pane snapshot contains needle or times out.
-func (a *Shux) WaitPaneScreen(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, needle string, timeout time.Duration) bool {
+func pollUntil(timeout, interval time.Duration, ready func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if text, ok := a.PaneScreenText(sessionID, windowID, paneID); ok && strings.Contains(text, needle) {
+		if ready() {
 			return true
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(interval)
 	}
 	return false
+}
+
+// WaitPaneScreen waits until a pane snapshot contains needle or times out.
+func (a *Shux) WaitPaneScreen(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, needle string, timeout time.Duration) bool {
+	return pollUntil(timeout, 20*time.Millisecond, func() bool {
+		text, ok := a.PaneScreenText(sessionID, windowID, paneID)
+		return ok && strings.Contains(text, needle)
+	})
 }
 
 // RestoreFromCheckpoint replays a saved manifest for integration tests.
@@ -45,14 +52,10 @@ func (a *Shux) RestoreFromCheckpoint(ctx context.Context) error {
 
 // WaitLayoutPanes waits until a window layout has at least minPanes entries.
 func (a *Shux) WaitLayoutPanes(sessionID protocol.SessionID, windowID protocol.WindowID, minPanes int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if layout, ok := a.cache.LayoutSnapshot(sessionID, windowID); ok && len(layout.Panes) >= minPanes {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
+	return pollUntil(timeout, 10*time.Millisecond, func() bool {
+		layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
+		return ok && len(layout.Panes) >= minPanes
+	})
 }
 
 // WindowCount returns the number of live windows in a session.

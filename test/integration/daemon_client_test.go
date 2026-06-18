@@ -141,25 +141,7 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 
 func startTestDaemon(t *testing.T) (string, func()) {
 	t.Helper()
-	addr := freeLoopbackAddr(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- daemon.RunWithConfig(ctx, addr, shux.DefaultConfig()) }()
-	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	return addr, func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil && !errors.Is(err, context.Canceled) {
-				t.Fatalf("daemon stopped with error: %v", err)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("daemon did not stop")
-		}
-	}
+	return startTestDaemonWithConfig(t, shux.DefaultConfig())
 }
 
 func attachAndDetach(t *testing.T, addr string) []byte {
