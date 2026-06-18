@@ -82,7 +82,7 @@ func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
 	go func() { peerDone <- attachAndDetachAfter(t, addr, 400*time.Millisecond) }()
 	time.Sleep(100 * time.Millisecond)
 
-	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, '!'}, 0)
 
 	select {
 	case <-peerDone:
@@ -102,6 +102,22 @@ func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
 	}
 	if !available {
 		t.Fatal("daemon should remain available after non-last client quit")
+	}
+}
+
+func TestClientDisplayPanesBindingDoesNotStopDaemon(t *testing.T) {
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	// prefix q opens pane quick select; digit selects a pane; prefix d detaches.
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q', '1', sshCtrlB, 'd'}, 0)
+
+	available, err := client.ServerAvailable(t.Context(), addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !available {
+		t.Fatal("daemon should remain available after display panes binding")
 	}
 }
 
@@ -130,7 +146,7 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, '!'}, 0)
 
 	select {
 	case err := <-done:

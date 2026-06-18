@@ -57,6 +57,16 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 		m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
 		m.Layout.ActivePane = m.ActivePaneID
 		return m, nil
+	case cfg.ActionFocusPaneLeft:
+		return m.startPaneFocusDirection(protocol.PaneFocusLeft)
+	case cfg.ActionFocusPaneRight:
+		return m.startPaneFocusDirection(protocol.PaneFocusRight)
+	case cfg.ActionFocusPaneUp:
+		return m.startPaneFocusDirection(protocol.PaneFocusUp)
+	case cfg.ActionFocusPaneDown:
+		return m.startPaneFocusDirection(protocol.PaneFocusDown)
+	case cfg.ActionDisplayPanes:
+		return m.startPaneQuickSelect()
 	case cfg.ActionClosePane:
 		return m.startPaneClose(m.ActivePaneID)
 	case cfg.ActionNewWindow:

@@ -196,16 +196,17 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		exitIntentMu.Unlock()
 	}
 	model := ui.NewModel(ui.ModelConfig{
-		ClientID:   clientID,
-		SessionID:  a.DefaultSessionID,
-		WindowID:   a.DefaultWindowID,
-		PaneID:     a.DefaultPaneID,
-		Supervisor: a.supervisor,
-		Ctx:        ctx,
-		OnExit:     setExitIntent,
-		MapLeader:  a.Config.MapLeader,
-		Keymaps:    a.Config.Keymaps,
-		Lua:        a.luaRuntime,
+		ClientID:               clientID,
+		SessionID:              a.DefaultSessionID,
+		WindowID:               a.DefaultWindowID,
+		PaneID:                 a.DefaultPaneID,
+		Supervisor:             a.supervisor,
+		Ctx:                    ctx,
+		OnExit:                 setExitIntent,
+		MapLeader:              a.Config.MapLeader,
+		Keymaps:                a.Config.Keymaps,
+		Lua:                    a.luaRuntime,
+		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
 	})
 	windowIDs := a.cache.WindowIDs(a.DefaultSessionID)
 	if len(windowIDs) == 0 {

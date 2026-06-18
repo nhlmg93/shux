@@ -3,40 +3,43 @@ package cfg
 import "time"
 
 const (
-	DefaultShellPath          = "/bin/sh"
-	BashShellPath             = "/bin/bash"
-	DefaultBindAddr           = "127.0.0.1:23234"
-	DefaultMapLeader          = "ctrl+b"
-	DefaultScrollback         = 10_000
-	DefaultJournalMaxMB       = 64
-	DefaultJournalReplayDelay = 200 * time.Millisecond
+	DefaultShellPath              = "/bin/sh"
+	BashShellPath                 = "/bin/bash"
+	DefaultBindAddr               = "127.0.0.1:23234"
+	DefaultMapLeader              = "ctrl+b"
+	DefaultScrollback             = 10_000
+	DefaultJournalMaxMB           = 64
+	DefaultJournalReplayDelay     = 200 * time.Millisecond
+	DefaultPaneQuickSelectTimeout = 2 * time.Second
 )
 
 // Config holds runtime policy chosen when a shux daemon starts.
 // It is intentionally immutable after actor startup. Attaching to an
 // already-running daemon must not mutate this policy.
 type Config struct {
-	ShellPath          string
-	BindAddr           string
-	MapLeader          string
-	Scrollback         uint
-	JournalMaxMB       uint
-	JournalReplayDelay time.Duration
-	StateDir           string
-	Resurrection       bool
-	Keymaps            *Keymaps
+	ShellPath              string
+	BindAddr               string
+	MapLeader              string
+	Scrollback             uint
+	JournalMaxMB           uint
+	JournalReplayDelay     time.Duration
+	PaneQuickSelectTimeout time.Duration
+	StateDir               string
+	Resurrection           bool
+	Keymaps                *Keymaps
 }
 
 func DefaultConfig() Config {
 	return Config{
-		ShellPath:          DefaultShellPath,
-		BindAddr:           DefaultBindAddr,
-		MapLeader:          DefaultMapLeader,
-		Scrollback:         DefaultScrollback,
-		JournalMaxMB:       DefaultJournalMaxMB,
-		JournalReplayDelay: DefaultJournalReplayDelay,
-		Resurrection:       true,
-		Keymaps:            DefaultKeymaps(),
+		ShellPath:              DefaultShellPath,
+		BindAddr:               DefaultBindAddr,
+		MapLeader:              DefaultMapLeader,
+		Scrollback:             DefaultScrollback,
+		JournalMaxMB:           DefaultJournalMaxMB,
+		JournalReplayDelay:     DefaultJournalReplayDelay,
+		PaneQuickSelectTimeout: DefaultPaneQuickSelectTimeout,
+		Resurrection:           true,
+		Keymaps:                DefaultKeymaps(),
 	}
 }
 
@@ -66,6 +69,9 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.Keymaps == nil {
 		c.Keymaps = DefaultKeymaps()
+	}
+	if c.PaneQuickSelectTimeout <= 0 {
+		c.PaneQuickSelectTimeout = DefaultPaneQuickSelectTimeout
 	}
 	return c
 }

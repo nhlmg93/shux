@@ -15,6 +15,11 @@ const (
 	ActionResizePaneUp    BuiltinKeyAction = "resize_pane_up"
 	ActionResizePaneRight BuiltinKeyAction = "resize_pane_right"
 	ActionNextPane        BuiltinKeyAction = "next_pane"
+	ActionFocusPaneLeft   BuiltinKeyAction = "focus_pane_left"
+	ActionFocusPaneRight  BuiltinKeyAction = "focus_pane_right"
+	ActionFocusPaneUp     BuiltinKeyAction = "focus_pane_up"
+	ActionFocusPaneDown   BuiltinKeyAction = "focus_pane_down"
+	ActionDisplayPanes    BuiltinKeyAction = "display_panes"
 	ActionClosePane       BuiltinKeyAction = "close_pane"
 	ActionNewWindow       BuiltinKeyAction = "new_window"
 	ActionNextWindow      BuiltinKeyAction = "next_window"
@@ -105,18 +110,23 @@ func DefaultKeymaps() *Keymaps {
 		k.Set("prefix", key, KeymapBinding{Builtin: action, Desc: desc})
 	}
 	set("d", ActionDetach, "Detach client")
-	set("q", ActionQuit, "Quit shux when last client")
+	set("q", ActionDisplayPanes, "Display pane numbers for quick select")
+	set("!", ActionQuit, "Quit shux when last client")
 	set("%", ActionSplitLR, "Split pane left/right")
 	set("\"", ActionSplitTB, "Split pane top/bottom")
-	set("left", ActionResizePaneLeft, "Resize pane left")
-	set("down", ActionResizePaneDown, "Resize pane down")
-	set("up", ActionResizePaneUp, "Resize pane up")
-	set("right", ActionResizePaneRight, "Resize pane right")
-	set("h", ActionResizePaneLeft, "Resize pane left")
-	set("j", ActionResizePaneDown, "Resize pane down")
-	set("k", ActionResizePaneUp, "Resize pane up")
-	set("l", ActionResizePaneRight, "Resize pane right")
+	set("H", ActionResizePaneLeft, "Resize pane left")
+	set("J", ActionResizePaneDown, "Resize pane down")
+	set("K", ActionResizePaneUp, "Resize pane up")
+	set("L", ActionResizePaneRight, "Resize pane right")
 	set("o", ActionNextPane, "Next pane")
+	set("h", ActionFocusPaneLeft, "Focus pane left")
+	set("j", ActionFocusPaneDown, "Focus pane down")
+	set("k", ActionFocusPaneUp, "Focus pane up")
+	set("l", ActionFocusPaneRight, "Focus pane right")
+	set("left", ActionFocusPaneLeft, "Focus pane left")
+	set("down", ActionFocusPaneDown, "Focus pane down")
+	set("up", ActionFocusPaneUp, "Focus pane up")
+	set("right", ActionFocusPaneRight, "Focus pane right")
 	set("x", ActionClosePane, "Close pane")
 	set("c", ActionNewWindow, "New window")
 	set("n", ActionNextWindow, "Next window")
