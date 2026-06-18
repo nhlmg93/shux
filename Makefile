@@ -38,7 +38,7 @@ help:
 	@echo "make test-integration — run integration tests locally"
 	@echo "make docs-dev    — run Starlight docs dev server"
 	@echo "make docs-build  — build Starlight docs site"
-	@echo "make demo         — render README demo GIF (requires vhs, ttyd, ffmpeg)"
+	@echo "make demo         — render README demo GIF (requires vhs, ttyd, ffmpeg, less, nvim, node)"
 	@echo "make clean      — remove local libghostty build"
 
 test: test-unit test-integration test-e2e test-sim-native
@@ -72,6 +72,9 @@ docs-build:
 demo: build
 	$(QUIET)command -v vhs >/dev/null || (echo "install vhs: https://github.com/charmbracelet/vhs" && exit 1)
 	$(QUIET)command -v ttyd >/dev/null || (echo "install ttyd (required by vhs)" && exit 1)
+	$(QUIET)command -v less >/dev/null || (echo "install less (demo docs pane)" && exit 1)
+	$(QUIET)command -v nvim >/dev/null || (echo "install nvim (demo editor pane)" && exit 1)
+	$(QUIET)command -v node >/dev/null || (echo "install node (demo heartbeat pane)" && exit 1)
 	$(QUIET)vhs demo/vhs/shux-demo.tape
 
 $(GHOSTTY_SRC)/.git:

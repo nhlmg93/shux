@@ -2,6 +2,8 @@ Output demo/vhs/shux-demo.gif
 
 Require bash
 Require node
+Require less
+Require nvim
 
 Set Shell "bash"
 Set FontSize 16
@@ -25,12 +27,12 @@ Wait+Screen@30s /SYNC:OFF/
 Show
 Sleep 1.5s
 
-# Top-left: docs pane.
-Type "echo '  docs | less README'"
+# Top-left: read project docs in less (keeps running when we split away).
+Type "less README.md"
 Enter
-Sleep 500ms
+Sleep 1.2s
 
-# Split right: start a real long-running Node process.
+# Split right: long-running Node process.
 Ctrl+B
 Type "%"
 Sleep 400ms
@@ -38,7 +40,7 @@ Type "./demo/vhs/run-node-heartbeat.sh"
 Enter
 Sleep 2.5s
 
-# Split bottom-left: editor pane.
+# Split bottom-left: edit a draft in Neovim (leave the editor open).
 Ctrl+B
 Type "o"
 Sleep 200ms
@@ -46,24 +48,31 @@ Ctrl+B
 Copy '"'
 Paste
 Sleep 400ms
-Type "echo '  editor | nano draft'"
-Enter
-Sleep 500ms
-
-# Split bottom-right: shell pane.
-Ctrl+B
-Type "o"
-Sleep 200ms
-Ctrl+B
-Type "o"
-Sleep 200ms
-Ctrl+B
-Copy '"'
-Paste
-Sleep 400ms
-Type "echo '  shell | run commands here'"
+Type "nvim demo/vhs/draft.txt"
 Enter
 Sleep 1.5s
+Type "i"
+Sleep 300ms
+Type "# shux resurrection demo"
+Enter
+Type "edited in neovim"
+Escape
+Sleep 600ms
+
+# Split bottom-right: run a real shell command.
+Ctrl+B
+Type "o"
+Sleep 200ms
+Ctrl+B
+Type "o"
+Sleep 200ms
+Ctrl+B
+Copy '"'
+Paste
+Sleep 400ms
+Type "wc -l README.md"
+Enter
+Sleep 1s
 
 # Detach; daemon keeps journaling pane output.
 Ctrl+B
