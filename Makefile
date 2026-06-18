@@ -10,8 +10,10 @@ GHOSTTY_SRC := $(DEPS_DIR)/ghostty
 DEPS_PREFIX := $(abspath $(DEPS_DIR)/prefix)
 PKG_CONFIG_PATH := $(DEPS_PREFIX)/lib/pkgconfig:$(DEPS_PREFIX)/share/pkgconfig
 
-GO_TEST_FLAGS := -count=1 -shuffle=off -timeout 5s
-GO_TEST := CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go test $(GO_TEST_FLAGS)
+GO_TEST_FLAGS := -count=1 -shuffle=off
+GO_TEST_UNIT_FLAGS := $(GO_TEST_FLAGS) -timeout 20s
+GO_TEST_LAYER_FLAGS := $(GO_TEST_FLAGS) -timeout 30s
+GO_TEST := CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go test
 
 QUIET := @
 ifeq ($(V),1)
@@ -29,7 +31,7 @@ help:
 	@echo "make            — build shux"
 	@echo "make build      — build shux"
 	@echo "make test       — run unit, integration, e2e, and sim tests"
-	@echo "make test-unit  — run internal package tests (5s budget)"
+	@echo "make test-unit  — run internal tests (2s max per test)"
 	@echo "make install    — install shux binary to $(PREFIX)/bin"
 	@echo "make test-sim   — run deterministic sim tests in Docker"
 	@echo "make test-e2e   — run e2e tests locally"
@@ -41,7 +43,7 @@ help:
 test: test-unit test-integration test-e2e test-sim-native
 
 test-unit: libghostty
-	$(QUIET)$(GO_TEST) ./internal/...
+	$(QUIET)$(GO_TEST) $(GO_TEST_UNIT_FLAGS) ./internal/...
 
 test-sim: libghostty
 	$(QUIET)docker build -f Dockerfile.sim.env -t shux-test .
@@ -49,13 +51,13 @@ test-sim: libghostty
 	$(QUIET)docker run --rm --name shux-test-sim-run shux-test
 
 test-sim-native: libghostty
-	$(QUIET)$(GO_TEST) ./test/sim/...
+	$(QUIET)$(GO_TEST) $(GO_TEST_LAYER_FLAGS) ./test/sim/...
 
 test-e2e: libghostty
-	$(QUIET)$(GO_TEST) ./test/e2e/...
+	$(QUIET)$(GO_TEST) $(GO_TEST_LAYER_FLAGS) ./test/e2e/...
 
 test-integration: libghostty
-	$(QUIET)$(GO_TEST) ./test/integration/...
+	$(QUIET)$(GO_TEST) $(GO_TEST_LAYER_FLAGS) ./test/integration/...
 
 install: build
 	$(QUIET)install -Dm755 shux $(DESTDIR)$(PREFIX)/bin/shux

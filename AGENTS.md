@@ -15,8 +15,21 @@ Building shux to replace tmux with a simpler, modern, reliable architecture.
 
 
 ### Testing
-- NO UNIT TEST!
-- Integration tests should be heavily based, focused, and targeted around Sessions/Window/Pane/Config/Plugin feature set.
+
+#### Time budgets (hard limits per test function)
+
+| Layer | Path | Max per test |
+| --- | --- | --- |
+| Unit | `./internal/...` | **2 seconds** |
+| Integration / sim / e2e | `./test/integration/...`, `./test/sim/...`, `./test/e2e/...` | **5 seconds** |
+
+- Every test must bound itself with `context.WithTimeout(t.Context(), …)` (or equivalent waits) inside these limits.
+- `go test -timeout` in the Makefile is a **package** safety net (sum of tests in the package), not the per-test budget.
+- Prefer fast, layered tests: pure replay/manifest checks in `internal/`, actor/daemon flows in `test/integration/`, user-story sims in Docker (`make test-sim`).
+
+#### What to test (no trivial unit tests)
+
+Integration-style tests should be focused on Sessions/Window/Pane/Config/Plugin and shux-specific behavior:
     * Interactions around the recovery model
     * Internal messaging
     * Persistence/Durability layers

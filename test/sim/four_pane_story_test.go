@@ -32,7 +32,7 @@ func TestResurrectionStory_fourPaneLiveRecycle(t *testing.T) {
 	cfg.Resurrection = true
 	cfg.JournalReplayDelay = 0
 
-	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	app1, err := shux.NewShuxWithConfig(cfg)

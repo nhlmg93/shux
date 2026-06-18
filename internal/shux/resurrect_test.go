@@ -188,7 +188,7 @@ func TestResurrection_liveJournalReplayRoundtrip(t *testing.T) {
 	cfg.ShellPath = "/bin/sh"
 	marker := "SHUX_LIVE_MARKER"
 
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	app1, err := shux.NewShuxWithConfig(cfg)
