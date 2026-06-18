@@ -67,3 +67,38 @@ func TestRouteNewLayoutCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateCommand_paneZoomToggle(t *testing.T) {
+	valid := CommandPaneZoomToggle{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+		PaneID:    "p-1",
+	}
+	if err := ValidateCommand(valid); err != nil {
+		t.Fatalf("ValidateCommand(valid zoom) error = %v", err)
+	}
+
+	invalid := valid
+	invalid.PaneID = ""
+	if err := ValidateCommand(invalid); err == nil {
+		t.Fatal("ValidateCommand(invalid zoom) expected error")
+	}
+}
+
+func TestRouteIDs_includePaneZoomToggle(t *testing.T) {
+	cmd := CommandPaneZoomToggle{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+		PaneID:    "p-1",
+	}
+
+	if sid, ok := RouteSessionID(cmd); !ok || sid != "s-1" {
+		t.Fatalf("RouteSessionID(zoom) = (%q, %v), want (%q, true)", sid, ok, SessionID("s-1"))
+	}
+	if wid, ok := RouteWindowID(cmd); !ok || wid != "w-1" {
+		t.Fatalf("RouteWindowID(zoom) = (%q, %v), want (%q, true)", wid, ok, WindowID("w-1"))
+	}
+	if pid, ok := RoutePaneID(cmd); ok || pid != "" {
+		t.Fatalf("RoutePaneID(zoom) = (%q, %v), want (\"\", false)", pid, ok)
+	}
+}

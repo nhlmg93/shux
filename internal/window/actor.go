@@ -26,6 +26,8 @@ type Actor struct {
 	hub           actor.EventRef
 	seq           uint64
 	revision      uint64
+	zoomedPaneID  protocol.PaneID
+	savedLayout   *Layout
 }
 
 func NewActor(hub actor.EventRef) *Actor {
@@ -83,6 +85,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handlePaneSwap(ctx, m)
 			case protocol.CommandPaneClose:
 				a.handlePaneClose(ctx, m)
+			case protocol.CommandPaneZoomToggle:
+				a.handlePaneZoomToggle(ctx, m)
 			default:
 				if pid, ok := protocol.RoutePaneID(msg); ok {
 					_ = a.Panes.Must(pid).Send(ctx, msg)
@@ -111,8 +115,19 @@ func (a *Actor) handleCreatePane(ctx context.Context, m protocol.CommandCreatePa
 }
 
 func (a *Actor) handleWindowResize(ctx context.Context, m protocol.CommandWindowResize) {
-	if err := a.Layout.SetWindowSize(m.Cols, m.Rows); err != nil {
-		return
+	if a.savedLayout != nil {
+		saved := a.savedLayout.Clone()
+		if err := saved.SetWindowSize(m.Cols, m.Rows); err != nil {
+			return
+		}
+		if err := a.Layout.SetWindowSize(m.Cols, m.Rows); err != nil {
+			return
+		}
+		*a.savedLayout = saved
+	} else {
+		if err := a.Layout.SetWindowSize(m.Cols, m.Rows); err != nil {
+			return
+		}
 	}
 	a.revision++
 	for _, pid := range a.Layout.PaneIDs() {
@@ -122,6 +137,9 @@ func (a *Actor) handleWindowResize(ctx context.Context, m protocol.CommandWindow
 }
 
 func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit) {
+	if a.restoreZoomLayout(ctx, m.SessionID, m.WindowID) {
+		// Split while zoomed deterministically restores first, then applies split.
+	}
 	if err := a.Layout.CanSplitPane(m.TargetPaneID, m.Direction); err != nil {
 		a.rejectSplit(ctx, m, err.Error())
 		return
@@ -152,6 +170,9 @@ func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit
 }
 
 func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose) {
+	if a.restoreZoomLayout(ctx, m.SessionID, m.WindowID) {
+		// Close while zoomed deterministically restores first, then closes pane.
+	}
 	lastPane := len(a.Layout.PaneIDs()) <= 1
 	if err := a.Layout.RemovePane(m.PaneID); err != nil {
 		panic("window: close pane: " + err.Error())
@@ -245,6 +266,50 @@ func (a *Actor) handlePaneFocus(ctx context.Context, m protocol.CommandPaneFocus
 	})
 }
 
+func (a *Actor) handlePaneZoomToggle(ctx context.Context, m protocol.CommandPaneZoomToggle) {
+	if a.zoomedPaneID.Valid() && m.PaneID == a.zoomedPaneID {
+		_ = a.restoreZoomLayout(ctx, m.SessionID, m.WindowID)
+		return
+	}
+	if a.zoomedPaneID.Valid() {
+		if a.savedLayout == nil || !a.savedLayout.hasLeaf(m.PaneID) {
+			return
+		}
+		// Switching zoom target restores from saved layout, then zooms target.
+		a.Layout = a.savedLayout.Clone()
+	} else {
+		if !a.Layout.hasLeaf(m.PaneID) {
+			return
+		}
+		saved := a.Layout.Clone()
+		a.savedLayout = &saved
+	}
+	if err := a.Layout.SetSinglePane(m.PaneID); err != nil {
+		panic(fmt.Sprintf("window: zoom pane %s: %v", m.PaneID, err))
+	}
+	a.zoomedPaneID = m.PaneID
+	a.revision++
+	a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, m.PaneID, a.mustRect(m.PaneID, "PaneZoomToggle"), false)
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) restoreZoomLayout(ctx context.Context, sid protocol.SessionID, wid protocol.WindowID) bool {
+	if !a.zoomedPaneID.Valid() {
+		return false
+	}
+	if a.savedLayout != nil {
+		a.Layout = a.savedLayout.Clone()
+	}
+	a.savedLayout = nil
+	a.zoomedPaneID = ""
+	a.revision++
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, sid, wid, pid, a.mustRect(pid, "PaneZoomRestore"), false)
+	}
+	a.emitLayout(ctx, sid, wid)
+	return true
+}
+
 func (a *Actor) nextPaneID() protocol.PaneID {
 	a.seq++
 	return protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
@@ -269,27 +334,40 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 	if a.hub == nil {
 		return
 	}
-	ids := a.Layout.PaneIDs()
+	panes := layoutEventPanes(a.Layout)
+	var savedPanes []protocol.EventLayoutPane
+	if a.savedLayout != nil {
+		savedPanes = layoutEventPanes(*a.savedLayout)
+	}
+	_ = a.hub.Send(ctx, protocol.EventWindowLayoutChanged{
+		SessionID:    sid,
+		WindowID:     wid,
+		Revision:     a.revision,
+		Cols:         int(a.Layout.WindowCols),
+		Rows:         int(a.Layout.WindowRows),
+		Panes:        panes,
+		ZoomedPaneID: a.zoomedPaneID,
+		SavedPanes:   savedPanes,
+	})
+}
+
+func layoutEventPanes(layout Layout) []protocol.EventLayoutPane {
+	ids := layout.PaneIDs()
 	panes := make([]protocol.EventLayoutPane, 0, len(ids))
 	for _, pid := range ids {
-		r, rok := a.Layout.Rect(pid)
+		r, rok := layout.Rect(pid)
 		if !rok {
 			continue
 		}
 		panes = append(panes, protocol.EventLayoutPane{
 			PaneID: pid,
-			Col:    int(r.Col), Row: int(r.Row),
-			Cols: int(r.Cols), Rows: int(r.Rows),
+			Col:    int(r.Col),
+			Row:    int(r.Row),
+			Cols:   int(r.Cols),
+			Rows:   int(r.Rows),
 		})
 	}
-	_ = a.hub.Send(ctx, protocol.EventWindowLayoutChanged{
-		SessionID: sid,
-		WindowID:  wid,
-		Revision:  a.revision,
-		Cols:      int(a.Layout.WindowCols),
-		Rows:      int(a.Layout.WindowRows),
-		Panes:     panes,
-	})
+	return panes
 }
 
 func (a *Actor) rejectSplit(ctx context.Context, m protocol.CommandPaneSplit, reason string) {

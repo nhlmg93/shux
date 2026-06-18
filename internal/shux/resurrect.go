@@ -135,7 +135,11 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		return "", "", err
 	}
 
-	targetPanes := sortedLayoutPanes(layout.Panes)
+	targetPanes := layout.Panes
+	if layout.ZoomedPaneID != "" && len(layout.SavedPanes) > 0 {
+		targetPanes = layout.SavedPanes
+	}
+	targetPanes = sortedLayoutPanes(targetPanes)
 	firstPane := protocol.PaneID(targetPanes[0].PaneID)
 	currentCount := 1
 	for currentCount < len(targetPanes) {
@@ -160,6 +164,20 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		}
 		currentCount++
 		if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, currentCount, restoreLayoutWait); err != nil {
+			return "", "", err
+		}
+	}
+
+	if layout.ZoomedPaneID != "" {
+		a.bootstrapReq++
+		if err := super.Send(ctx, protocol.CommandPaneZoomToggle{
+			SessionID: sessionID,
+			WindowID:  window.WindowID,
+			PaneID:    protocol.PaneID(layout.ZoomedPaneID),
+		}); err != nil {
+			return "", "", err
+		}
+		if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, 1, restoreLayoutWait); err != nil {
 			return "", "", err
 		}
 	}

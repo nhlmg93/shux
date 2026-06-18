@@ -54,6 +54,20 @@ func NewLayout(windowCols, windowRows uint16) Layout {
 	}
 }
 
+// Clone returns a deep copy of the layout tree and pane rectangles.
+func (l Layout) Clone() Layout {
+	out := Layout{
+		WindowCols: l.WindowCols,
+		WindowRows: l.WindowRows,
+		root:       cloneLayoutNode(l.root),
+		panes:      make(map[protocol.PaneID]Rect, len(l.panes)),
+	}
+	for id, r := range l.panes {
+		out.panes[id] = r
+	}
+	return out
+}
+
 // SetWindowSize updates the window dimensions and refits existing panes.
 // Returns an error if the new size cannot accommodate the current pane tree.
 func (l *Layout) SetWindowSize(cols, rows uint16) error {
@@ -756,6 +770,20 @@ func rangeOverlap(aStart, aEnd, bStart, bEnd int) int {
 		end = bEnd
 	}
 	return end - start
+}
+
+func cloneLayoutNode(n *layoutNode) *layoutNode {
+	if n == nil {
+		return nil
+	}
+	out := &layoutNode{
+		PaneID: n.PaneID,
+		Split:  n.Split,
+		Ratio:  n.Ratio,
+	}
+	out.First = cloneLayoutNode(n.First)
+	out.Second = cloneLayoutNode(n.Second)
+	return out
 }
 
 func (l *Layout) assertRectInWindow(r Rect) error {

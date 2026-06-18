@@ -492,6 +492,17 @@ func (m Model) handlePaneQuickSelectKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) startPaneZoomToggle(paneID protocol.PaneID) (Model, tea.Cmd) {
+	if !paneID.Valid() {
+		return m, nil
+	}
+	return m, m.dispatch(protocol.CommandPaneZoomToggle{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    paneID,
+	})
+}
+
 func keyActionFromPress(msg tea.KeyPressMsg) protocol.KeyAction {
 	if msg.Key().IsRepeat {
 		return protocol.KeyActionRepeat

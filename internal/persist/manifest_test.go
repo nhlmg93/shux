@@ -149,3 +149,27 @@ func TestClearResurrectionState(t *testing.T) {
 		t.Fatalf("expected empty panes dir, got %d entries", len(entries))
 	}
 }
+
+func TestLayoutFromEvent_persistsZoomState(t *testing.T) {
+	layout := persist.LayoutFromEvent(protocol.EventWindowLayoutChanged{
+		SessionID:    "s-1",
+		WindowID:     "w-1",
+		Revision:     9,
+		Cols:         120,
+		Rows:         40,
+		ZoomedPaneID: "p-2",
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: "p-2", Col: 0, Row: 0, Cols: 120, Rows: 40},
+		},
+		SavedPanes: []protocol.EventLayoutPane{
+			{PaneID: "p-1", Col: 0, Row: 0, Cols: 60, Rows: 40},
+			{PaneID: "p-2", Col: 60, Row: 0, Cols: 60, Rows: 40},
+		},
+	})
+	if layout.ZoomedPaneID != "p-2" {
+		t.Fatalf("zoomed pane = %q, want p-2", layout.ZoomedPaneID)
+	}
+	if len(layout.Panes) != 1 || len(layout.SavedPanes) != 2 {
+		t.Fatalf("unexpected panes in layout snapshot: %+v", layout)
+	}
+}

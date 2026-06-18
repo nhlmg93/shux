@@ -58,6 +58,14 @@ func (a *Shux) WaitLayoutPanes(sessionID protocol.SessionID, windowID protocol.W
 	})
 }
 
+// WaitLayoutZoomed waits until the window reports a specific zoomed pane.
+func (a *Shux) WaitLayoutZoomed(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, timeout time.Duration) bool {
+	return pollUntil(timeout, 10*time.Millisecond, func() bool {
+		layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
+		return ok && layout.ZoomedPaneID == paneID
+	})
+}
+
 // WindowCount returns the number of live windows in a session.
 func (a *Shux) WindowCount(sessionID protocol.SessionID) int {
 	if a.cache == nil {

@@ -170,6 +170,8 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneSwap: invalid Direction %d", int(c.Direction))
 		}
 		return nil
+	case CommandPaneZoomToggle:
+		return validatePaneTarget("CommandPaneZoomToggle", c.SessionID, c.WindowID, c.PaneID)
 	default:
 		return fmt.Errorf("protocol: unknown command type %T", cmd)
 	}
@@ -245,6 +247,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPaneSwap:
 		return c.SessionID, true
+	case CommandPaneZoomToggle:
+		return c.SessionID, true
 	case CommandPaneClose:
 		return c.SessionID, true
 	case CommandPaneResize:
@@ -263,7 +267,7 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 
 // RoutePaneID returns the PaneID for commands that the window forwards directly
 // to a pane actor without further bookkeeping. Reports false for commands the
-// window handles itself (CommandPaneSplit, CommandPaneClose, CommandCreatePane).
+// window handles itself (CommandPaneSplit, CommandPaneZoomToggle, CommandPaneClose, CommandCreatePane).
 func RoutePaneID(cmd Command) (PaneID, bool) {
 	switch c := cmd.(type) {
 	case CommandPaneResize:
@@ -298,6 +302,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandWindowSelectLayout:
 		return c.WindowID, true
 	case CommandPaneSwap:
+		return c.WindowID, true
+	case CommandPaneZoomToggle:
 		return c.WindowID, true
 	case CommandPaneClose:
 		return c.WindowID, true
@@ -615,4 +621,11 @@ type CommandPaneSwap struct {
 	WindowID  WindowID
 	PaneID    PaneID
 	Direction PaneDirection
+}
+
+// CommandPaneZoomToggle toggles window-local zoom for PaneID.
+type CommandPaneZoomToggle struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
 }
