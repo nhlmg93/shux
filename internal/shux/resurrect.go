@@ -16,6 +16,10 @@ import (
 const restoreLayoutWait = 500 * time.Millisecond
 
 func (a *Shux) checkpoint() {
+	a.checkpointWithTier("l2", "")
+}
+
+func (a *Shux) checkpointWithTier(tier, fallback string) {
 	if !a.Config.Resurrection || a.Config.StateDir == "" || a.cache == nil {
 		return
 	}
@@ -58,7 +62,7 @@ func (a *Shux) checkpoint() {
 	if defaultName == "" {
 		defaultName = snapshots[0].Name
 	}
-	m := persist.BuildManifestForSessions(a.Config.ShellPath, defaultName, snapshots)
+	m := persist.BuildManifestForSessionsWithTier(a.Config.ShellPath, defaultName, tier, fallback, snapshots)
 	if err := persist.SaveManifest(a.Config.StateDir, m); err != nil {
 		a.Logger.Printf("shux: checkpoint failed: %v", err)
 		return
@@ -107,6 +111,13 @@ func (a *Shux) bootstrapFresh(ctx context.Context) error {
 }
 
 func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) error {
+	if m.RecoveryTier == "l3" {
+		reason := m.L3FallbackReason
+		if reason == "" {
+			reason = "l3 handoff unavailable after cold daemon restart"
+		}
+		a.Logger.Printf("shux: l3 checkpoint falling back to l2 replay: %s", reason)
+	}
 	events := make(protocol.EventChanAdapter, 32)
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: bootstrapClientID, Sink: events}); err != nil {
 		return err

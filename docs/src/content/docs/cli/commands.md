@@ -81,13 +81,13 @@ Equivalent to `ctrl+b d` from inside an attached client.
 
 ## `shux restart`
 
-Gracefully restart the shux daemon: checkpoint resurrection state, release the listen socket, spawn a replacement, and shut down the current instance.
+Gracefully restart shux with L3 handoff semantics: checkpoint resurrection state, detach clients, and keep live pane PTYs/processes attached to the running daemon.
 
 ```bash
 shux restart
 ```
 
-Clients are detached during restart. Reattach with `./shux` when the new daemon is ready.
+Clients are detached during restart. Reattach with `./shux` after the handoff completes.
 
 ## `shux new-session`
 

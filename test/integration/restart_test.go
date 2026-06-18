@@ -1,11 +1,14 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"shux/internal/client"
 	"shux/internal/daemon"
 	"shux/internal/persist"
@@ -126,6 +129,82 @@ func TestResurrection_windowAndPaneNamesSurviveRestart(t *testing.T) {
 	}
 	if got, _ := app2.PaneName(app2.DefaultSessionID, app2.DefaultWindowID, app2.DefaultPaneID); got != "logs" {
 		t.Fatalf("pane name = %q, want %q", got, "logs")
+	}
+}
+
+func TestDaemon_gracefulRestartPreservesLongRunningProcessWithL3(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/sh")
+	addr, stop := startTestDaemonWithConfig(t, cfg)
+	defer stop()
+
+	sendShellCommandThenDetach(t, addr, "(sleep 1; printf SHUX_L3_AFTER\\n) &\n")
+
+	if err := client.Restart(ctx, addr); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.WaitReady(ctx, addr, 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(1200 * time.Millisecond)
+	out := attachAndDetachAfter(t, addr, 150*time.Millisecond)
+	if !bytes.Contains(out, []byte("SHUX_L3_AFTER")) {
+		t.Fatalf("expected post-restart output marker, got %q", out)
+	}
+}
+
+func sendShellCommandThenDetach(t *testing.T, addr, command string) {
+	t.Helper()
+
+	sshClient, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:            "test",
+		Auth:            []ssh.AuthMethod{ssh.Password("")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Stdout = io.Discard
+	sess.Stderr = io.Discard
+	if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	for i := 0; i < len(command); i++ {
+		if _, err := stdin.Write([]byte{command[i]}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if _, err := stdin.Write([]byte{sshCtrlB, 'd'}); err != nil {
+		t.Fatal(err)
+	}
+	_ = stdin.Close()
+	if err := sess.Wait(); err != nil {
+		var exitErr *ssh.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatal(err)
+		}
 	}
 }
 

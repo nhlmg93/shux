@@ -25,13 +25,14 @@ This is the user story shux optimizes for: **detach without fear, reattach witho
 
 ## Graceful restart
 
-`shux restart` checkpoints state, spawns a replacement daemon, and hands off the listen address. Clients are detached during restart; reattach to the new backend afterward.
+`shux restart` checkpoints state and performs an in-process handoff that keeps pane PTYs alive when possible. Clients are detached during restart; reattach afterward.
 
 Use restart when you need to reload configuration or upgrade the binary while preserving as much session state as practical.
 
 ## Limits
 
-- Resurrection records **terminal output**, not arbitrary process memory. A restarted program inside a pane may need to be relaunched manually.
+- L3 live-process handoff requires a graceful `shux restart`. Cold daemon starts (crash/kill/host reboot) fall back to L2 replay.
+- Resurrection records **terminal output**, not arbitrary process memory snapshots.
 - Journal size is capped per pane; very chatty output can rotate older data.
 - Config changes apply only after a new daemon starts.
 
@@ -50,6 +51,6 @@ A fresh daemon with resurrection disabled clears prior resurrection state in `st
 | **L0** | Nothing | `resurrection = false` or no state directory |
 | **L1** | Layout | Windows, splits, and pane geometry restore; shells respawn |
 | **L2** | Layout + screen replay | L1 plus PTY journals replayed into fresh VTs (MVP default) |
-| **L3** | Process reattach | Planned — reattach live shell processes after restart |
+| **L3** | Process reattach | `shux restart` keeps pane PTYs/processes in-place; cold starts gracefully fall back to L2 |
 
 Journal files are stored at `{state_dir}/panes/win{N}_{paneID}.journal` where `N` is the window's ordinal in the session. Replay is deferred briefly after pane init so a respawned shell does not immediately overwrite restored output.

@@ -53,6 +53,7 @@ type Shux struct {
 	shutdownOnce sync.Once
 
 	restartShutdown func(context.Context) error
+	restartHandoff  func(context.Context) error
 
 	clientsMu sync.Mutex
 	clients   map[protocol.ClientID]*tea.Program
@@ -110,6 +111,12 @@ func (a *Shux) DetachAllClients() int {
 
 func (a *Shux) SetRestartShutdown(fn func(context.Context) error) {
 	a.restartShutdown = fn
+}
+
+// SetRestartHandoff installs an optional in-process restart path (L3) that
+// keeps pane PTYs and shell processes alive while transport restarts.
+func (a *Shux) SetRestartHandoff(fn func(context.Context) error) {
+	a.restartHandoff = fn
 }
 
 func (a *Shux) Close() error {

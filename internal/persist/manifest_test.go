@@ -44,6 +44,9 @@ func TestManifest_roundtrip(t *testing.T) {
 	if got.DefaultSessionName != "s-1" || len(got.Sessions) != 1 || got.Sessions[0].Name != "s-1" || len(got.Sessions[0].WindowIDs) != 1 || len(got.Sessions[0].Layouts["w-1"].Panes) != 2 {
 		t.Fatalf("unexpected manifest: %+v", got)
 	}
+	if got.RecoveryTier != "l2" {
+		t.Fatalf("recovery tier = %q, want l2", got.RecoveryTier)
+	}
 	wantPath := persist.JournalPath(dir, 1, "p-1")
 	key := persist.JournalMapKey(1, "p-1")
 	if got.Sessions[0].PaneJournals[key] != wantPath {
@@ -57,6 +60,27 @@ func TestManifest_roundtrip(t *testing.T) {
 	}
 	if got.Sessions[0].PaneNames[persist.PaneNameMapKey("w-1", "p-1")] != "logs" {
 		t.Fatalf("pane name = %q", got.Sessions[0].PaneNames[persist.PaneNameMapKey("w-1", "p-1")])
+	}
+}
+
+func TestBuildManifestWithTier_recordsFallbackReason(t *testing.T) {
+	dir := t.TempDir()
+	m := persist.BuildManifestWithTier(
+		protocol.SessionID("s-1"),
+		"/bin/sh",
+		dir,
+		[]protocol.WindowID{"w-1"},
+		map[string]persist.LayoutSnapshot{
+			"w-1": {WindowID: "w-1", Cols: 80, Rows: 24, Panes: []persist.LayoutPaneSnapshot{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}}},
+		},
+		"l3",
+		"cold restart requires l2 replay",
+	)
+	if m.RecoveryTier != "l3" {
+		t.Fatalf("tier = %q, want l3", m.RecoveryTier)
+	}
+	if m.L3FallbackReason == "" {
+		t.Fatal("expected l3 fallback reason")
 	}
 }
 

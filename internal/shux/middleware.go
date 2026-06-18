@@ -51,11 +51,11 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						return
 					}
 					_, _ = fmt.Fprintln(sess, "restarting shux daemon...")
-					go func() {
-						time.Sleep(50 * time.Millisecond)
-						opts := client.AttachOptions{Bash: app.Config.ShellPath == cfg.BashShellPath}
-						_ = app.FinishGracefulRestart(context.Background(), opts)
-					}()
+					time.Sleep(50 * time.Millisecond)
+					opts := client.AttachOptions{Bash: app.Config.ShellPath == cfg.BashShellPath}
+					if err := app.FinishGracefulRestart(context.Background(), opts); err != nil {
+						wish.Fatalln(sess, err)
+					}
 					return
 				case "list-windows":
 					jsonOut, _, err := parseJSONFlag(command[1:])

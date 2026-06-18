@@ -37,6 +37,8 @@ type Manifest struct {
 	ShellPath          string            `json:"shell_path"`
 	DefaultSessionName string            `json:"default_session_name,omitempty"`
 	Sessions           []SessionManifest `json:"sessions,omitempty"`
+	RecoveryTier       string            `json:"recovery_tier,omitempty"`
+	L3FallbackReason   string            `json:"l3_fallback_reason,omitempty"`
 
 	// Legacy single-session fields (v1) retained for backward compatibility.
 	SessionID    protocol.SessionID        `json:"session_id,omitempty"`
@@ -145,12 +147,21 @@ func ClearResurrectionState(stateDir string) error {
 
 // BuildManifest assembles a manifest from exported session snapshots.
 func BuildManifest(sessionID protocol.SessionID, shellPath, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) Manifest {
-	return BuildManifestForSessions(shellPath, string(sessionID), []SessionManifest{
+	return BuildManifestWithTier(sessionID, shellPath, stateDir, windows, layouts, "l2", "")
+}
+
+// BuildManifestWithTier assembles a single-session manifest and records tier/fallback metadata.
+func BuildManifestWithTier(sessionID protocol.SessionID, shellPath, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot, tier, fallback string) Manifest {
+	return BuildManifestForSessionsWithTier(shellPath, string(sessionID), tier, fallback, []SessionManifest{
 		BuildSessionManifest(string(sessionID), stateDir, windows, layouts, nil, nil),
 	})
 }
 
 func BuildManifestForSessions(shellPath, defaultSessionName string, sessions []SessionManifest) Manifest {
+	return BuildManifestForSessionsWithTier(shellPath, defaultSessionName, "l2", "", sessions)
+}
+
+func BuildManifestForSessionsWithTier(shellPath, defaultSessionName, tier, fallback string, sessions []SessionManifest) Manifest {
 	journals := make(map[string]string)
 	if len(sessions) == 1 {
 		for k, v := range sessions[0].PaneJournals {
@@ -163,6 +174,8 @@ func BuildManifestForSessions(shellPath, defaultSessionName string, sessions []S
 		DefaultSessionName: defaultSessionName,
 		Sessions:           append([]SessionManifest(nil), sessions...),
 		PaneJournals:       journals,
+		RecoveryTier:       tier,
+		L3FallbackReason:   fallback,
 	}
 }
 
