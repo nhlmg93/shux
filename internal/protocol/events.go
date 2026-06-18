@@ -84,6 +84,17 @@ func ValidateEvent(event Event) error {
 				return fmt.Errorf("protocol: EventWindowLayoutChanged: Panes[%d]: invalid size", i)
 			}
 		}
+		if e.ZoomedPaneID != "" && !e.ZoomedPaneID.Valid() {
+			return fmt.Errorf("protocol: EventWindowLayoutChanged: invalid ZoomedPaneID")
+		}
+		for i, p := range e.SavedPanes {
+			if !p.PaneID.Valid() {
+				return fmt.Errorf("protocol: EventWindowLayoutChanged: SavedPanes[%d]: invalid PaneID", i)
+			}
+			if p.Cols <= 0 || p.Rows <= 0 {
+				return fmt.Errorf("protocol: EventWindowLayoutChanged: SavedPanes[%d]: invalid size", i)
+			}
+		}
 		return nil
 	case EventPaneScreenChanged:
 		if err := validatePaneTarget("EventPaneScreenChanged", e.SessionID, e.WindowID, e.PaneID); err != nil {
@@ -272,12 +283,14 @@ type EventLayoutPane struct {
 // EventWindowLayoutChanged is emitted when a window’s cell geometry changes
 // (e.g. after resize or split). Hub fanout and publishers are wired separately.
 type EventWindowLayoutChanged struct {
-	SessionID SessionID
-	WindowID  WindowID
-	Revision  uint64
-	Cols      int
-	Rows      int
-	Panes     []EventLayoutPane
+	SessionID    SessionID
+	WindowID     WindowID
+	Revision     uint64
+	Cols         int
+	Rows         int
+	Panes        []EventLayoutPane
+	ZoomedPaneID PaneID
+	SavedPanes   []EventLayoutPane
 }
 
 // EventPaneScreenColor is a protocol-owned terminal color description.

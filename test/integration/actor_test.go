@@ -150,6 +150,103 @@ func TestHub_pane_split_and_window_resize(t *testing.T) {
 	drainCancel(cancel)
 }
 
+func TestHub_pane_zoom_toggle_and_switch_target(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 24)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-pane-zoom", Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := supervisor.StartWithHub(ctx, &eref)
+	bootstrapWindow(t, ctx, ref, events)
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneZoomToggle{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		Revision:     3,
+		Cols:         80,
+		Rows:         24,
+		Panes:        []protocol.EventLayoutPane{{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24}},
+		ZoomedPaneID: initPaneID,
+		SavedPanes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneZoomToggle{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane2ID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		Revision:     4,
+		Cols:         80,
+		Rows:         24,
+		Panes:        []protocol.EventLayoutPane{{PaneID: initPane2ID, Col: 0, Row: 0, Cols: 80, Rows: 24}},
+		ZoomedPaneID: initPane2ID,
+		SavedPanes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneZoomToggle{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane2ID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  5,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+}
+
 func TestHub_serializes_repeated_targeted_splits(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -817,6 +914,187 @@ func TestHub_rejectsSwapPaneWithoutNeighbor(t *testing.T) {
 		WindowID:  initWindowID,
 		Command:   "swap-pane",
 		Reason:    "no neighbor in direction",
+	})
+}
+
+func TestHub_splitWhileZoomed_restoresThenSplits(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-split-while-zoomed")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneZoomToggle{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		Revision:     3,
+		Cols:         80,
+		Rows:         24,
+		ZoomedPaneID: initPaneID,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
+		SavedPanes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 2},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitHorizontal,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  4,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane3ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  5,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 12},
+			{PaneID: initPane3ID, Col: 0, Row: 12, Cols: 40, Rows: 12},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    2,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane3ID,
+		Revision:     5,
+	})
+}
+
+func TestHub_closeWhileZoomed_restoresThenCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-close-while-zoomed")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneZoomToggle{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		Revision:     3,
+		Cols:         80,
+		Rows:         24,
+		ZoomedPaneID: initPaneID,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
+		SavedPanes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneClose{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  4,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  5,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPane2ID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
 	})
 }
 

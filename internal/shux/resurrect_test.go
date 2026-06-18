@@ -98,6 +98,54 @@ func TestRestoreFromManifest_twoWindows(t *testing.T) {
 	}
 }
 
+func TestRestoreFromManifest_zoomedLayout(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+
+	m := persist.BuildManifest(
+		protocol.SessionID("s-1"),
+		cfg.ShellPath,
+		dir,
+		[]protocol.WindowID{"w-1"},
+		map[string]persist.LayoutSnapshot{
+			"w-1": {
+				WindowID:     "w-1",
+				Cols:         80,
+				Rows:         24,
+				ZoomedPaneID: "p-2",
+				Panes: []persist.LayoutPaneSnapshot{
+					{PaneID: "p-2", Col: 0, Row: 0, Cols: 80, Rows: 24},
+				},
+				SavedPanes: []persist.LayoutPaneSnapshot{
+					{PaneID: "p-1", Col: 0, Row: 0, Cols: 40, Rows: 24},
+					{PaneID: "p-2", Col: 40, Row: 0, Cols: 40, Rows: 24},
+				},
+			},
+		},
+	)
+	if err := persist.SaveManifest(dir, m); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.RestoreFromCheckpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !app.WaitLayoutPanes(app.DefaultSessionID, app.DefaultWindowID, 1, testutil.TestWaitTimeout) {
+		t.Fatal("zoomed restore missing visible pane")
+	}
+	if !app.WaitLayoutZoomed(app.DefaultSessionID, app.DefaultWindowID, "p-2", testutil.TestWaitTimeout) {
+		t.Fatal("restored layout missing zoom state for p-2")
+	}
+}
+
 func TestResurrection_journalReplayOnRestore(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testutil.ResurrectionConfig(dir, "/bin/true")

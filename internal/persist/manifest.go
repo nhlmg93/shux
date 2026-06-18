@@ -23,10 +23,12 @@ type LayoutPaneSnapshot struct {
 
 // LayoutSnapshot is a window layout checkpoint for resurrection.
 type LayoutSnapshot struct {
-	WindowID string               `json:"window_id"`
-	Cols     int                  `json:"cols"`
-	Rows     int                  `json:"rows"`
-	Panes    []LayoutPaneSnapshot `json:"panes"`
+	WindowID     string               `json:"window_id"`
+	Cols         int                  `json:"cols"`
+	Rows         int                  `json:"rows"`
+	Panes        []LayoutPaneSnapshot `json:"panes"`
+	ZoomedPaneID string               `json:"zoomed_pane_id,omitempty"`
+	SavedPanes   []LayoutPaneSnapshot `json:"saved_panes,omitempty"`
 }
 
 // Manifest is the on-disk resurrection checkpoint for a shux daemon.
@@ -56,11 +58,23 @@ func LayoutFromEvent(e protocol.EventWindowLayoutChanged) LayoutSnapshot {
 			Rows:   p.Rows,
 		}
 	}
+	savedPanes := make([]LayoutPaneSnapshot, len(e.SavedPanes))
+	for i, p := range e.SavedPanes {
+		savedPanes[i] = LayoutPaneSnapshot{
+			PaneID: string(p.PaneID),
+			Col:    p.Col,
+			Row:    p.Row,
+			Cols:   p.Cols,
+			Rows:   p.Rows,
+		}
+	}
 	return LayoutSnapshot{
-		WindowID: string(e.WindowID),
-		Cols:     e.Cols,
-		Rows:     e.Rows,
-		Panes:    panes,
+		WindowID:     string(e.WindowID),
+		Cols:         e.Cols,
+		Rows:         e.Rows,
+		Panes:        panes,
+		ZoomedPaneID: string(e.ZoomedPaneID),
+		SavedPanes:   savedPanes,
 	}
 }
 

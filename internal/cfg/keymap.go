@@ -21,6 +21,7 @@ const (
 	ActionFocusPaneDown   BuiltinKeyAction = "focus_pane_down"
 	ActionDisplayPanes    BuiltinKeyAction = "display_panes"
 	ActionClosePane       BuiltinKeyAction = "close_pane"
+	ActionTogglePaneZoom  BuiltinKeyAction = "toggle_pane_zoom"
 	ActionNewWindow       BuiltinKeyAction = "new_window"
 	ActionNextWindow      BuiltinKeyAction = "next_window"
 	ActionPreviousWindow  BuiltinKeyAction = "previous_window"
@@ -128,6 +129,7 @@ func DefaultKeymaps() *Keymaps {
 	set("up", ActionFocusPaneUp, "Focus pane up")
 	set("right", ActionFocusPaneRight, "Focus pane right")
 	set("x", ActionClosePane, "Close pane")
+	set("z", ActionTogglePaneZoom, "Toggle pane zoom")
 	set("c", ActionNewWindow, "New window")
 	set("n", ActionNextWindow, "Next window")
 	set("p", ActionPreviousWindow, "Previous window")
