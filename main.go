@@ -13,6 +13,9 @@ import (
 )
 
 var bashShell bool
+var listWindowsJSON bool
+var listPanesJSON bool
+var displayMessageJSON bool
 var controlMode bool
 
 var rootCmd = &cobra.Command{
@@ -50,10 +53,38 @@ var restartCmd = &cobra.Command{
 	},
 }
 
+var listWindowsCmd = &cobra.Command{
+	Use:   "list-windows",
+	Short: "List windows from the running daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runListWindows(cmd.Context(), listWindowsJSON)
+	},
+}
+
+var listPanesCmd = &cobra.Command{
+	Use:   "list-panes",
+	Short: "List panes from the running daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runListPanes(cmd.Context(), listPanesJSON)
+	},
+}
+
+var displayMessageCmd = &cobra.Command{
+	Use:   "display-message FORMAT",
+	Short: "Render a message from daemon introspection format variables",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runDisplayMessage(cmd.Context(), args[0], displayMessageJSON)
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
+	listWindowsCmd.Flags().BoolVar(&listWindowsJSON, "json", false, "print machine-readable JSON")
+	listPanesCmd.Flags().BoolVar(&listPanesJSON, "json", false, "print machine-readable JSON")
+	displayMessageCmd.Flags().BoolVar(&displayMessageJSON, "json", false, "print machine-readable JSON")
 	attachCmd.Flags().BoolVarP(&controlMode, "control", "C", false, "attach in experimental line-oriented control mode")
-	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd)
+	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, listWindowsCmd, listPanesCmd, displayMessageCmd)
 }
 
 func main() {
@@ -106,6 +137,30 @@ func runRestart(ctx context.Context) error {
 		return err
 	}
 	return client.Restart(ctx, addr)
+}
+
+func runListWindows(ctx context.Context, jsonOutput bool) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.ListWindows(ctx, addr, jsonOutput)
+}
+
+func runListPanes(ctx context.Context, jsonOutput bool) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.ListPanes(ctx, addr, jsonOutput)
+}
+
+func runDisplayMessage(ctx context.Context, format string, jsonOutput bool) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.DisplayMessage(ctx, addr, format, jsonOutput)
 }
 
 func attachOptions() client.AttachOptions {
