@@ -30,8 +30,6 @@ func TestDaemon_gracefulRestartReplacesBackend(t *testing.T) {
 		dir,
 		[]protocol.WindowID{"w-1"},
 		map[string]persist.LayoutSnapshot{"w-1": layout},
-		nil,
-		nil,
 	)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
@@ -82,9 +80,9 @@ func TestResurrectionCheckpoint_persistsWindowAndPaneNames(t *testing.T) {
 	deadline := time.Now().Add(testutil.TestWaitTimeout)
 	for time.Now().Before(deadline) {
 		m, ok, err := persist.LoadManifest(dir)
-		if err == nil && ok &&
-			m.WindowNames[string(wid)] == "workspace" &&
-			m.PaneNames[persist.PaneNameMapKey(wid, pid)] == "shell" {
+		if err == nil && ok && len(m.Sessions) > 0 &&
+			m.Sessions[0].WindowNames[string(wid)] == "workspace" &&
+			m.Sessions[0].PaneNames[persist.PaneNameMapKey(wid, pid)] == "shell" {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -160,7 +160,7 @@ func (a *Actor) handleDetachPane(ctx context.Context, m CommandDetachPane) {
 		}
 	}
 	a.revision++
-	a.emit(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
+	a.emit(ctx, protocol.EventPaneClosed{SessionID: m.SessionID, WindowID: m.WindowID, PaneID: m.PaneID})
 	if len(a.Layout.PaneIDs()) == 0 {
 		if err := a.SessionRef.Send(ctx, protocol.CommandWindowClosed{
 			SessionID: m.SessionID,

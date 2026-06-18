@@ -1086,7 +1086,7 @@ func TestHub_closeWhileZoomed_restoresThenCloses(t *testing.T) {
 			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
 		},
 	})
-	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPaneID})
+	assertEvent(t, events, protocol.EventPaneClosed{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -1226,7 +1226,7 @@ func TestHub_paneMove_breakAndJoin(t *testing.T) {
 		Revision:  2,
 		Windows:   []protocol.WindowID{initWindowID, "w-2"},
 	})
-	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventPaneClosed{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,
 		WindowID:  initWindowID,
@@ -1254,7 +1254,7 @@ func TestHub_paneMove_breakAndJoin(t *testing.T) {
 		TargetWindowID: initWindowID,
 		PaneID:         initPane2ID,
 	})
-	assertEvent(t, events, protocol.EventPaneClosed{WindowID: "w-2", PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventPaneClosed{SessionID: initSessionID, WindowID: "w-2", PaneID: initPane2ID})
 	assertEvent(t, events, protocol.EventWindowClosed{SessionID: initSessionID, WindowID: "w-2"})
 	assertEvent(t, events, protocol.EventWindowLayoutChanged{
 		SessionID: initSessionID,

@@ -35,8 +35,6 @@ func TestRestoreFromManifest_fourPaneLayout(t *testing.T) {
 		dir,
 		[]protocol.WindowID{"w-1"},
 		map[string]persist.LayoutSnapshot{"w-1": fourPaneLayout},
-		nil,
-		nil,
 	)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
@@ -79,8 +77,6 @@ func TestRestoreFromManifest_twoWindows(t *testing.T) {
 			"w-1": singlePane("w-1"),
 			"w-2": singlePane("w-2"),
 		},
-		nil,
-		nil,
 	)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
@@ -178,8 +174,6 @@ func TestResurrection_journalReplayOnRestore(t *testing.T) {
 		dir,
 		[]protocol.WindowID{"w-1"},
 		map[string]persist.LayoutSnapshot{"w-1": layout},
-		nil,
-		nil,
 	)
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
