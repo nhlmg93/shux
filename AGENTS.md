@@ -44,6 +44,7 @@ Integration-style tests should be focused on Sessions/Window/Pane/Config/Plugin 
         - Session Recovery/Resurrection
         - Ex: As a user i have shux running 4 panes. In top left i have less with documentation. Top right some kind of long running 
               Node process. Bottom left Nano editor where i edit text. Bottom right a plain terminal i use to run shell commands. After detaching shux I expect to be able to reattach as close to the state i left it in as possible.
+        - Sim tests must exercise **live** behavior (real shells, real commands, real journals). Do not add tests that only check binary presence or pre-seed manifest/journal files to skip the live path.
     * Fuzz/Stress Testing is how we will ensure shuxs Durability/Reliablity as a running process.
         - At the end of the day our Recovery/Resurrection and Persistence/Durability model/layer will only ever be as good as the shu  x process is reliable.
         - Tiger Style Programming

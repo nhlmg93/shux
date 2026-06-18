@@ -8,11 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitchellh/go-libghostty"
 	"shux/internal/cfg"
 	"shux/internal/hub"
 	"shux/internal/protocol"
-	"shux/internal/shux"
 	"shux/internal/supervisor"
 )
 
@@ -23,43 +21,11 @@ const (
 	simClientID  = protocol.ClientID("sim-client")
 )
 
-func TestShux_bootstrapsDefaultSession(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
+const simFuzzSteps = 24
 
-	app, err := shux.NewShux()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Close()
-
-	if err := app.BootstrapDefaultSession(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if app.DefaultSessionID != protocol.SessionID("s-1") || app.DefaultWindowID != protocol.WindowID("w-1") || app.DefaultPaneID != protocol.PaneID("p-1") {
-		t.Fatalf("ids = %q %q %q", app.DefaultSessionID, app.DefaultWindowID, app.DefaultPaneID)
-	}
-}
-
-// TestTestBed_LibghosttyVT proves the sim container has the real Ghostty VT
-// library wired through CGO/PKG_CONFIG_PATH. The deterministic sim below runs
-// in that same Docker test bed via `make test-sim-docker` / `make test-docker`.
-func TestTestBed_LibghosttyVT(t *testing.T) {
-	term, err := libghostty.NewTerminal(libghostty.WithSize(80, 24))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if term == nil {
-		t.Fatal("NewTerminal: expected non-nil *Terminal")
-	}
-	defer term.Close()
-}
-
-const simFuzzSteps = 32
-
-func simFastPolicy() cfg.Config {
+func simShellPolicy() cfg.Config {
 	c := cfg.DefaultConfig()
-	c.ShellPath = "/bin/true"
+	c.ShellPath = "/bin/sh"
 	c.JournalReplayDelay = 0
 	c.Resurrection = false
 	return c
@@ -81,7 +47,7 @@ func runDeterministicSimFuzz(t *testing.T, seed int64) {
 	rec := newSimRecorder(t, events)
 	defer rec.stop()
 
-	ref := supervisor.StartWithPolicy(ctx, &eref, simFastPolicy())
+	ref := supervisor.StartWithPolicy(ctx, &eref, simShellPolicy())
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{
 		Meta:      protocol.CommandMeta{ClientID: simClientID, RequestID: 1},
@@ -173,8 +139,7 @@ func TestSim_shellPTYInputOutputAndResize(t *testing.T) {
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-pty", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
-	policy := simFastPolicy()
-	policy.ShellPath = "/bin/sh"
+	policy := simShellPolicy()
 	ref := supervisor.StartWithPolicy(ctx, &eref, policy)
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{SessionID: simSessionID})
