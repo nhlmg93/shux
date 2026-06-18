@@ -42,3 +42,14 @@ shux.opt.resurrection = false
 ```
 
 A fresh daemon with resurrection disabled clears prior resurrection state in `state_dir`.
+
+## Recovery tiers
+
+| Tier | What survives | Notes |
+| --- | --- | --- |
+| **L0** | Nothing | `resurrection = false` or no state directory |
+| **L1** | Layout | Windows, splits, and pane geometry restore; shells respawn |
+| **L2** | Layout + screen replay | L1 plus PTY journals replayed into fresh VTs (MVP default) |
+| **L3** | Process reattach | Planned — reattach live shell processes after restart |
+
+Journal files are stored at `{state_dir}/panes/win{N}_{paneID}.journal` where `N` is the window's ordinal in the session. Replay is deferred briefly after pane init so a respawned shell does not immediately overwrite restored output.

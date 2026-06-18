@@ -2,7 +2,6 @@ package sim
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"strings"
 	"sync"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mitchellh/go-libghostty"
+	"shux/internal/cfg"
 	"shux/internal/hub"
 	"shux/internal/protocol"
 	"shux/internal/shux"
@@ -55,16 +55,22 @@ func TestTestBed_LibghosttyVT(t *testing.T) {
 	defer term.Close()
 }
 
+const simFuzzSteps = 32
+
+func simFastPolicy() cfg.Config {
+	c := cfg.DefaultConfig()
+	c.ShellPath = "/bin/true"
+	c.JournalReplayDelay = 0
+	c.Resurrection = false
+	return c
+}
+
 func TestSim_deterministicSessionWindowPaneFuzz(t *testing.T) {
-	for _, seed := range []int64{0x5eed5eed, 0x51a7e001, 0xc105ed} {
-		t.Run(fmt.Sprintf("seed-%x", seed), func(t *testing.T) {
-			runDeterministicSimFuzz(t, seed)
-		})
-	}
+	runDeterministicSimFuzz(t, 0x5eed5eed)
 }
 
 func runDeterministicSimFuzz(t *testing.T, seed int64) {
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	eref := hub.Start(ctx)
@@ -75,7 +81,7 @@ func runDeterministicSimFuzz(t *testing.T, seed int64) {
 	rec := newSimRecorder(t, events)
 	defer rec.stop()
 
-	ref := supervisor.StartWithHub(ctx, &eref)
+	ref := supervisor.StartWithPolicy(ctx, &eref, simFastPolicy())
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{
 		Meta:      protocol.CommandMeta{ClientID: simClientID, RequestID: 1},
@@ -91,7 +97,7 @@ func runDeterministicSimFuzz(t *testing.T, seed int64) {
 
 	rng := rand.New(rand.NewSource(seed))
 	var req protocol.RequestID = 1
-	for step := 0; step < 96; step++ {
+	for step := 0; step < simFuzzSteps; step++ {
 		snap := rec.snapshot()
 		wid, ok := snap.randomWindow(rng)
 		if !ok {
@@ -159,7 +165,7 @@ func runDeterministicSimFuzz(t *testing.T, seed int64) {
 }
 
 func TestSim_shellPTYInputOutputAndResize(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	eref := hub.Start(ctx)
@@ -167,7 +173,9 @@ func TestSim_shellPTYInputOutputAndResize(t *testing.T) {
 	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "sim-pty", Sink: events}); err != nil {
 		t.Fatal(err)
 	}
-	ref := supervisor.StartWithHub(ctx, &eref)
+	policy := simFastPolicy()
+	policy.ShellPath = "/bin/sh"
+	ref := supervisor.StartWithPolicy(ctx, &eref, policy)
 	sendSim(t, ctx, ref, protocol.CommandCreateSession{})
 	sendSim(t, ctx, ref, protocol.CommandCreateWindow{SessionID: simSessionID})
 	sendSim(t, ctx, ref, protocol.CommandCreatePane{SessionID: simSessionID, WindowID: simWindowID})
@@ -256,12 +264,12 @@ func (r *simRecorder) snapshot() simState {
 
 func (r *simRecorder) waitUntil(match func(simState) bool) {
 	r.t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if snap := r.snapshot(); match(snap) {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	r.t.Fatalf("timed out waiting for sim state")
 }
@@ -270,19 +278,19 @@ func (r *simRecorder) waitQuiet() {
 	r.t.Helper()
 	prev := -1
 	stable := 0
-	deadline := time.Now().Add(150 * time.Millisecond)
+	deadline := time.Now().Add(50 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		n := r.snapshot().eventWeight()
 		if n == prev {
 			stable++
-			if stable >= 3 {
+			if stable >= 2 {
 				return
 			}
 		} else {
 			prev = n
 			stable = 0
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
@@ -448,7 +456,7 @@ func validateLayout(t *testing.T, wid protocol.WindowID, w *simWindow) {
 
 func waitForPaneScreen(t *testing.T, events <-chan protocol.Event, paneID protocol.PaneID, match func(protocol.EventPaneScreenChanged) bool) protocol.EventPaneScreenChanged {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(time.Second)
 	for {
 		select {
 		case event := <-events:

@@ -3,6 +3,7 @@ package persist
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -38,9 +39,9 @@ type Manifest struct {
 	PaneJournals map[string]string          `json:"pane_journals"`
 }
 
-// JournalMapKey identifies a pane journal within a manifest.
-func JournalMapKey(windowID protocol.WindowID, paneID protocol.PaneID) string {
-	return string(windowID) + "/" + string(paneID)
+// JournalMapKey identifies a pane journal within a manifest by session window ordinal.
+func JournalMapKey(windowOrdinal int, paneID protocol.PaneID) string {
+	return fmt.Sprintf("%d/%s", windowOrdinal, paneID)
 }
 
 // LayoutFromEvent converts a hub layout event into a manifest snapshot.
@@ -64,22 +65,26 @@ func LayoutFromEvent(e protocol.EventWindowLayoutChanged) LayoutSnapshot {
 }
 
 // JournalPath returns the on-disk path for a pane journal.
-func JournalPath(stateDir string, windowID protocol.WindowID, paneID protocol.PaneID) string {
-	name := string(windowID) + "_" + string(paneID) + ".journal"
+// windowOrdinal is the 1-based index of the window in the session window list.
+func JournalPath(stateDir string, windowOrdinal int, paneID protocol.PaneID) string {
+	name := fmt.Sprintf("win%d_%s.journal", windowOrdinal, paneID)
 	return filepath.Join(stateDir, "panes", name)
 }
 
-func OpenJournal(stateDir string, windowID protocol.WindowID, paneID protocol.PaneID) (*Journal, error) {
+func OpenJournal(stateDir string, windowOrdinal int, paneID protocol.PaneID, maxBytes uint64) (*Journal, error) {
+	if windowOrdinal <= 0 {
+		return nil, fmt.Errorf("persist: invalid window ordinal %d", windowOrdinal)
+	}
 	dir := filepath.Join(stateDir, "panes")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	path := JournalPath(stateDir, windowID, paneID)
+	path := JournalPath(stateDir, windowOrdinal, paneID)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	return &Journal{path: path, f: f}, nil
+	return &Journal{path: path, f: f, maxBytes: maxBytes}, nil
 }
 
 // ClearResurrectionState removes the manifest and pane journals before a fresh bootstrap.
@@ -109,14 +114,15 @@ func ClearResurrectionState(stateDir string) error {
 // BuildManifest assembles a manifest from exported session snapshots.
 func BuildManifest(sessionID protocol.SessionID, shellPath, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) Manifest {
 	journals := make(map[string]string)
-	for _, wid := range windows {
+	for i, wid := range windows {
+		ordinal := i + 1
 		layout, ok := layouts[string(wid)]
 		if !ok {
 			continue
 		}
 		for _, p := range layout.Panes {
 			pid := protocol.PaneID(p.PaneID)
-			journals[JournalMapKey(wid, pid)] = JournalPath(stateDir, wid, pid)
+			journals[JournalMapKey(ordinal, pid)] = JournalPath(stateDir, ordinal, pid)
 		}
 	}
 	return Manifest{

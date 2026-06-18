@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/creack/pty"
@@ -40,22 +41,26 @@ type Terminal struct {
 	Shell        *exec.Cmd
 	Journal      *persist.Journal
 
-	cols     uint16
-	rows     uint16
-	revision uint64
+	cols              uint16
+	rows              uint16
+	revision          uint64
+	journalReplayed   bool
+	journalReplayDelay time.Duration
 }
 
-func NewTerminal(policy cfg.Config, windowID protocol.WindowID, paneID protocol.PaneID) *Terminal {
+func NewTerminal(policy cfg.Config, windowOrdinal int, paneID protocol.PaneID) *Terminal {
 	policy = policy.WithDefaults()
 	if policy.ShellPath == "" {
 		panic("pane: NewTerminal: empty shell path")
 	}
 	t := &Terminal{
-		ShellPath:     policy.ShellPath,
-		MaxScrollback: policy.Scrollback,
+		ShellPath:          policy.ShellPath,
+		MaxScrollback:      policy.Scrollback,
+		journalReplayDelay: policy.JournalReplayDelay,
 	}
 	if policy.Resurrection && policy.StateDir != "" {
-		j, err := persist.OpenJournal(policy.StateDir, windowID, paneID)
+		maxBytes := uint64(policy.JournalMaxMB) * 1024 * 1024
+		j, err := persist.OpenJournal(policy.StateDir, windowOrdinal, paneID, maxBytes)
 		if err == nil {
 			t.Journal = j
 		}
@@ -120,9 +125,6 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 	t.MouseEncoder = mouseEncoder
 	t.cols = cols
 	t.rows = rows
-	if t.Journal != nil {
-		_ = persist.ReplayJournal(term, t.Journal.Path())
-	}
 	cmd := exec.Command(t.ShellPath)
 	cmd.Env = paneEnv(os.Environ())
 	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
@@ -139,6 +141,49 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 	t.rows = rows
 	t.revision++
 	go readPTY(ctx, self, t, ptyFile)
+	if t.journalNeedsReplay() {
+		go t.scheduleJournalReplay(ctx, self)
+	}
+	return t.ScreenChanged()
+}
+
+func (t *Terminal) journalNeedsReplay() bool {
+	if t.Journal == nil {
+		return false
+	}
+	data, err := persist.ReadJournal(t.Journal.Path())
+	return err == nil && len(data) > 0
+}
+
+func (t *Terminal) scheduleJournalReplay(ctx context.Context, self actor.Ref[protocol.Command]) {
+	delay := t.journalReplayDelay
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	_ = self.Send(ctx, journalReplay{})
+}
+
+type journalReplay struct{}
+
+func (t *Terminal) ReplayJournalScreen() (protocol.EventPaneScreenChanged, error) {
+	if err := t.requireInit(); err != nil {
+		return protocol.EventPaneScreenChanged{}, err
+	}
+	if t.journalReplayed || t.Journal == nil {
+		return t.ScreenChanged()
+	}
+	if err := persist.ReplayJournal(t.VT, t.Journal.Path()); err != nil {
+		if os.IsNotExist(err) {
+			return t.ScreenChanged()
+		}
+		return protocol.EventPaneScreenChanged{}, err
+	}
+	t.journalReplayed = true
+	t.revision++
 	return t.ScreenChanged()
 }
 

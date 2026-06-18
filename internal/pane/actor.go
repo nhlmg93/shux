@@ -27,17 +27,17 @@ func NewActor() *Actor {
 }
 
 func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, windowID, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+	return NewActorWithPolicy(hub, sessionID, windowID, 1, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
-func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, policy cfg.Config) *Actor {
+func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, paneID protocol.PaneID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("pane: NewActor: invalid hub ref")
 	}
 	policy = policy.WithDefaults()
 	return &Actor{
 		Hub:       hub,
-		Terminal:  NewTerminal(policy, windowID, paneID),
+		Terminal:  NewTerminal(policy, windowOrdinal, paneID),
 		SessionID: sessionID,
 		WindowID:  windowID,
 		PaneID:    paneID,
@@ -71,6 +71,15 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if _, ok := msg.(journalReplay); ok {
+				event, err := a.Terminal.ReplayJournalScreen()
+				if err != nil {
+					a.logTerminalErr(err)
+					continue
+				}
+				a.sendScreen(ctx, event)
+				continue
+			}
 			if output, ok := msg.(ptyOutput); ok {
 				event, emit, err := a.Terminal.FeedOutput(output)
 				if err != nil {
@@ -134,9 +143,9 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 }
 
 func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, windowID, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+	return StartWithPolicy(ctx, hub, sessionID, windowID, 1, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
-func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, policy cfg.Config) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, windowID, paneID, policy).Run)
+func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, paneID protocol.PaneID, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, windowID, windowOrdinal, paneID, policy).Run)
 }

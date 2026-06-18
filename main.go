@@ -98,6 +98,14 @@ func runDetach(ctx context.Context) error {
 	return client.Detach(ctx, addr)
 }
 
+func runRestart(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.Restart(ctx, addr)
+}
+
 func attachOptions() client.AttachOptions {
 	return client.AttachOptions{Bash: bashShell}
 }

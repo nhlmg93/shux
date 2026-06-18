@@ -43,7 +43,7 @@ func TestTwoSSHClientsCanAttachConcurrentlyAndDetachIndependently(t *testing.T) 
 	defer stop()
 
 	firstDone := make(chan []byte, 1)
-	go func() { firstDone <- attachAndDetachAfter(t, addr, 500*time.Millisecond) }()
+	go func() { firstDone <- attachAndDetachAfter(t, addr, 200*time.Millisecond) }()
 
 	attachAndDetach(t, addr)
 
@@ -76,20 +76,20 @@ func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
 	defer stop()
 
 	peerDone := make(chan []byte, 1)
-	go func() { peerDone <- attachAndDetachAfter(t, addr, 1200*time.Millisecond) }()
-	time.Sleep(200 * time.Millisecond)
+	go func() { peerDone <- attachAndDetachAfter(t, addr, 400*time.Millisecond) }()
+	time.Sleep(100 * time.Millisecond)
 
 	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
 
 	select {
 	case <-peerDone:
 		t.Fatal("peer client exited when another client quit")
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	select {
 	case <-peerDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("peer client did not detach after its own detach key")
 	}
 

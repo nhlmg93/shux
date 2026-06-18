@@ -3,6 +3,7 @@ package persist_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"shux/internal/persist"
@@ -38,15 +39,15 @@ func TestManifest_roundtrip(t *testing.T) {
 	if got.SessionID != m.SessionID || len(got.WindowIDs) != 1 || len(got.Layouts["w-1"].Panes) != 2 {
 		t.Fatalf("unexpected manifest: %+v", got)
 	}
-	wantPath := persist.JournalPath(dir, "w-1", "p-1")
-	if got.PaneJournals[persist.JournalMapKey("w-1", "p-1")] != wantPath {
+	wantPath := persist.JournalPath(dir, 1, "p-1")
+	if got.PaneJournals[persist.JournalMapKey(1, "p-1")] != wantPath {
 		t.Fatalf("journal map: %v", got.PaneJournals)
 	}
 }
 
 func TestJournalPath_perWindow(t *testing.T) {
 	dir := t.TempDir()
-	j, err := persist.OpenJournal(dir, "w-1", "p-1")
+	j, err := persist.OpenJournal(dir, 1, "p-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestJournalPath_perWindow(t *testing.T) {
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
 	}
-	j2, err := persist.OpenJournal(dir, "w-2", "p-1")
+	j2, err := persist.OpenJournal(dir, 2, "p-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,12 +67,58 @@ func TestJournalPath_perWindow(t *testing.T) {
 	if j.Path() == j2.Path() {
 		t.Fatal("expected distinct journal paths for different windows")
 	}
-	data, err := persist.ReadJournal(filepath.Join(dir, "panes", "w-1_p-1.journal"))
+	data, err := persist.ReadJournal(filepath.Join(dir, "panes", "win1_p-1.journal"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != "hello" {
 		t.Fatalf("journal bytes: %q", data)
+	}
+}
+
+func TestJournal_enforcesMaxBytes(t *testing.T) {
+	dir := t.TempDir()
+	j, err := persist.OpenJournal(dir, 1, "p-1", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Append([]byte("123456789")); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := persist.ReadJournal(j.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 8 || string(data) != "23456789" {
+		t.Fatalf("expected tail 8 bytes, got %q", data)
+	}
+}
+
+func TestBuildManifest_ordinalWithGapWindowID(t *testing.T) {
+	dir := t.TempDir()
+	m := persist.BuildManifest(
+		"s-1",
+		"/bin/sh",
+		dir,
+		[]protocol.WindowID{"w-2"},
+		map[string]persist.LayoutSnapshot{
+			"w-2": {
+				WindowID: "w-2",
+				Cols:     80,
+				Rows:     24,
+				Panes:    []persist.LayoutPaneSnapshot{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
+			},
+		},
+	)
+	want := persist.JournalPath(dir, 1, "p-1")
+	if m.PaneJournals[persist.JournalMapKey(1, "p-1")] != want {
+		t.Fatalf("expected ordinal 1 path %q, got map %v", want, m.PaneJournals)
+	}
+	if !strings.Contains(want, "win1_p-1.journal") {
+		t.Fatalf("unexpected path: %s", want)
 	}
 }
 
@@ -83,7 +130,7 @@ func TestClearResurrectionState(t *testing.T) {
 	if err := persist.SaveManifest(dir, m); err != nil {
 		t.Fatal(err)
 	}
-	j, err := persist.OpenJournal(dir, "w-1", "p-1")
+	j, err := persist.OpenJournal(dir, 1, "p-1", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

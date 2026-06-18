@@ -76,8 +76,9 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 func (a *Actor) handleCreateWindow(ctx context.Context, m protocol.CommandCreateWindow) {
 	a.seq++
 	wid := protocol.WindowID("w-" + strconv.FormatUint(a.seq, 10))
-	a.Init(wid, window.StartWithPolicy(ctx, a.hub, m.SessionID, wid, a.Policy))
 	a.windowIDs = append(a.windowIDs, wid)
+	ordinal := len(a.windowIDs)
+	a.Init(wid, window.StartWithPolicy(ctx, a.hub, m.SessionID, wid, ordinal, a.Policy))
 	a.revision++
 	if a.hub != nil {
 		_ = a.hub.Send(ctx, protocol.EventWindowCreated{

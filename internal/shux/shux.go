@@ -24,10 +24,10 @@ const (
 	stateClosed
 )
 
-const (
-	bootstrapClientID = protocol.ClientID("bootstrap")
-	cacheClientID     = protocol.ClientID("state-cache")
-)
+const bootstrapClientID = protocol.ClientID("bootstrap")
+const cacheClientID = protocol.ClientID("state-cache")
+
+var bootstrapSplitReq protocol.RequestID
 
 type Shux struct {
 	Logger *Logger

@@ -3,11 +3,17 @@ package shux
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"shux/internal/actor"
 	"shux/internal/persist"
 	"shux/internal/protocol"
 )
+
+const restoreLayoutWait = 500 * time.Millisecond
 
 func (a *Shux) checkpoint() {
 	if !a.Config.Resurrection || a.Config.StateDir == "" || a.cache == nil {
@@ -84,7 +90,7 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 		if !ok || len(layout.Panes) == 0 {
 			return fmt.Errorf("restore window %s: missing layout", wid)
 		}
-		windowID, paneID, err := restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
+		windowID, paneID, err := a.restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
 		if err != nil {
 			return fmt.Errorf("restore window %s: %w", wid, err)
 		}
@@ -111,7 +117,7 @@ func (a *Shux) emitDaemonStarted(ctx context.Context) {
 	}
 }
 
-func restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], events <-chan protocol.Event, sessionID protocol.SessionID, layout persist.LayoutSnapshot) (protocol.WindowID, protocol.PaneID, error) {
+func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], events <-chan protocol.Event, sessionID protocol.SessionID, layout persist.LayoutSnapshot) (protocol.WindowID, protocol.PaneID, error) {
 	cols, rows := uint16(layout.Cols), uint16(layout.Rows)
 	if cols == 0 || rows == 0 {
 		cols, rows = 80, 24
@@ -125,22 +131,26 @@ func restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], event
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := bootstrapWait[protocol.EventPaneCreated](ctx, events); err != nil {
-		return "", "", err
-	}
-	current, err := bootstrapWaitLayout(ctx, events, sessionID, window.WindowID, 1)
-	if err != nil {
+	if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, 1, restoreLayoutWait); err != nil {
 		return "", "", err
 	}
 
-	firstPane := protocol.PaneID(layout.Panes[0].PaneID)
-	for len(current.Panes) < len(layout.Panes) {
-		next := layout.Panes[len(current.Panes)]
-		parent, dir, ok := findSplitTarget(current, next)
+	firstPane := protocol.PaneID(sortedLayoutPanes(layout.Panes)[0].PaneID)
+	targetPanes := sortedLayoutPanes(layout.Panes)
+	currentCount := 1
+	for currentCount < len(targetPanes) {
+		layoutSnap, ok := a.cache.LayoutSnapshot(sessionID, window.WindowID)
+		if !ok {
+			return "", "", fmt.Errorf("restore window %s: missing layout", window.WindowID)
+		}
+		next := targetPanes[currentCount]
+		parent, dir, ok := findSplitTarget(layoutSnap, next)
 		if !ok {
 			return "", "", fmt.Errorf("cannot infer split for pane %s", next.PaneID)
 		}
+		bootstrapSplitReq++
 		if err := super.Send(ctx, protocol.CommandPaneSplit{
+			Meta:         protocol.CommandMeta{ClientID: bootstrapClientID, RequestID: bootstrapSplitReq},
 			SessionID:    sessionID,
 			WindowID:     window.WindowID,
 			TargetPaneID: parent,
@@ -148,14 +158,8 @@ func restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], event
 		}); err != nil {
 			return "", "", err
 		}
-		if _, err := bootstrapWait[protocol.EventPaneSplitCompleted](ctx, events); err != nil {
-			return "", "", err
-		}
-		if _, err := bootstrapWait[protocol.EventPaneCreated](ctx, events); err != nil {
-			return "", "", err
-		}
-		current, err = bootstrapWaitLayout(ctx, events, sessionID, window.WindowID, len(current.Panes)+1)
-		if err != nil {
+		currentCount++
+		if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, currentCount, restoreLayoutWait); err != nil {
 			return "", "", err
 		}
 	}
@@ -163,35 +167,67 @@ func restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], event
 	return window.WindowID, firstPane, nil
 }
 
-func bootstrapWaitLayout(ctx context.Context, events <-chan protocol.Event, sessionID protocol.SessionID, windowID protocol.WindowID, minPanes int) (protocol.EventWindowLayoutChanged, error) {
-	var zero protocol.EventWindowLayoutChanged
-	for {
+func (a *Shux) waitLayoutPanes(ctx context.Context, sessionID protocol.SessionID, windowID protocol.WindowID, minPanes int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if layout, ok := a.cache.LayoutSnapshot(sessionID, windowID); ok && len(layout.Panes) >= minPanes {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
-			return zero, ctx.Err()
-		case event := <-events:
-			layout, ok := event.(protocol.EventWindowLayoutChanged)
-			if !ok {
-				continue
-			}
-			if layout.SessionID != sessionID || layout.WindowID != windowID {
-				continue
-			}
-			if len(layout.Panes) >= minPanes {
-				return layout, nil
-			}
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	return fmt.Errorf("timeout waiting for %d panes in window %s", minPanes, windowID)
 }
 
 func findSplitTarget(current protocol.EventWindowLayoutChanged, target persist.LayoutPaneSnapshot) (protocol.PaneID, protocol.SplitDirection, bool) {
-	for _, p := range current.Panes {
-		if target.Col == p.Col+p.Cols && target.Row == p.Row && target.Rows == p.Rows {
+	parent, dir, ok := findSplitTargetSnaps(layoutPanesFromEvent(current.Panes), target)
+	return protocol.PaneID(parent), dir, ok
+}
+
+func layoutPanesFromEvent(panes []protocol.EventLayoutPane) []persist.LayoutPaneSnapshot {
+	out := make([]persist.LayoutPaneSnapshot, len(panes))
+	for i, p := range panes {
+		out[i] = persist.LayoutPaneSnapshot{
+			PaneID: string(p.PaneID),
+			Col:    p.Col,
+			Row:    p.Row,
+			Cols:   p.Cols,
+			Rows:   p.Rows,
+		}
+	}
+	return out
+}
+
+func findSplitTargetSnaps(current []persist.LayoutPaneSnapshot, target persist.LayoutPaneSnapshot) (string, protocol.SplitDirection, bool) {
+	for _, p := range current {
+		if p.PaneID == target.PaneID {
+			continue
+		}
+		if target.Col > p.Col && target.Col <= p.Col+p.Cols &&
+			target.Row >= p.Row && target.Row+target.Rows <= p.Row+p.Rows {
 			return p.PaneID, protocol.SplitVertical, true
 		}
-		if target.Row == p.Row+p.Rows && target.Col == p.Col && target.Cols == p.Cols {
+		if target.Row > p.Row && target.Row <= p.Row+p.Rows &&
+			target.Col >= p.Col && target.Col+target.Cols <= p.Col+p.Cols {
 			return p.PaneID, protocol.SplitHorizontal, true
 		}
 	}
 	return "", 0, false
+}
+
+func sortedLayoutPanes(panes []persist.LayoutPaneSnapshot) []persist.LayoutPaneSnapshot {
+	out := append([]persist.LayoutPaneSnapshot(nil), panes...)
+	sort.Slice(out, func(i, j int) bool {
+		return paneIDSeq(out[i].PaneID) < paneIDSeq(out[j].PaneID)
+	})
+	return out
+}
+
+func paneIDSeq(id string) int {
+	id = strings.TrimPrefix(id, "p-")
+	n, _ := strconv.Atoi(id)
+	return n
 }

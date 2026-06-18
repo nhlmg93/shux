@@ -27,11 +27,17 @@ jobs:
       - name: Build libghostty
         run: make libghostty
 
+      - name: Unit tests (5s budget)
+        run: make test-unit
+
       - name: Integration tests
         run: make test-integration
 
       - name: E2E tests
         run: make test-e2e
+
+      - name: Sim tests (native, 5s budget)
+        run: make test-sim-native
 
   test-sim:
     runs-on: ubuntu-latest
