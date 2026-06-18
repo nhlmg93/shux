@@ -10,6 +10,7 @@ import (
 	"charm.land/wish/v2"
 	wishtea "charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/ssh"
+	"shux/internal/cfg"
 	"shux/internal/client"
 	"shux/internal/protocol"
 )
@@ -49,7 +50,8 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 					_, _ = fmt.Fprintln(sess, "restarting shux daemon...")
 					go func() {
 						time.Sleep(50 * time.Millisecond)
-						_ = app.FinishGracefulRestart(context.Background(), client.AttachOptions{})
+						opts := client.AttachOptions{Bash: app.Config.ShellPath == cfg.BashShellPath}
+						_ = app.FinishGracefulRestart(context.Background(), opts)
 					}()
 					return
 				default:

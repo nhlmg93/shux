@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	glua "github.com/yuin/gopher-lua"
 	"shux/internal/cfg"
@@ -154,6 +155,8 @@ func (rt *Runtime) optIndex(L *glua.LState) int {
 		L.Push(glua.LNumber(rt.Config.Scrollback))
 	case "journal_max_mb":
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
+	case "journal_replay_delay_ms":
+		L.Push(glua.LNumber(rt.Config.JournalReplayDelay.Milliseconds()))
 	case "state_dir":
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":
@@ -176,6 +179,8 @@ func (rt *Runtime) optNewIndex(L *glua.LState) int {
 		rt.Config.Scrollback = uint(luaNumber(val))
 	case "journal_max_mb":
 		rt.Config.JournalMaxMB = uint(luaNumber(val))
+	case "journal_replay_delay_ms":
+		rt.Config.JournalReplayDelay = time.Duration(luaNumber(val)) * time.Millisecond
 	case "state_dir":
 		rt.Config.StateDir = luaString(val)
 	case "resurrection":
@@ -235,6 +240,8 @@ func (rt *Runtime) apiGetOption(L *glua.LState) int {
 		L.Push(glua.LNumber(rt.Config.Scrollback))
 	case "journal_max_mb":
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
+	case "journal_replay_delay_ms":
+		L.Push(glua.LNumber(rt.Config.JournalReplayDelay.Milliseconds()))
 	case "state_dir":
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":

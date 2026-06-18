@@ -182,6 +182,46 @@ func TestResurrection_eventDrivenCheckpoint(t *testing.T) {
 	}
 }
 
+func TestResurrection_liveJournalReplayRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := fastResurrectionConfig(t, dir)
+	cfg.ShellPath = "/bin/sh"
+	marker := "SHUX_LIVE_MARKER"
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	app1, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app1.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app1.TestSupervisor()
+	sid, wid, pid := app1.DefaultSessionID, app1.DefaultWindowID, app1.DefaultPaneID
+	pastePane(t, ctx, ref, sid, wid, pid, marker+"\n")
+	if !app1.WaitPaneScreen(sid, wid, pid, marker, 500*time.Millisecond) {
+		t.Fatal("live pane missing marker before checkpoint")
+	}
+	if err := app1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app2, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app2.Close()
+	if err := app2.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !app2.WaitPaneScreen(app2.DefaultSessionID, app2.DefaultWindowID, pid, marker, 500*time.Millisecond) {
+		t.Fatal("restored pane missing live journal marker")
+	}
+}
+
 func TestResurrection_checkpointLayoutRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := fastResurrectionConfig(t, dir)
@@ -236,6 +276,20 @@ func splitPane(t *testing.T, ctx context.Context, ref interface {
 		WindowID:     wid,
 		TargetPaneID: target,
 		Direction:    dir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pastePane(t *testing.T, ctx context.Context, ref interface {
+	Send(context.Context, protocol.Command) error
+}, sid protocol.SessionID, wid protocol.WindowID, pid protocol.PaneID, data string) {
+	t.Helper()
+	if err := ref.Send(ctx, protocol.CommandPanePaste{
+		SessionID: sid,
+		WindowID:  wid,
+		PaneID:    pid,
+		Data:      []byte(data),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -319,11 +319,16 @@ func (a *Shux) Start(ctx context.Context) error {
 	a.hub = hubRef
 	a.cache = cache
 	watcher := newCheckpointWatcher(a)
+	bridge := newAutocmdBridge(a)
 	if a.Config.Resurrection && a.Config.StateDir != "" {
 		if err := hubRef.Send(ctx, protocol.EventRegisterSubscriber{ClientID: checkpointClientID, Sink: watcher}); err != nil {
 			cancel()
 			return err
 		}
+	}
+	if err := hubRef.Send(ctx, protocol.EventRegisterSubscriber{ClientID: autocmdBridgeClientID, Sink: bridge}); err != nil {
+		cancel()
+		return err
 	}
 	a.checkpoints = watcher
 	a.supervisor = supervisor.StartWithPolicy(actorCtx, &hubRef, a.Config)
