@@ -10,6 +10,7 @@ const (
 	DefaultBindAddr               = cfg.DefaultBindAddr
 	DefaultMapLeader              = cfg.DefaultMapLeader
 	DefaultScrollback             = cfg.DefaultScrollback
+	DefaultMaxSessions            = cfg.DefaultMaxSessions
 	DefaultJournalMaxMB           = cfg.DefaultJournalMaxMB
 	DefaultPaneQuickSelectTimeout = cfg.DefaultPaneQuickSelectTimeout
 )

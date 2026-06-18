@@ -1,6 +1,10 @@
 package protocol
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	"unicode"
+)
 
 const (
 	MaxPaneInputTextBytes = 4096
@@ -11,7 +15,17 @@ type Command any
 
 func ValidateCommand(cmd Command) error {
 	switch c := cmd.(type) {
-	case CommandNoop, CommandCreateSession:
+	case CommandNoop:
+		return nil
+	case CommandCreateSession:
+		if c.Name != "" && !ValidSessionName(c.Name) {
+			return fmt.Errorf("protocol: CommandCreateSession: invalid Name")
+		}
+		return nil
+	case CommandListSessions:
+		if c.Reply == nil {
+			return fmt.Errorf("protocol: CommandListSessions: nil Reply")
+		}
 		return nil
 	case CommandCreateWindow:
 		if err := validateSessionTarget("CommandCreateWindow", c.SessionID); err != nil {
@@ -226,7 +240,7 @@ func validateSize(name string, cols, rows uint16) error {
 
 // RouteSessionID returns the SessionID a command should be forwarded to.
 // Reports false for commands that the supervisor handles directly (CommandNoop,
-// CommandCreateSession) or for unknown types.
+// CommandCreateSession, CommandListSessions) or for unknown types.
 func RouteSessionID(cmd Command) (SessionID, bool) {
 	switch c := cmd.(type) {
 	case CommandCreateWindow:
@@ -324,7 +338,47 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 type CommandNoop struct{}
 
 // CommandCreateSession is handled by the supervisor; it spawns a new session actor.
-type CommandCreateSession struct{}
+type CommandCreateSession struct {
+	// Name is optional. Empty requests the supervisor-assigned default name.
+	Name string
+	// Reply is optional. When set, supervisor reports the create result.
+	Reply chan<- CommandCreateSessionResult
+}
+
+type CommandCreateSessionResult struct {
+	Session SessionDescriptor
+	Err     error
+}
+
+type SessionDescriptor struct {
+	Name      string
+	SessionID SessionID
+}
+
+type CommandListSessions struct {
+	Reply chan<- []SessionDescriptor
+}
+
+func ValidSessionName(name string) bool {
+	if len(name) == 0 || len(name) > 64 {
+		return false
+	}
+	if strings.TrimSpace(name) != name {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			continue
+		}
+		switch r {
+		case '-', '_', '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // CommandCreateWindow is handled by the session actor. When AutoPane is true
 // it also creates the initial pane (tmux new-window behavior). When Meta is set,

@@ -29,9 +29,12 @@ Same behavior as `./shux` from an interactive terminal.
 
 ```bash
 shux attach
+shux attach -t work
 shux attach --bash   # only affects new daemon spawn
 shux attach -C       # experimental control mode on stdin/stdout
 ```
+
+When multiple sessions exist, plain `shux attach` targets the daemon default session (`main` unless changed by restoration).
 
 ### Control mode (experimental)
 
@@ -85,6 +88,22 @@ shux restart
 ```
 
 Clients are detached during restart. Reattach with `./shux` when the new daemon is ready.
+
+## `shux new-session`
+
+Create a named session and initialize its first window/pane.
+
+```bash
+shux new-session -s work
+```
+
+## `shux list-sessions`
+
+List known daemon sessions by name.
+
+```bash
+shux list-sessions
+```
 
 ## `shux list-windows`
 

@@ -17,6 +17,7 @@ type checkpointWatcher struct {
 	app   *Shux
 	mu    sync.Mutex
 	timer *time.Timer
+	stopped bool
 }
 
 func newCheckpointWatcher(app *Shux) *checkpointWatcher {
@@ -42,12 +43,27 @@ func (w *checkpointWatcher) schedule() {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.stopped {
+		return
+	}
 	if w.timer != nil {
 		w.timer.Stop()
 	}
-	w.timer = time.AfterFunc(checkpointDebounce, func() {
-		w.app.checkpoint()
-	})
+	w.timer = time.AfterFunc(checkpointDebounce, w.runCheckpoint)
+}
+
+func (w *checkpointWatcher) runCheckpoint() {
+	if w == nil || w.app == nil {
+		return
+	}
+	w.mu.Lock()
+	if w.stopped {
+		w.mu.Unlock()
+		return
+	}
+	w.timer = nil
+	w.mu.Unlock()
+	w.app.checkpoint()
 }
 
 func (w *checkpointWatcher) stop() {
@@ -56,6 +72,7 @@ func (w *checkpointWatcher) stop() {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.stopped = true
 	if w.timer != nil {
 		w.timer.Stop()
 		w.timer = nil

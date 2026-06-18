@@ -38,6 +38,7 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 	}
 	return func(next ssh.Handler) ssh.Handler {
 		return func(sess ssh.Session) {
+			targetSessionID := app.DefaultSessionID
 			if command := sess.Command(); len(command) > 0 {
 				switch command[0] {
 				case "detach", "detach-client":
@@ -154,6 +155,47 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						wish.Fatalln(sess, err)
 					}
 					return
+				case "new-session":
+					name, err := parseSessionName(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					created, err := app.CreateNamedSession(sess.Context(), name)
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					_, _ = fmt.Fprintf(sess, "%s\n", created.Name)
+					return
+				case "list-sessions":
+					sessions, err := app.ListSessions(sess.Context())
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					for _, session := range sessions {
+						prefix := " "
+						if session.SessionID == app.DefaultSessionID {
+							prefix = "*"
+						}
+						_, _ = fmt.Fprintf(sess, "%s %s\n", prefix, session.Name)
+					}
+					return
+				case "attach", "attach-session":
+					targetName, err := parseAttachTarget(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					if targetName != "" {
+						target, err := app.ResolveSession(sess.Context(), targetName)
+						if err != nil {
+							wish.Fatalln(sess, err)
+							return
+						}
+						targetSessionID = target.SessionID
+					}
 				default:
 					wish.Fatalln(sess, "shux: unknown command")
 					return
@@ -169,7 +211,7 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 			ctx, cancel := context.WithCancel(sess.Context())
 			defer cancel()
 
-			p, cleanup, err := app.NewClientProgram(ctx, ids.Next(), wishtea.MakeOptions(sess)...)
+			p, cleanup, err := app.NewClientProgramForSession(ctx, ids.Next(), targetSessionID, wishtea.MakeOptions(sess)...)
 			if err != nil {
 				wish.Fatalln(sess, err)
 				return
@@ -245,3 +287,36 @@ func runQueryRPC(app *Shux, sess ssh.Session) (protocol.QueryResponse, error) {
 		return protocol.QueryResponse{}, fmt.Errorf("shux: unknown query method %q", req.Method)
 	}
 }
+
+func parseSessionName(args []string) (string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-s" || args[i] == "--session" {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("shux: missing session name for %s", args[i])
+			}
+			name := strings.TrimSpace(args[i+1])
+			if !protocol.ValidSessionName(name) {
+				return "", fmt.Errorf("shux: invalid session name %q", name)
+			}
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("shux: new-session requires -s NAME")
+}
+
+func parseAttachTarget(args []string) (string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-t" || args[i] == "--target" {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("shux: missing attach target for %s", args[i])
+			}
+			name := strings.TrimSpace(args[i+1])
+			if !protocol.ValidSessionName(name) {
+				return "", fmt.Errorf("shux: invalid session target %q", name)
+			}
+			return name, nil
+		}
+	}
+	return "", nil
+}
+

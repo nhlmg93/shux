@@ -75,6 +75,12 @@ func (l *Logger) log(level, msg string) {
 		return
 	}
 	line := fmt.Sprintf("%s [%s] %s", time.Now().Format(time.RFC3339), level, msg)
+	// Concurrent shutdown can race with channel send; dropping late logs is fine.
+	defer func() {
+		if recover() != nil {
+			return
+		}
+	}()
 	select {
 	case l.ch <- line:
 	case <-l.closed:

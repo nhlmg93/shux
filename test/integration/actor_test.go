@@ -18,14 +18,15 @@ type commandSender interface {
 
 // ID suffixes match supervisor/session/window counters: first create in each actor is "1".
 const (
-	initSessionID = protocol.SessionID("s-1")
-	initWindowID  = protocol.WindowID("w-1")
-	initPaneID    = protocol.PaneID("p-1")
-	initPane2ID   = protocol.PaneID("p-2")
-	initPane3ID   = protocol.PaneID("p-3")
-	initPane4ID   = protocol.PaneID("p-4")
-	testClientID  = protocol.ClientID("test-client")
-	testClient2ID = protocol.ClientID("test-client-2")
+	initSessionID   = protocol.SessionID("s-1")
+	initSessionName = "session-1"
+	initWindowID    = protocol.WindowID("w-1")
+	initPaneID      = protocol.PaneID("p-1")
+	initPane2ID     = protocol.PaneID("p-2")
+	initPane3ID     = protocol.PaneID("p-3")
+	initPane4ID     = protocol.PaneID("p-4")
+	testClientID    = protocol.ClientID("test-client")
+	testClient2ID   = protocol.ClientID("test-client-2")
 )
 
 func TestStart_acceptsCommandNoop(t *testing.T) {
@@ -67,7 +68,7 @@ func TestHub_fansOutLifecycleEvents(t *testing.T) {
 	testutil.MustSend(t, ctx, ref, protocol.CommandCreateWindow{SessionID: initSessionID})
 	testutil.MustSend(t, ctx, ref, protocol.CommandCreatePane{SessionID: initSessionID, WindowID: initWindowID})
 
-	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
+	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID, Name: initSessionName})
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
 	assertEvent(t, events, protocol.EventSessionWindowsChanged{SessionID: initSessionID, Revision: 1, Windows: []protocol.WindowID{initWindowID}})
 	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})
@@ -1197,7 +1198,7 @@ func bootstrapWindow(t *testing.T, ctx context.Context, ref commandSender, event
 	testutil.MustSend(t, ctx, ref, protocol.CommandCreateSession{})
 	testutil.MustSend(t, ctx, ref, protocol.CommandCreateWindow{SessionID: initSessionID})
 	testutil.MustSend(t, ctx, ref, protocol.CommandCreatePane{SessionID: initSessionID, WindowID: initWindowID})
-	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID})
+	assertEvent(t, events, protocol.EventSessionCreated{SessionID: initSessionID, Name: initSessionName})
 	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: initWindowID})
 	assertEvent(t, events, protocol.EventSessionWindowsChanged{SessionID: initSessionID, Revision: 1, Windows: []protocol.WindowID{initWindowID}})
 	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPaneID})

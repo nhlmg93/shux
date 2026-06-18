@@ -136,6 +136,44 @@ func TestLastClientDetachDoesNotStopDaemon(t *testing.T) {
 	}
 }
 
+func TestNamedSessions_create_list_attachTarget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	if err := client.NewSession(ctx, addr, client.AttachOptions{}, "work"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := client.ListSessions(ctx, addr, client.AttachOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSession(sessions, "main") || !containsSession(sessions, "work") {
+		t.Fatalf("sessions = %v, want main and work", sessions)
+	}
+
+	attachAndSendKeysCommand(t, addr, "attach -t work", []byte{sshCtrlB, 'd'}, 0)
+}
+
+func TestNamedSessions_respectsMaxSessionsBound(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	cfg := shux.DefaultConfig()
+	cfg.MaxSessions = 2
+	addr, stop := startTestDaemonWithConfig(t, cfg)
+	defer stop()
+
+	if err := client.NewSession(ctx, addr, client.AttachOptions{}, "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.NewSession(ctx, addr, client.AttachOptions{}, "extra"); err == nil {
+		t.Fatal("expected max-sessions error")
+	}
+}
+
 func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	addr := freeLoopbackAddr(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -250,6 +288,10 @@ func attachAndDetachAfter(t *testing.T, addr string, delay time.Duration) []byte
 }
 
 func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Duration) []byte {
+	return attachAndSendKeysCommand(t, addr, "", keys, delay)
+}
+
+func attachAndSendKeysCommand(t *testing.T, addr, command string, keys []byte, delay time.Duration) []byte {
 	t.Helper()
 	sshClient, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
 		User:            "test",
@@ -288,8 +330,14 @@ func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Durati
 	if err := sess.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Shell(); err != nil {
-		t.Fatal(err)
+	if command != "" {
+		if err := sess.Start(command); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := sess.Shell(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	go func() {
@@ -314,6 +362,15 @@ func attachAndSendKeys(t *testing.T, addr string, keys []byte, delay time.Durati
 		}
 	}
 	return out.Bytes()
+}
+
+func containsSession(sessions []string, name string) bool {
+	for _, session := range sessions {
+		if session == name {
+			return true
+		}
+	}
+	return false
 }
 
 type readyBuffer struct {

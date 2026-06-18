@@ -163,6 +163,8 @@ func (rt *Runtime) optIndex(L *glua.LState) int {
 		L.Push(glua.LString(rt.Config.BindAddr))
 	case "scrollback":
 		L.Push(glua.LNumber(rt.Config.Scrollback))
+	case "max_sessions":
+		L.Push(glua.LNumber(rt.Config.MaxSessions))
 	case "journal_max_mb":
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
 	case "journal_replay_delay_ms":
@@ -191,6 +193,8 @@ func (rt *Runtime) optNewIndex(L *glua.LState) int {
 		rt.Config.BindAddr = luaString(val)
 	case "scrollback":
 		rt.Config.Scrollback = uint(luaNumber(val))
+	case "max_sessions":
+		rt.Config.MaxSessions = uint(luaNumber(val))
 	case "journal_max_mb":
 		rt.Config.JournalMaxMB = uint(luaNumber(val))
 	case "journal_replay_delay_ms":
@@ -321,6 +325,8 @@ func (rt *Runtime) apiGetOption(L *glua.LState) int {
 		L.Push(glua.LString(rt.Config.BindAddr))
 	case "scrollback":
 		L.Push(glua.LNumber(rt.Config.Scrollback))
+	case "max_sessions":
+		L.Push(glua.LNumber(rt.Config.MaxSessions))
 	case "journal_max_mb":
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
 	case "journal_replay_delay_ms":

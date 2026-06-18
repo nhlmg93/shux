@@ -36,12 +36,16 @@ func TestManifest_roundtrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load: ok=%v err=%v", ok, err)
 	}
-	if got.SessionID != m.SessionID || len(got.WindowIDs) != 1 || len(got.Layouts["w-1"].Panes) != 2 {
+	if got.DefaultSessionName != "s-1" || len(got.Sessions) != 1 || got.Sessions[0].Name != "s-1" || len(got.Sessions[0].WindowIDs) != 1 || len(got.Sessions[0].Layouts["w-1"].Panes) != 2 {
 		t.Fatalf("unexpected manifest: %+v", got)
 	}
 	wantPath := persist.JournalPath(dir, 1, "p-1")
-	if got.PaneJournals[persist.JournalMapKey(1, "p-1")] != wantPath {
-		t.Fatalf("journal map: %v", got.PaneJournals)
+	key := persist.JournalMapKey(1, "p-1")
+	if got.Sessions[0].PaneJournals[key] != wantPath {
+		t.Fatalf("journal map: %v", got.Sessions[0].PaneJournals)
+	}
+	if got.PaneJournals[key] != wantPath {
+		t.Fatalf("legacy journal map: %v", got.PaneJournals)
 	}
 }
 
@@ -114,8 +118,8 @@ func TestBuildManifest_ordinalWithGapWindowID(t *testing.T) {
 		},
 	)
 	want := persist.JournalPath(dir, 1, "p-1")
-	if m.PaneJournals[persist.JournalMapKey(1, "p-1")] != want {
-		t.Fatalf("expected ordinal 1 path %q, got map %v", want, m.PaneJournals)
+	if m.Sessions[0].PaneJournals[persist.JournalMapKey(1, "p-1")] != want {
+		t.Fatalf("expected ordinal 1 path %q, got map %v", want, m.Sessions[0].PaneJournals)
 	}
 	if !strings.Contains(want, "win1_p-1.journal") {
 		t.Fatalf("unexpected path: %s", want)

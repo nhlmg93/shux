@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -23,8 +24,9 @@ import (
 )
 
 type AttachOptions struct {
-	Bash    bool
-	Control bool
+	Bash          bool
+	Control       bool
+	TargetSession string
 }
 
 func clientTerm() string {
@@ -62,10 +64,14 @@ func attachWithMode(ctx context.Context, addr string, opts AttachOptions) error 
 	if opts.Control {
 		return AttachControl(ctx, addr)
 	}
-	return Attach(ctx, addr)
+	return AttachWithOptions(ctx, addr, opts)
 }
 
 func Attach(ctx context.Context, addr string) error {
+	return AttachWithOptions(ctx, addr, AttachOptions{})
+}
+
+func AttachWithOptions(ctx context.Context, addr string, opts AttachOptions) error {
 	sshClient, err := dialTrusted(ctx, addr)
 	if err != nil {
 		return err
@@ -96,8 +102,17 @@ func Attach(ctx context.Context, addr string) error {
 	sess.Stdin = os.Stdin
 	sess.Stdout = os.Stdout
 	sess.Stderr = os.Stderr
-	if err := sess.Shell(); err != nil {
-		return fmt.Errorf("client: start shell: %w", err)
+	if opts.TargetSession != "" {
+		if !protocol.ValidSessionName(opts.TargetSession) {
+			return fmt.Errorf("client: invalid session target %q", opts.TargetSession)
+		}
+		if err := sess.Start("attach -t " + opts.TargetSession); err != nil {
+			return fmt.Errorf("client: start attach target: %w", err)
+		}
+	} else {
+		if err := sess.Shell(); err != nil {
+			return fmt.Errorf("client: start shell: %w", err)
+		}
 	}
 
 	stopResize := forwardWindowChanges(sess, int(os.Stdout.Fd()))
@@ -215,6 +230,84 @@ func ServerAvailable(ctx context.Context, addr string) (bool, error) {
 	}
 	_ = sshConn.Close()
 	return true, nil
+}
+
+func NewSession(ctx context.Context, addr string, opts AttachOptions, name string) error {
+	if !protocol.ValidSessionName(name) {
+		return fmt.Errorf("client: invalid session name %q", name)
+	}
+	if err := ensureServer(ctx, addr, opts); err != nil {
+		return err
+	}
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput("new-session -s " + name)
+	if err != nil {
+		return fmt.Errorf("client: new-session: %w: %s", err, out)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
+func ListSessions(ctx context.Context, addr string, opts AttachOptions) ([]string, error) {
+	if err := ensureServer(ctx, addr, opts); err != nil {
+		return nil, err
+	}
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput("list-sessions")
+	if err != nil {
+		return nil, fmt.Errorf("client: list-sessions: %w: %s", err, out)
+	}
+	lines := strings.Split(string(out), "\n")
+	sessions := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "* ") || strings.HasPrefix(line, "  ") {
+			line = strings.TrimSpace(line[1:])
+		}
+		sessions = append(sessions, line)
+	}
+	return sessions, nil
+}
+
+func ensureServer(ctx context.Context, addr string, opts AttachOptions) error {
+	available, err := ServerAvailable(ctx, addr)
+	if err != nil {
+		return err
+	}
+	if available {
+		return nil
+	}
+	if err := spawnDetached(opts); err != nil {
+		return err
+	}
+	return WaitReady(ctx, addr, 2*time.Second)
 }
 
 func spawnDetached(opts AttachOptions) error {

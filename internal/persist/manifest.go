@@ -33,12 +33,23 @@ type LayoutSnapshot struct {
 
 // Manifest is the on-disk resurrection checkpoint for a shux daemon.
 type Manifest struct {
-	Version      int                        `json:"version"`
-	ShellPath    string                     `json:"shell_path"`
-	SessionID    protocol.SessionID         `json:"session_id"`
-	WindowIDs    []protocol.WindowID        `json:"window_ids"`
-	Layouts      map[string]LayoutSnapshot  `json:"layouts"`
-	PaneJournals map[string]string          `json:"pane_journals"`
+	Version            int               `json:"version"`
+	ShellPath          string            `json:"shell_path"`
+	DefaultSessionName string            `json:"default_session_name,omitempty"`
+	Sessions           []SessionManifest `json:"sessions,omitempty"`
+
+	// Legacy single-session fields (v1) retained for backward compatibility.
+	SessionID    protocol.SessionID        `json:"session_id,omitempty"`
+	WindowIDs    []protocol.WindowID       `json:"window_ids,omitempty"`
+	Layouts      map[string]LayoutSnapshot `json:"layouts,omitempty"`
+	PaneJournals map[string]string         `json:"pane_journals,omitempty"`
+}
+
+type SessionManifest struct {
+	Name         string                    `json:"name"`
+	WindowIDs    []protocol.WindowID       `json:"window_ids"`
+	Layouts      map[string]LayoutSnapshot `json:"layouts"`
+	PaneJournals map[string]string         `json:"pane_journals"`
 }
 
 // JournalMapKey identifies a pane journal within a manifest by session window ordinal.
@@ -107,7 +118,7 @@ func ClearResurrectionState(stateDir string) error {
 		return nil
 	}
 	_ = os.Remove(filepath.Join(stateDir, manifestFile))
-	_ = os.Remove(filepath.Join(stateDir, manifestFile + ".tmp"))
+	_ = os.Remove(filepath.Join(stateDir, manifestFile+".tmp"))
 	paneDir := filepath.Join(stateDir, "panes")
 	entries, err := os.ReadDir(paneDir)
 	if err != nil {
@@ -127,6 +138,28 @@ func ClearResurrectionState(stateDir string) error {
 
 // BuildManifest assembles a manifest from exported session snapshots.
 func BuildManifest(sessionID protocol.SessionID, shellPath, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) Manifest {
+	return BuildManifestForSessions(shellPath, string(sessionID), []SessionManifest{
+		BuildSessionManifest(string(sessionID), stateDir, windows, layouts),
+	})
+}
+
+func BuildManifestForSessions(shellPath, defaultSessionName string, sessions []SessionManifest) Manifest {
+	journals := make(map[string]string)
+	if len(sessions) == 1 {
+		for k, v := range sessions[0].PaneJournals {
+			journals[k] = v
+		}
+	}
+	return Manifest{
+		Version:            2,
+		ShellPath:          shellPath,
+		DefaultSessionName: defaultSessionName,
+		Sessions:           append([]SessionManifest(nil), sessions...),
+		PaneJournals:       journals,
+	}
+}
+
+func BuildSessionManifest(name, stateDir string, windows []protocol.WindowID, layouts map[string]LayoutSnapshot) SessionManifest {
 	journals := make(map[string]string)
 	for i, wid := range windows {
 		ordinal := i + 1
@@ -139,10 +172,8 @@ func BuildManifest(sessionID protocol.SessionID, shellPath, stateDir string, win
 			journals[JournalMapKey(ordinal, pid)] = JournalPath(stateDir, ordinal, pid)
 		}
 	}
-	return Manifest{
-		Version:      1,
-		ShellPath:    shellPath,
-		SessionID:    sessionID,
+	return SessionManifest{
+		Name:         name,
 		WindowIDs:    append([]protocol.WindowID(nil), windows...),
 		Layouts:      layouts,
 		PaneJournals: journals,
@@ -182,7 +213,31 @@ func LoadManifest(stateDir string) (Manifest, bool, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Manifest{}, false, err
 	}
-	if m.Version != 1 || !m.SessionID.Valid() || len(m.WindowIDs) == 0 {
+	switch m.Version {
+	case 1:
+		if !m.SessionID.Valid() || len(m.WindowIDs) == 0 {
+			return Manifest{}, false, errors.New("persist: invalid manifest")
+		}
+		m.DefaultSessionName = string(m.SessionID)
+		m.Sessions = []SessionManifest{{
+			Name:         string(m.SessionID),
+			WindowIDs:    append([]protocol.WindowID(nil), m.WindowIDs...),
+			Layouts:      m.Layouts,
+			PaneJournals: m.PaneJournals,
+		}}
+	case 2:
+		if len(m.Sessions) == 0 {
+			return Manifest{}, false, errors.New("persist: invalid manifest")
+		}
+		if m.DefaultSessionName == "" {
+			m.DefaultSessionName = m.Sessions[0].Name
+		}
+		for i, session := range m.Sessions {
+			if !protocol.ValidSessionName(session.Name) || len(session.WindowIDs) == 0 {
+				return Manifest{}, false, fmt.Errorf("persist: invalid manifest session[%d]", i)
+			}
+		}
+	default:
 		return Manifest{}, false, errors.New("persist: invalid manifest")
 	}
 	return m, true, nil
