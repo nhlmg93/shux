@@ -1137,13 +1137,15 @@ func (m Model) renderStatusRow(width int) string {
 	if strings.TrimSpace(right) == "" && strings.TrimSpace(m.Layout.Status) != "" {
 		right = strings.TrimSpace(m.Layout.Status)
 	}
+	syncState := "OFF"
 	if m.Layout.SyncPanes {
-		const syncIndicator = "[SYNC]"
-		if strings.TrimSpace(right) == "" {
-			right = syncIndicator
-		} else {
-			right = syncIndicator + " " + right
-		}
+		syncState = "ON"
+	}
+	syncIndicator := "[SYNC:" + syncState + "]"
+	if strings.TrimSpace(right) == "" {
+		right = syncIndicator
+	} else {
+		right = syncIndicator + " " + right
 	}
 	line := joinStatusSegments(width, left, right)
 	return lipgloss.NewStyle().Reverse(true).Width(width).Render(line)
