@@ -28,6 +28,17 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandListSessions: nil Reply")
 		}
 		return nil
+	case CommandKillSession:
+		if !ValidSessionName(c.Name) {
+			return fmt.Errorf("protocol: CommandKillSession: invalid Name")
+		}
+		return nil
+	case CommandSessionEnded:
+		return validateSessionTarget("CommandSessionEnded", c.SessionID)
+	case CommandSessionKill:
+		return nil
+	case CommandKillWindow:
+		return validateWindowTarget("CommandKillWindow", c.SessionID, c.WindowID)
 	case CommandCreateWindow:
 		if err := validateSessionTarget("CommandCreateWindow", c.SessionID); err != nil {
 			return err
@@ -402,6 +413,29 @@ type SessionDescriptor struct {
 
 type CommandListSessions struct {
 	Reply chan<- []SessionDescriptor
+}
+
+// CommandKillSession closes all windows in a named session and removes it.
+type CommandKillSession struct {
+	Name  string
+	Reply chan<- error
+}
+
+// CommandSessionEnded notifies the supervisor that a session actor is exiting.
+type CommandSessionEnded struct {
+	SessionID SessionID
+}
+
+// CommandSessionKill is handled by a session actor to close all windows and exit.
+type CommandSessionKill struct {
+	Reply chan<- error
+}
+
+// CommandKillWindow closes all panes in a window.
+type CommandKillWindow struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Reply     chan<- struct{}
 }
 
 func ValidSessionName(name string) bool {

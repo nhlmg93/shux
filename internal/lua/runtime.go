@@ -177,6 +177,8 @@ func (rt *Runtime) optIndex(L *glua.LState) int {
 		L.Push(glua.LBool(rt.Config.Resurrection))
 	case "statusline":
 		L.Push(rt.statuslineTable())
+	case "ui":
+		L.Push(rt.uiTable())
 	default:
 		L.Push(glua.LNil)
 	}
@@ -207,6 +209,8 @@ func (rt *Runtime) optNewIndex(L *glua.LState) int {
 		rt.Config.Resurrection = luaBool(val)
 	case "statusline":
 		rt.statuslineFromLua(val)
+	case "ui":
+		rt.uiFromLua(val)
 	}
 	return 0
 }
@@ -220,6 +224,55 @@ func (rt *Runtime) statuslineFromLua(v glua.LValue) {
 	}
 	rt.statuslineLeft = tbl.RawGetString("left")
 	rt.statuslineRight = tbl.RawGetString("right")
+}
+
+func (rt *Runtime) uiFromLua(v glua.LValue) {
+	tbl, ok := v.(*glua.LTable)
+	if !ok {
+		return
+	}
+	u := rt.Config.UI.WithDefaults()
+	if val := tbl.RawGetString("statusline"); val != glua.LNil {
+		u.Statusline = luaBool(val)
+	}
+	if val := tbl.RawGetString("pane_borders"); val != glua.LNil {
+		u.PaneBorders = luaBool(val)
+	}
+	if val := tbl.RawGetString("pane_labels"); val != glua.LNil {
+		u.PaneLabels = luaBool(val)
+	}
+	if val := tbl.RawGetString("statusline_style"); val != glua.LNil {
+		u.StatuslineStyle = luaString(val)
+	}
+	if val := tbl.RawGetString("search_match_ansi"); val != glua.LNil {
+		u.SearchMatchANSI = luaString(val)
+	}
+	if val := tbl.RawGetString("search_active_ansi"); val != glua.LNil {
+		u.SearchActiveANSI = luaString(val)
+	}
+	if val := tbl.RawGetString("copy_mode_status_ansi"); val != glua.LNil {
+		u.CopyModeStatusANSI = luaString(val)
+	}
+	rt.Config.UI = u
+}
+
+func (rt *Runtime) uiTable() *glua.LTable {
+	u := rt.Config.UI.WithDefaults()
+	tbl := rt.L.NewTable()
+	rt.L.SetField(tbl, "statusline", glua.LBool(u.Statusline))
+	rt.L.SetField(tbl, "pane_borders", glua.LBool(u.PaneBorders))
+	rt.L.SetField(tbl, "pane_labels", glua.LBool(u.PaneLabels))
+	rt.L.SetField(tbl, "statusline_style", glua.LString(u.StatuslineStyle))
+	if u.SearchMatchANSI != "" {
+		rt.L.SetField(tbl, "search_match_ansi", glua.LString(u.SearchMatchANSI))
+	}
+	if u.SearchActiveANSI != "" {
+		rt.L.SetField(tbl, "search_active_ansi", glua.LString(u.SearchActiveANSI))
+	}
+	if u.CopyModeStatusANSI != "" {
+		rt.L.SetField(tbl, "copy_mode_status_ansi", glua.LString(u.CopyModeStatusANSI))
+	}
+	return tbl
 }
 
 func (rt *Runtime) statuslineTable() *glua.LTable {
@@ -339,6 +392,8 @@ func (rt *Runtime) apiGetOption(L *glua.LState) int {
 		L.Push(glua.LBool(rt.Config.Resurrection))
 	case "statusline":
 		L.Push(rt.statuslineTable())
+	case "ui":
+		L.Push(rt.uiTable())
 	default:
 		L.Push(glua.LNil)
 	}

@@ -232,6 +232,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		Keymaps:                a.Config.Keymaps,
 		Lua:                    a.luaRuntime,
 		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
+		UI:                     a.Config.UI,
 	})
 	model = model.WithWindowIDs(windowIDs)
 	for wid, name := range a.cache.WindowNames(sessionID) {
@@ -359,6 +360,11 @@ func (a *Shux) Start(ctx context.Context) error {
 		return err
 	}
 	a.checkpoints = watcher
+	lifecycle := newSessionLifecycleWatcher(a)
+	if err := hubRef.Send(ctx, protocol.EventRegisterSubscriber{ClientID: sessionLifecycleClientID, Sink: lifecycle}); err != nil {
+		cancel()
+		return err
+	}
 	a.supervisor = supervisor.StartWithPolicy(actorCtx, &hubRef, a.Config)
 	a.actorCancel = cancel
 	a.state = stateStarted

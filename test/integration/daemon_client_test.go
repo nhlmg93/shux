@@ -364,6 +364,68 @@ func attachAndSendKeysCommand(t *testing.T, addr, command string, keys []byte, d
 	return out.Bytes()
 }
 
+func TestKillSession_removesNamedSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	if err := client.NewSession(ctx, addr, client.AttachOptions{}, "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.KillSession(ctx, addr, client.AttachOptions{}, "work"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := client.ListSessions(ctx, addr, client.AttachOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSession(sessions, "main") {
+		t.Fatalf("sessions = %v, want main", sessions)
+	}
+	if containsSession(sessions, "work") {
+		t.Fatalf("sessions = %v, work should be removed", sessions)
+	}
+}
+
+func TestKillLastSession_stopsDaemon(t *testing.T) {
+	addr := freeLoopbackAddr(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- daemon.RunWithConfig(ctx, addr, shux.DefaultConfig()) }()
+
+	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+
+	killCtx, killCancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer killCancel()
+	if err := client.KillSession(killCtx, addr, client.AttachOptions{}, "main"); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("daemon stopped with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("daemon did not stop after killing last session")
+	}
+
+	available, err := client.ServerAvailable(t.Context(), addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if available {
+		t.Fatal("daemon should not remain available after last session killed")
+	}
+}
+
 func containsSession(sessions []string, name string) bool {
 	for _, session := range sessions {
 		if session == name {

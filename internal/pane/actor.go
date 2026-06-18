@@ -62,14 +62,18 @@ func (a *Actor) logTerminalErr(err error) {
 	fmt.Fprintf(os.Stderr, "pane %s/%s/%s: %v\n", a.SessionID, a.WindowID, a.PaneID, err)
 }
 
-func (a *Actor) closeResources() {
+func (a *Actor) closeResources(deleteJournal bool) {
 	if a.Terminal != nil {
+		if deleteJournal {
+			a.Terminal.RemoveJournal()
+		}
 		a.Terminal.Close()
 	}
 }
 
 func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
-	defer a.closeResources()
+	deleteJournal := false
+	defer func() { a.closeResources(deleteJournal) }()
 	for {
 		select {
 		case <-ctx.Done():
@@ -128,6 +132,7 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 					a.logTerminalErr(err)
 				}
 			case protocol.CommandPaneClose:
+				deleteJournal = true
 				return
 			case protocol.CommandPanePaste:
 				if err := a.Terminal.HandlePaste(msg); err != nil {

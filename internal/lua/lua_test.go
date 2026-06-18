@@ -1,9 +1,11 @@
 package lua_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"shux/internal/cfg"
 	"shux/internal/lua"
@@ -11,6 +13,10 @@ import (
 )
 
 func TestLoad_defaultConfigWithoutInitLua(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_ = ctx
+
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
@@ -142,5 +148,50 @@ func TestLoad_statuslineOption(t *testing.T) {
 	}
 	if right != "pane p-2" {
 		t.Fatalf("right = %q", right)
+	}
+}
+
+func TestLoad_uiOption(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_ = ctx
+
+	root := t.TempDir()
+	configDir := filepath.Join(root, "shux")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+
+	initLua := `shux.opt.ui = {
+  statusline = false,
+  pane_borders = false,
+  pane_labels = false,
+  statusline_style = "plain",
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, "init.lua"), []byte(initLua), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := lua.Load(lua.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	ui := rt.Config.UI
+	if ui.Statusline {
+		t.Fatal("expected statusline disabled")
+	}
+	if ui.PaneBorders {
+		t.Fatal("expected pane borders disabled")
+	}
+	if ui.PaneLabels {
+		t.Fatal("expected pane labels disabled")
+	}
+	if ui.StatuslineStyle != "plain" {
+		t.Fatalf("statusline_style = %q, want plain", ui.StatuslineStyle)
 	}
 }

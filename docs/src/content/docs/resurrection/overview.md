@@ -13,7 +13,19 @@ Resurrection is shux's durability layer. When enabled (`shux.opt.resurrection`, 
 | **Manifest** | Window/pane layout snapshot and metadata |
 | **State directory** | `shux.opt.state_dir` (defaults to XDG state path) |
 
-Checkpoints run on layout changes (debounced), client detach, and before graceful restart.
+Checkpoints run on layout changes (debounced), pane/window close, client detach, and before graceful restart.
+
+When no live sessions remain, the next checkpoint **clears** the on-disk store instead of leaving a stale manifest.
+
+## Store cleanup
+
+| Event | What happens |
+| --- | --- |
+| Pane closed | That pane's journal file is deleted |
+| Checkpoint saved | Orphan journals (not referenced by the manifest) are pruned |
+| Last session removed | Daemon stops; resurrection state is cleared |
+
+Use `shux ls` to inspect the store, `shux prune` to drop orphans, and `shux rm` to wipe everything. See [CLI commands](/cli/commands/#store-maintenance).
 
 ## Typical workflow
 

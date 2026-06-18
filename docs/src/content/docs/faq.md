@@ -19,6 +19,33 @@ No. `--bash` only applies when spawning a new daemon.
 
 In `shux.opt.state_dir`, which defaults to your XDG state directory. Journals and the layout manifest live there.
 
+## Can I hide the status bar or pane borders?
+
+Yes. Set fields on `shux.opt.ui` in your Lua config—for example `shux.opt.ui = { statusline = false }` or `shux.opt.ui = { pane_borders = false }`. See [UI chrome](/configuration/options/#ui-chrome/) for defaults and examples. UI options follow the same daemon-start reload rules as the rest of your config (see above).
+
+## How do I kill a session?
+
+Use the CLI:
+
+```bash
+shux kill-session -t work
+```
+
+That closes every window in the session, removes it from the daemon, and checkpoints the store. Closing the last pane in the last window of a session ends the session the same way (tmux-like). If you kill the **last** remaining session, the daemon stops and on-disk resurrection state is cleared.
+
+Create additional named sessions with `shux new-session -s NAME`. List them with `shux list-sessions` or `shux ps --sessions`.
+
+## How do I clear persisted resurrection data?
+
+| Goal | Command |
+| --- | --- |
+| Inspect on-disk store | `shux ls` |
+| Remove orphan journals | `shux prune` |
+| Wipe manifest + all journals | `shux rm` |
+| Kill last session (daemon stops, store cleared) | `shux kill-session -t main` |
+
+`shux rm` works offline. With a running daemon, use `shux rm --force` or stop the daemon first. Journals for closed panes are deleted automatically; each checkpoint also prunes orphans.
+
 ## Can I run multiple daemons?
 
 Each daemon binds to `shux.opt.bind` (default `127.0.0.1:23234`). Use a different bind address in config for multiple instances.

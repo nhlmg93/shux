@@ -168,6 +168,17 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 					}
 					_, _ = fmt.Fprintf(sess, "%s\n", created.Name)
 					return
+				case "kill-session":
+					name, err := parseKillSessionTarget(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					if err := app.KillSession(sess.Context(), name); err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					return
 				case "list-sessions":
 					sessions, err := app.ListSessions(sess.Context())
 					if err != nil {
@@ -316,6 +327,9 @@ func runQueryRPC(app *Shux, sess ssh.Session) (protocol.QueryResponse, error) {
 				DisplayMessageContext: ctx,
 			},
 		}, nil
+	case protocol.QueryCheckpointState:
+		pruned := app.checkpoint()
+		return protocol.QueryResponse{Checkpoint: &protocol.StateCheckpointInfo{Pruned: pruned}}, nil
 	default:
 		return protocol.QueryResponse{}, fmt.Errorf("shux: unknown query method %q", req.Method)
 	}
@@ -335,6 +349,22 @@ func parseSessionName(args []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("shux: new-session requires -s NAME")
+}
+
+func parseKillSessionTarget(args []string) (string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-t" || args[i] == "--target" || args[i] == "-s" || args[i] == "--session" {
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("shux: missing session target for %s", args[i])
+			}
+			name := strings.TrimSpace(args[i+1])
+			if !protocol.ValidSessionName(name) {
+				return "", fmt.Errorf("shux: invalid session target %q", name)
+			}
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("shux: kill-session requires -t NAME")
 }
 
 func parseAttachTarget(args []string) (string, error) {

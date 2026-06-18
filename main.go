@@ -46,6 +46,14 @@ var newSessionCmd = &cobra.Command{
 	},
 }
 
+var killSessionCmd = &cobra.Command{
+	Use:   "kill-session",
+	Short: "Close a session and remove it from the daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runKillSession(cmd.Context())
+	},
+}
+
 var listSessionsCmd = &cobra.Command{
 	Use:   "list-sessions",
 	Short: "List daemon session names",
@@ -114,6 +122,85 @@ var renamePaneCmd = &cobra.Command{
 	},
 }
 
+// ps lists live daemon state (running sessions / panes).
+var psCmd = &cobra.Command{
+	Use:   "ps",
+	Short: "List running sessions and panes",
+	Long:  "Show live daemon state. Default view lists panes; use --sessions for session names only.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if psSessions {
+			return runListSessions(cmd.Context())
+		}
+		return runListPanes(cmd.Context(), psJSON)
+	},
+}
+
+// ls lists on-disk resurrection store (manifest + journals).
+var lsCmd = &cobra.Command{
+	Use:   "ls",
+	Short: "List on-disk checkpoints and journals",
+	Long:  "Show persisted resurrection artifacts in state_dir. Works without a running daemon.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, err := configStateDir()
+		if err != nil {
+			return err
+		}
+		return client.Ls(cmd.Context(), dir, lsJSON)
+	},
+}
+
+var pruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Remove orphan journals from the store",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		dir, err := configStateDir()
+		if err != nil {
+			return err
+		}
+		return client.Prune(cmd.Context(), dir, pruneDryRun, pruneJSON)
+	},
+}
+
+var rmCmd = &cobra.Command{
+	Use:   "rm",
+	Short: "Remove the on-disk store (manifest and all journals)",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		addr, err := bindAddr()
+		if err != nil {
+			return err
+		}
+		dir, err := configStateDir()
+		if err != nil {
+			return err
+		}
+		return client.Rm(cmd.Context(), addr, dir, rmForce, rmJSON)
+	},
+}
+
+var checkpointCmd = &cobra.Command{
+	Use:   "checkpoint",
+	Short: "Save a resurrection checkpoint from the running daemon",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		addr, err := bindAddr()
+		if err != nil {
+			return err
+		}
+		return client.Checkpoint(cmd.Context(), addr, checkpointJSON)
+	},
+}
+
+var (
+	psJSON           bool
+	psSessions       bool
+	lsJSON           bool
+	pruneJSON        bool
+	pruneDryRun      bool
+	rmJSON           bool
+	rmForce          bool
+	checkpointJSON   bool
+	killSessionTarget string
+)
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
 	listWindowsCmd.Flags().BoolVar(&listWindowsJSON, "json", false, "print machine-readable JSON")
@@ -123,7 +210,22 @@ func init() {
 	attachCmd.Flags().StringVarP(&attachTarget, "target", "t", "", "attach to named session")
 	newSessionCmd.Flags().StringVarP(&sessionName, "session", "s", "", "session name")
 	_ = newSessionCmd.MarkFlagRequired("session")
-	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, newSessionCmd, listSessionsCmd, listWindowsCmd, listPanesCmd, displayMessageCmd, renameWindowCmd, renamePaneCmd)
+	killSessionCmd.Flags().StringVarP(&killSessionTarget, "target", "t", "", "session to kill")
+	_ = killSessionCmd.MarkFlagRequired("target")
+	psCmd.Flags().BoolVar(&psJSON, "json", false, "print machine-readable JSON")
+	psCmd.Flags().BoolVarP(&psSessions, "sessions", "s", false, "list session names only")
+	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "print machine-readable JSON")
+	pruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "print machine-readable JSON")
+	pruneCmd.Flags().BoolVar(&pruneDryRun, "dry-run", false, "list orphans without deleting")
+	rmCmd.Flags().BoolVar(&rmJSON, "json", false, "print machine-readable JSON")
+	rmCmd.Flags().BoolVar(&rmForce, "force", false, "remove store even when the daemon is running")
+	checkpointCmd.Flags().BoolVar(&checkpointJSON, "json", false, "print machine-readable JSON")
+	rootCmd.AddCommand(
+		attachCmd, detachCmd, restartCmd, newSessionCmd, killSessionCmd,
+		psCmd, lsCmd, pruneCmd, rmCmd, checkpointCmd,
+		listSessionsCmd, listWindowsCmd, listPanesCmd,
+		displayMessageCmd, renameWindowCmd, renamePaneCmd,
+	)
 }
 
 func main() {
@@ -184,6 +286,14 @@ func runNewSession(ctx context.Context) error {
 		return err
 	}
 	return client.NewSession(ctx, addr, attachOptions(), sessionName)
+}
+
+func runKillSession(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.KillSession(ctx, addr, attachOptions(), killSessionTarget)
 }
 
 func runListSessions(ctx context.Context) error {
@@ -253,6 +363,19 @@ func runRenamePane(ctx context.Context, name string) error {
 
 func attachOptions() client.AttachOptions {
 	return client.AttachOptions{Bash: bashShell, Control: controlMode, TargetSession: attachTarget}
+}
+
+func configStateDir() (string, error) {
+	rt, err := lua.Load(loadOpts())
+	if err != nil {
+		return "", err
+	}
+	dir := rt.Config.WithDefaults().StateDir
+	rt.Close()
+	if dir == "" {
+		return "", fmt.Errorf("shux: empty state_dir in config")
+	}
+	return dir, nil
 }
 
 func isInteractiveTerminal() bool {

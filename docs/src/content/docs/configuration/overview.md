@@ -36,6 +36,10 @@ cp -r runtime/example/* ~/.config/shux/
 
 Lua runs when a **new daemon** starts. Attaching to an existing daemon does not reload configuration. To pick up config changes, restart the daemon (see `shux restart` and [CLI commands](/cli/commands/)).
 
+## UI and theme
+
+`shux.opt.ui` controls status bar visibility, pane borders, pane labels, and ANSI styling. See [UI chrome](/configuration/options/#ui-chrome/) in the Options reference for field defaults and examples.
+
 ## Next steps
 
 - [Options](/configuration/options/) — `shux.opt` settings

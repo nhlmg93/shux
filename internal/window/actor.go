@@ -135,6 +135,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleWindowRename(ctx, m)
 			case protocol.CommandPaneRename:
 				a.handlePaneRename(ctx, m)
+			case protocol.CommandKillWindow:
+				a.handleKillWindow(ctx, m)
 			case protocol.CommandPaneKey:
 				a.handlePaneKey(ctx, m)
 			default:
@@ -320,6 +322,20 @@ func (a *Actor) handlePaneSplit(ctx context.Context, m protocol.CommandPaneSplit
 		NewPaneID:    newID,
 		Revision:     a.revision,
 	})
+}
+
+func (a *Actor) handleKillWindow(ctx context.Context, m protocol.CommandKillWindow) {
+	pids := append([]protocol.PaneID(nil), a.Layout.PaneIDs()...)
+	for _, pid := range pids {
+		a.handlePaneClose(ctx, protocol.CommandPaneClose{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+			PaneID:    pid,
+		})
+	}
+	if m.Reply != nil {
+		m.Reply <- struct{}{}
+	}
 }
 
 func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose) {

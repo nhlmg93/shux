@@ -16,20 +16,22 @@ type Windows = *actor.Lifecycle[protocol.WindowID, protocol.Command]
 
 type Actor struct {
 	Windows
-	SessionID   protocol.SessionID
-	Policy      cfg.Config
-	WindowNames map[protocol.WindowID]string
-	seq         uint64
-	revision    uint64
-	windowIDs   []protocol.WindowID
-	hub         actor.EventRef
+	SessionID     protocol.SessionID
+	SupervisorRef actor.Ref[protocol.Command]
+	Policy        cfg.Config
+	WindowNames   map[protocol.WindowID]string
+	seq           uint64
+	revision      uint64
+	windowIDs     []protocol.WindowID
+	hub           actor.EventRef
+	closing       bool
 }
 
 func NewActor(hub actor.EventRef) *Actor {
-	return NewActorWithPolicy(hub, "", cfg.DefaultConfig())
+	return NewActorWithPolicy(actor.Ref[protocol.Command]{}, hub, "", cfg.DefaultConfig())
 }
 
-func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) *Actor {
+func NewActorWithPolicy(supervisor actor.Ref[protocol.Command], hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("session: NewActor: invalid hub ref")
 	}
@@ -38,11 +40,12 @@ func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy
 		panic("session: NewActor: empty shell path")
 	}
 	return &Actor{
-		Windows:   actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
-		SessionID: sessionID,
-		Policy:    policy,
-		WindowNames: make(map[protocol.WindowID]string),
-		hub:       hub,
+		Windows:       actor.NewLifecycle[protocol.WindowID, protocol.Command]("session", "window", protocol.WindowID.Valid),
+		SessionID:     sessionID,
+		SupervisorRef: supervisor,
+		Policy:        policy,
+		WindowNames:   make(map[protocol.WindowID]string),
+		hub:           hub,
 	}
 }
 
@@ -63,12 +66,21 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 				continue
 			case protocol.CommandWindowClosed:
 				a.handleWindowClosed(ctx, m)
+				if len(a.windowIDs) == 0 && !a.closing {
+					return
+				}
 				continue
 			case protocol.CommandPaneMove:
 				a.handlePaneMove(ctx, self, m)
 				continue
 			case protocol.CommandWindowRename:
 				a.WindowNames[m.WindowID] = m.Name
+			case protocol.CommandSessionKill:
+				err := a.handleSessionKill(ctx, m)
+				if m.Reply != nil {
+					m.Reply <- err
+				}
+				return
 			}
 			if wid, ok := protocol.RouteWindowID(msg); ok {
 				if !a.hasWindow(wid) {
@@ -171,6 +183,36 @@ func (a *Actor) handleWindowClosed(ctx context.Context, m protocol.CommandWindow
 	delete(a.WindowNames, m.WindowID)
 	a.revision++
 	a.emitWindowsChanged(ctx, m.SessionID)
+	if len(a.windowIDs) == 0 && a.SupervisorRef.Valid() {
+		_ = a.SupervisorRef.Send(ctx, protocol.CommandSessionEnded{SessionID: a.SessionID})
+		return
+	}
+}
+
+func (a *Actor) handleSessionKill(ctx context.Context, m protocol.CommandSessionKill) error {
+	a.closing = true
+	wids := append([]protocol.WindowID(nil), a.windowIDs...)
+	for _, wid := range wids {
+		reply := make(chan struct{}, 1)
+		if err := a.Windows.Must(wid).Send(ctx, protocol.CommandKillWindow{
+			SessionID: a.SessionID,
+			WindowID:  wid,
+			Reply:     reply,
+		}); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-reply:
+		}
+	}
+	if a.SupervisorRef.Valid() {
+		if err := a.SupervisorRef.Send(ctx, protocol.CommandSessionEnded{SessionID: a.SessionID}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.SessionID) {
@@ -199,6 +241,6 @@ func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Co
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
 }
 
-func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) actor.Ref[protocol.Command] {
-	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(hub, sessionID, policy).Run)
+func StartWithPolicy(ctx context.Context, supervisor actor.Ref[protocol.Command], hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) actor.Ref[protocol.Command] {
+	return actor.Start[protocol.Command](ctx, NewActorWithPolicy(supervisor, hub, sessionID, policy).Run)
 }

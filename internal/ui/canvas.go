@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"shux/internal/cfg"
 	"shux/internal/protocol"
 )
 
@@ -13,9 +14,12 @@ var debugViewPath = os.Getenv("SHUX_DEBUG_VIEW")
 
 const cursorANSI = "\x1b[7m" // reverse video: portable across terminal palettes.
 const (
-	searchMatchANSI    = "\x1b[48;5;238m\x1b[38;5;230m"
-	searchActiveANSI   = "\x1b[48;5;220m\x1b[38;5;16m"
-	copyModeStatusANSI = "\x1b[48;5;240m\x1b[38;5;255m"
+	defaultSearchMatchANSI    = "\x1b[48;5;238m\x1b[38;5;230m"
+	defaultSearchActiveANSI   = "\x1b[48;5;220m\x1b[38;5;16m"
+	defaultCopyModeStatusANSI = "\x1b[48;5;240m\x1b[38;5;255m"
+	searchMatchANSI           = defaultSearchMatchANSI
+	searchActiveANSI          = defaultSearchActiveANSI
+	copyModeStatusANSI        = defaultCopyModeStatusANSI
 )
 
 type searchCell struct {
@@ -33,9 +37,10 @@ type runeCanvas struct {
 	rows int
 	buf  [][]rune
 	ansi [][]string
+	ui   cfg.UIConfig
 }
 
-func newRuneCanvas(cols, rows int) *runeCanvas {
+func newRuneCanvas(cols, rows int, ui cfg.UIConfig) *runeCanvas {
 	if cols < 1 {
 		cols = 1
 	}
@@ -51,7 +56,7 @@ func newRuneCanvas(cols, rows int) *runeCanvas {
 			buf[r][c] = ' '
 		}
 	}
-	return &runeCanvas{cols: cols, rows: rows, buf: buf, ansi: ansi}
+	return &runeCanvas{cols: cols, rows: rows, buf: buf, ansi: ansi, ui: ui}
 }
 
 func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, label string, active bool, quickSelectLabel string, screen protocol.EventPaneScreenChanged, overlay paneSearchOverlay) {
@@ -76,6 +81,25 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, label string, active 
 		h = c.rows - y
 	}
 	if w <= 0 || h <= 0 {
+		return
+	}
+
+	if !c.ui.PaneBorders {
+		contentX, contentY, contentW, contentH := x, y, w, h
+		if label != "" {
+			c.drawText(x, y, label)
+			contentY++
+			contentH--
+		}
+		if quickSelectLabel != "" {
+			c.drawText(contentX, contentY, quickSelectLabel)
+		}
+		if contentH > 0 {
+			c.drawPaneContent(contentX, contentY, contentW, contentH, lines, overlay)
+			if active {
+				c.drawCursor(contentX, contentY, contentW, contentH, screen.Cursor)
+			}
+		}
 		return
 	}
 
@@ -183,11 +207,27 @@ func (c *runeCanvas) drawTextClipped(x, y int, s string, maxWidth int) {
 	}
 }
 
+func (c *runeCanvas) searchMatchStyle() string {
+	if ansi := strings.TrimSpace(c.ui.SearchMatchANSI); ansi != "" {
+		return ansi
+	}
+	return defaultSearchMatchANSI
+}
+
+func (c *runeCanvas) searchActiveStyle() string {
+	if ansi := strings.TrimSpace(c.ui.SearchActiveANSI); ansi != "" {
+		return ansi
+	}
+	return defaultSearchActiveANSI
+}
+
 func (c *runeCanvas) drawCellsClipped(x, y, row int, line protocol.EventPaneScreenLine, maxWidth int, overlay paneSearchOverlay) {
 	if len(line.Cells) == 0 {
 		c.drawTextClipped(x, y, line.Text, maxWidth)
 		return
 	}
+	matchStyle := c.searchMatchStyle()
+	activeStyle := c.searchActiveStyle()
 	for drawn, cell := range line.Cells {
 		if drawn >= maxWidth {
 			return
@@ -200,10 +240,10 @@ func (c *runeCanvas) drawCellsClipped(x, y, row int, line protocol.EventPaneScre
 		style := cellANSI(cell)
 		key := searchCell{row: row, col: drawn}
 		if _, ok := overlay.matches[key]; ok {
-			style += searchMatchANSI
+			style += matchStyle
 		}
 		if _, ok := overlay.active[key]; ok {
-			style += searchActiveANSI
+			style += activeStyle
 		}
 		c.setStyled(x+drawn, y, r, style)
 	}

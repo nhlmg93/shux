@@ -86,6 +86,7 @@ type ModelConfig struct {
 	Keymaps                *cfg.Keymaps
 	Lua                    luabind.Runtime // optional
 	PaneQuickSelectTimeout time.Duration
+	UI                     cfg.UIConfig
 }
 
 type Model struct {
@@ -115,6 +116,7 @@ type Model struct {
 	Lua                    luabind.Runtime
 	PaneQuickSelectEnabled bool
 	PaneQuickSelectTimeout time.Duration
+	UI                     cfg.UIConfig
 	paneQuickSelectNonce   uint64
 	CopyMode               bool
 	CopyCursor             copyPoint
@@ -144,6 +146,10 @@ func NewModel(mc ModelConfig) Model {
 	if quickSelectTimeout <= 0 {
 		quickSelectTimeout = defaultPaneQuickSelectTimeout
 	}
+	ui := cfg.DefaultUIConfig().WithDefaults()
+	if mc.UI != (cfg.UIConfig{}) {
+		ui = mc.UI.WithDefaults()
+	}
 	return Model{
 		Title:                  "shux",
 		ClientID:               mc.ClientID,
@@ -166,6 +172,7 @@ func NewModel(mc ModelConfig) Model {
 		Keymaps:                keymaps,
 		Lua:                    mc.Lua,
 		PaneQuickSelectTimeout: quickSelectTimeout,
+		UI:                     ui,
 		Search:                 newSearchState(),
 	}
 }
@@ -1067,13 +1074,16 @@ func (m Model) viewString() string {
 	if rows <= 0 {
 		rows = 24
 	}
-	paneRows := rows - 1
+	paneRows := rows
+	if m.UI.Statusline {
+		paneRows = rows - 1
+	}
 	if paneRows < 0 {
 		paneRows = 0
 	}
 	var paneView string
 	if paneRows > 0 {
-		canvas := newRuneCanvas(cols, paneRows)
+		canvas := newRuneCanvas(cols, paneRows, m.UI)
 		if len(m.Layout.Panes) == 0 {
 			canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
 		} else {
@@ -1093,20 +1103,27 @@ func (m Model) viewString() string {
 					screen = m.copyModeScreenOverlay(screen)
 				}
 				overlay := m.searchOverlayForPane(p.PaneID)
-				canvas.drawPaneWithScreenEvent(p, m.paneLabel(p), active, quickLabel, screen, overlay)
+				label := m.paneLabel(p)
+				canvas.drawPaneWithScreenEvent(p, label, active, quickLabel, screen, overlay)
 			}
 		}
 		if m.CopyMode {
-			canvas.drawOverlayStatus(copyModeStatusANSI, m.copyModeStatusText())
+			canvas.drawOverlayStatus(m.copyModeOverlayANSI(), m.copyModeStatusText())
 		}
 		if prompt := m.renamePrompt(); prompt != "" {
-			canvas.drawOverlayStatus(copyModeStatusANSI, prompt)
+			canvas.drawOverlayStatus(m.copyModeOverlayANSI(), prompt)
 		}
 		paneView = canvas.String()
 	}
-	statusRow := m.renderStatusRow(cols)
+	statusRow := ""
+	if m.UI.Statusline {
+		statusRow = m.renderStatusRow(cols)
+	}
 	if paneView == "" {
 		return statusRow
+	}
+	if statusRow == "" {
+		return paneView
 	}
 	return paneView + "\n" + statusRow
 }
@@ -1121,6 +1138,9 @@ func shouldFocusPaneFromMouse(msg tea.MouseMsg) bool {
 }
 
 func (m Model) renderStatusRow(width int) string {
+	if !m.UI.Statusline {
+		return ""
+	}
 	if width <= 0 {
 		width = 1
 	}
@@ -1148,7 +1168,14 @@ func (m Model) renderStatusRow(width int) string {
 		right = syncIndicator + " " + right
 	}
 	line := joinStatusSegments(width, left, right)
-	return lipgloss.NewStyle().Reverse(true).Width(width).Render(line)
+	switch strings.ToLower(strings.TrimSpace(m.UI.StatuslineStyle)) {
+	case "plain":
+		return line
+	case "reverse", "":
+		return lipgloss.NewStyle().Reverse(true).Width(width).Render(line)
+	default:
+		return m.UI.StatuslineStyle + line + "\x1b[0m"
+	}
 }
 
 func joinStatusSegments(width int, left, right string) string {
@@ -1244,6 +1271,13 @@ func (m Model) activePaneLabel() string {
 	return "none"
 }
 
+func (m Model) copyModeOverlayANSI() string {
+	if ansi := strings.TrimSpace(m.UI.CopyModeStatusANSI); ansi != "" {
+		return ansi
+	}
+	return copyModeStatusANSI
+}
+
 func (m Model) paneName(windowID protocol.WindowID, paneID protocol.PaneID) string {
 	if panes := m.PaneNames[windowID]; panes != nil {
 		return panes[paneID]
@@ -1252,6 +1286,9 @@ func (m Model) paneName(windowID protocol.WindowID, paneID protocol.PaneID) stri
 }
 
 func (m Model) paneLabel(p LayoutPane) string {
+	if !m.UI.PaneLabels {
+		return ""
+	}
 	return labelForPane(p.PaneID, m.paneName(m.WindowID, p.PaneID), p)
 }
 

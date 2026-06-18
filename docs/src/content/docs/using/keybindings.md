@@ -36,6 +36,7 @@ Press the prefix, then a second key to run a shux command. The prefix is not sen
 - `ctrl+b` enters prefix mode and is not sent to the active pane.
 - Detach with `ctrl+b d` when you want to leave the session running.
 - Quit with `ctrl+b q` when you want to stop the shux backend.
+- Copy mode status bar and search highlight colors are configured via `shux.opt.ui`; see [Options](/configuration/options/#ui-chrome/) under "UI chrome".
 
 ## Customizing bindings
 

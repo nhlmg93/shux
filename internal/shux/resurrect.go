@@ -15,23 +15,23 @@ import (
 
 const restoreLayoutWait = 500 * time.Millisecond
 
-func (a *Shux) checkpoint() {
-	a.checkpointWithTier("l2", "")
+func (a *Shux) checkpoint() []string {
+	return a.checkpointWithTier("l2", "")
 }
 
-func (a *Shux) checkpointWithTier(tier, fallback string) {
+func (a *Shux) checkpointWithTier(tier, fallback string) []string {
 	if !a.Config.Resurrection || a.Config.StateDir == "" || a.cache == nil {
-		return
+		return nil
 	}
 	if a.getState() != stateReady {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	sessions, err := a.ListSessions(ctx)
 	if err != nil {
 		a.Logger.Printf("shux: checkpoint list sessions failed: %v", err)
-		return
+		return nil
 	}
 	snapshots := make([]persist.SessionManifest, 0, len(sessions))
 	for _, session := range sessions {
@@ -44,14 +44,24 @@ func (a *Shux) checkpointWithTier(tier, fallback string) {
 		paneNames := make(map[protocol.WindowID]map[protocol.PaneID]string, len(windows))
 		for _, wid := range windows {
 			if lay, ok := a.cache.LayoutSnapshot(session.SessionID, wid); ok {
-				layouts[string(wid)] = persist.LayoutFromEvent(lay)
+				snap := persist.LayoutFromEvent(lay)
+				if !persist.LayoutValidForCheckpoint(snap) {
+					a.Logger.Printf("shux: skipping checkpoint: window %s layout too small (%dx%d)", wid, snap.Cols, snap.Rows)
+					return nil
+				}
+				layouts[string(wid)] = snap
 			}
 			paneNames[wid] = a.cache.PaneNames(session.SessionID, wid)
 		}
 		snapshots = append(snapshots, persist.BuildSessionManifest(session.Name, a.Config.StateDir, windows, layouts, windowNames, paneNames))
 	}
 	if len(snapshots) == 0 {
-		return
+		if err := persist.ClearResurrectionState(a.Config.StateDir); err != nil {
+			a.Logger.Printf("shux: clear resurrection state failed: %v", err)
+		} else {
+			a.Logger.Info("shux: cleared resurrection state (no live sessions)")
+		}
+		return nil
 	}
 	defaultName := a.DefaultSession
 	if defaultName == "" {
@@ -65,9 +75,16 @@ func (a *Shux) checkpointWithTier(tier, fallback string) {
 	m := persist.BuildManifestForSessionsWithTier(a.Config.ShellPath, defaultName, tier, fallback, snapshots)
 	if err := persist.SaveManifest(a.Config.StateDir, m); err != nil {
 		a.Logger.Printf("shux: checkpoint failed: %v", err)
-		return
+		return nil
+	}
+	removed, err := persist.PruneOrphanJournals(a.Config.StateDir, m)
+	if err != nil {
+		a.Logger.Printf("shux: journal prune failed: %v", err)
+	} else if len(removed) > 0 {
+		a.Logger.Printf("shux: pruned %d orphan journal(s)", len(removed))
 	}
 	a.Logger.Info("shux: resurrection checkpoint saved")
+	return removed
 }
 
 func (a *Shux) bootstrapFresh(ctx context.Context) error {
@@ -225,9 +242,10 @@ func (a *Shux) restoreWindow(
 	sessionID protocol.SessionID,
 	layout persist.LayoutSnapshot,
 ) (protocol.WindowID, protocol.PaneID, map[protocol.PaneID]protocol.PaneID, error) {
+	layout = persist.NormalizeLayoutForRestore(layout)
 	cols, rows := uint16(layout.Cols), uint16(layout.Rows)
 	if cols == 0 || rows == 0 {
-		cols, rows = 80, 24
+		cols, rows = persist.DefaultLayoutCols, persist.DefaultLayoutRows
 	}
 	window, err := bootstrapStep[protocol.EventWindowCreated](ctx, super, events, protocol.CommandCreateWindow{
 		SessionID: sessionID,

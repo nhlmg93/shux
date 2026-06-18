@@ -97,6 +97,14 @@ Create a named session and initialize its first window/pane.
 shux new-session -s work
 ```
 
+## `shux kill-session`
+
+Close all windows in a session, remove it from the daemon, and checkpoint the store. Killing the last session stops the daemon and clears on-disk resurrection state.
+
+```bash
+shux kill-session -t work
+```
+
 ## `shux list-sessions`
 
 List known daemon sessions by name.
@@ -146,6 +154,41 @@ Supported format variables:
 - `#{pane_index}`
 
 Default output prints the rendered message text. Use `--json` to return a structured payload that includes context fields and `message`.
+
+## `shux ps`
+
+List **live** daemon state (like `docker ps` for running containers).
+
+```bash
+shux ps              # panes (default)
+shux ps --sessions   # session names only
+shux ps --json
+```
+
+Requires a running daemon. The `list-sessions`, `list-windows`, and `list-panes` commands remain for scripting.
+
+## `shux ls`
+
+List **on-disk** resurrection store — manifest and journals (like `docker images` for stored layers).
+
+```bash
+shux ls
+shux ls --json
+```
+
+Works without a running daemon. Store path comes from `shux.opt.state_dir`.
+
+## Store maintenance
+
+```bash
+shux prune              # remove orphan journals
+shux prune --dry-run
+shux checkpoint         # save checkpoint from running daemon
+shux rm                 # remove entire store (manifest + journals)
+shux rm --force         # allow while daemon is running
+```
+
+Orphan journals are also removed when panes close and on each daemon checkpoint.
 
 ## `shux --version`
 

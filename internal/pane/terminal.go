@@ -536,6 +536,18 @@ func keyCode(key string) libghostty.Key {
 	return libghostty.KeyUnidentified
 }
 
+func (t *Terminal) RemoveJournal() {
+	if t.Journal == nil {
+		return
+	}
+	path := t.Journal.Path()
+	_ = t.Journal.Close()
+	t.Journal = nil
+	if path != "" {
+		_ = os.Remove(path)
+	}
+}
+
 func (t *Terminal) Close() {
 	if t.Journal != nil {
 		_ = t.Journal.Close()

@@ -38,10 +38,25 @@ When you run `./shux` from a TTY, you become a client. Detaching (`ctrl+b d`) di
 
 Configuration and shell policy are fixed when the daemon starts. Attaching later does not reload `init.lua` or change options.
 
+## Sessions
+
+A daemon owns one or more **sessions**. The default bootstrap session is named `main`. Each session has windows and panes; clients attach to one session at a time.
+
+| Action | Behavior |
+| --- | --- |
+| `shux new-session -s NAME` | Create a named session with an initial window/pane |
+| `shux kill-session -t NAME` | Close all windows in the session and remove it |
+| Last window closed in a session | Session ends (same as tmux) |
+| Last session removed | Daemon stops; on-disk resurrection state is cleared |
+
+List sessions with `shux list-sessions` or `shux ps --sessions`.
+
 ## Non-interactive entry points
 
 - `shux attach` — same as `./shux` from an interactive terminal
 - `shux detach` — detach clients without entering the UI
+- `shux new-session` / `shux kill-session` — create or remove named sessions
 - `shux restart` — graceful daemon restart with checkpoint handoff
+- `shux ps` / `shux ls` — live daemon state vs on-disk store
 
 See [CLI commands](/cli/commands/) for full reference.

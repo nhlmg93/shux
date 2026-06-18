@@ -261,6 +261,35 @@ func NewSession(ctx context.Context, addr string, opts AttachOptions, name strin
 	return nil
 }
 
+func KillSession(ctx context.Context, addr string, opts AttachOptions, name string) error {
+	if !protocol.ValidSessionName(name) {
+		return fmt.Errorf("client: invalid session name %q", name)
+	}
+	if err := ensureServer(ctx, addr, opts); err != nil {
+		return err
+	}
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput("kill-session -t " + name)
+	if err != nil {
+		return fmt.Errorf("client: kill-session: %w: %s", err, out)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
 func ListSessions(ctx context.Context, addr string, opts AttachOptions) ([]string, error) {
 	if err := ensureServer(ctx, addr, opts); err != nil {
 		return nil, err
@@ -331,10 +360,27 @@ func spawnDetached(opts AttachOptions) error {
 		args = append(args, "--bash")
 	}
 	cmd := exec.Command(exe, args...)
+	cmd.Env = spawnEnv()
 	cmd.Stdin = devNull
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	return cmd.Start()
+}
+
+// spawnEnv returns a clean environment for daemon children. Strip XDG overrides
+// and SHUX_DAEMON so spawned daemons use the user's real config and host key.
+func spawnEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, "XDG_CONFIG_HOME=") ||
+			strings.HasPrefix(e, "XDG_STATE_HOME=") ||
+			strings.HasPrefix(e, "SHUX_DAEMON=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // SpawnAndWaitReady starts a detached daemon child and waits until it accepts SSH.
@@ -348,6 +394,9 @@ func SpawnAndWaitReady(ctx context.Context, addr string, opts AttachOptions, tim
 func Restart(ctx context.Context, addr string) error {
 	out, err := runExec(ctx, addr, "restart-daemon")
 	if err != nil {
+		if isConnectionRefused(err) {
+			return fmt.Errorf("client: no shux daemon listening on %s (start one with ./shux)", addr)
+		}
 		return fmt.Errorf("client: restart: %w", err)
 	}
 	if len(out) > 0 {

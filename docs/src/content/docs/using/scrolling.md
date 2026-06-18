@@ -7,6 +7,9 @@ Scroll the active pane through scrollback with:
 
 - `Page Up` / `Page Down`
 - Mouse wheel over a pane
+- `ctrl+b [` to enter copy mode, then arrow keys or `Page Up` / `Page Down`
+
+Copy-mode search highlights can be styled via `shux.opt.ui`; see [UI chrome](/configuration/options/#ui-chrome/).
 
 Scrollback is rendered by libghostty. The default capacity is 10,000 lines (`shux.opt.scrollback`).
 

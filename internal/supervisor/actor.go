@@ -65,7 +65,7 @@ func (a *Actor) autoSessionName() string {
 	}
 }
 
-func (a *Actor) createSession(ctx context.Context, requestedName string) (protocol.SessionDescriptor, error) {
+func (a *Actor) createSession(ctx context.Context, self actor.Ref[protocol.Command], requestedName string) (protocol.SessionDescriptor, error) {
 	name := requestedName
 	if name == "" {
 		name = a.autoSessionName()
@@ -78,7 +78,7 @@ func (a *Actor) createSession(ctx context.Context, requestedName string) (protoc
 	}
 	a.seq++
 	sid := protocol.SessionID("s-" + strconv.FormatUint(a.seq, 10))
-	a.Init(sid, session.StartWithPolicy(ctx, a.hub, sid, a.Policy))
+	a.Init(sid, session.StartWithPolicy(ctx, self, a.hub, sid, a.Policy))
 	a.names[name] = sid
 	a.ids[sid] = name
 	a.order = append(a.order, name)
@@ -88,7 +88,43 @@ func (a *Actor) createSession(ctx context.Context, requestedName string) (protoc
 	return protocol.SessionDescriptor{Name: name, SessionID: sid}, nil
 }
 
-func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
+func (a *Actor) removeSession(ctx context.Context, sid protocol.SessionID) {
+	name, ok := a.ids[sid]
+	if !ok {
+		return
+	}
+	delete(a.names, name)
+	delete(a.ids, sid)
+	for i, n := range a.order {
+		if n == name {
+			a.order = append(a.order[:i], a.order[i+1:]...)
+			break
+		}
+	}
+	a.Sessions.Delete(sid)
+	if a.hub != nil {
+		_ = a.hub.Send(ctx, protocol.EventSessionClosed{SessionID: sid, Name: name})
+	}
+}
+
+func (a *Actor) killSession(ctx context.Context, name string) error {
+	sid, ok := a.names[name]
+	if !ok {
+		return fmt.Errorf("supervisor: unknown session %q", name)
+	}
+	reply := make(chan error, 1)
+	if err := a.Sessions.Must(sid).Send(ctx, protocol.CommandSessionKill{Reply: reply}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-reply:
+		return err
+	}
+}
+
+func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox <-chan protocol.Command) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -101,7 +137,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			case protocol.CommandNoop:
 				continue
 			case protocol.CommandCreateSession:
-				created, err := a.createSession(ctx, msg.Name)
+				created, err := a.createSession(ctx, self, msg.Name)
 				if msg.Reply != nil {
 					msg.Reply <- protocol.CommandCreateSessionResult{Session: created, Err: err}
 					continue
@@ -112,6 +148,17 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				continue
 			case protocol.CommandListSessions:
 				msg.Reply <- a.listSessionsSnapshot()
+				continue
+			case protocol.CommandKillSession:
+				err := a.killSession(ctx, msg.Name)
+				if msg.Reply != nil {
+					msg.Reply <- err
+				} else if err != nil {
+					panic(err)
+				}
+				continue
+			case protocol.CommandSessionEnded:
+				a.removeSession(ctx, msg.SessionID)
 				continue
 			}
 			if sid, ok := protocol.RouteSessionID(msg); ok {

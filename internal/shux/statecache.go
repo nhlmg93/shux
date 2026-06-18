@@ -53,6 +53,8 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 	switch event := e.(type) {
 	case protocol.EventSessionCreated:
 		c.names[event.SessionID] = event.Name
+	case protocol.EventSessionClosed:
+		c.removeSession(event.SessionID)
 	case protocol.EventSessionWindowsChanged:
 		c.windows[event.SessionID] = append([]protocol.WindowID(nil), event.Windows...)
 	case protocol.EventWindowClosed:
@@ -116,6 +118,15 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 		}
 	}
 	return nil
+}
+
+func (c *stateCache) removeSession(sessionID protocol.SessionID) {
+	delete(c.names, sessionID)
+	delete(c.windows, sessionID)
+	delete(c.layouts, sessionID)
+	delete(c.screens, sessionID)
+	delete(c.wNames, sessionID)
+	delete(c.pNames, sessionID)
 }
 
 func (c *stateCache) removeWindow(sessionID protocol.SessionID, windowID protocol.WindowID) {

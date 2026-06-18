@@ -35,9 +35,10 @@ type DisplayMessageInfo struct {
 type QueryMethod string
 
 const (
-	QueryListWindows    QueryMethod = "list-windows"
-	QueryListPanes      QueryMethod = "list-panes"
-	QueryDisplayMessage             = "display-message"
+	QueryListWindows     QueryMethod = "list-windows"
+	QueryListPanes       QueryMethod = "list-panes"
+	QueryDisplayMessage  QueryMethod = "display-message"
+	QueryCheckpointState QueryMethod = "checkpoint-state"
 )
 
 type QueryRequest struct {
@@ -45,8 +46,13 @@ type QueryRequest struct {
 	Format string      `json:"format,omitempty"`
 }
 
+type StateCheckpointInfo struct {
+	Pruned []string `json:"pruned,omitempty"`
+}
+
 type QueryResponse struct {
-	Windows []WindowInfo        `json:"windows,omitempty"`
-	Panes   []PaneInfo          `json:"panes,omitempty"`
-	Display *DisplayMessageInfo `json:"display,omitempty"`
+	Windows    []WindowInfo         `json:"windows,omitempty"`
+	Panes      []PaneInfo           `json:"panes,omitempty"`
+	Display    *DisplayMessageInfo  `json:"display,omitempty"`
+	Checkpoint *StateCheckpointInfo `json:"checkpoint,omitempty"`
 }

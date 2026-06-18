@@ -72,3 +72,19 @@ func (a *Shux) CreateNamedSession(ctx context.Context, name string) (protocol.Se
 	}
 	return created, nil
 }
+
+func (a *Shux) KillSession(ctx context.Context, name string) error {
+	if !protocol.ValidSessionName(name) {
+		return fmt.Errorf("shux: invalid session name %q", name)
+	}
+	reply := make(chan error, 1)
+	if err := a.supervisor.Send(ctx, protocol.CommandKillSession{Name: name, Reply: reply}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-reply:
+		return err
+	}
+}

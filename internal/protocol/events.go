@@ -37,6 +37,14 @@ func ValidateEvent(event Event) error {
 			return fmt.Errorf("protocol: EventSessionCreated: invalid Name")
 		}
 		return nil
+	case EventSessionClosed:
+		if err := validateSessionTarget("EventSessionClosed", e.SessionID); err != nil {
+			return err
+		}
+		if !ValidSessionName(e.Name) {
+			return fmt.Errorf("protocol: EventSessionClosed: invalid Name")
+		}
+		return nil
 	case EventWindowCreated:
 		if err := validateWindowTarget("EventWindowCreated", e.SessionID, e.WindowID); err != nil {
 			return err
@@ -238,6 +246,12 @@ type EventNoop struct{}
 
 // EventSessionCreated is emitted after a session actor exists for SessionID.
 type EventSessionCreated struct {
+	SessionID SessionID
+	Name      string
+}
+
+// EventSessionClosed is emitted after a session is removed from the supervisor.
+type EventSessionClosed struct {
 	SessionID SessionID
 	Name      string
 }

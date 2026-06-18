@@ -20,14 +20,14 @@ func Run(ctx context.Context, opts lua.LoadOptions) error {
 		return fmt.Errorf("daemon: config: %w", err)
 	}
 	cfg := rt.Config.WithDefaults()
-	return RunWithRuntime(ctx, cfg.BindAddr, cfg, rt)
+	return RunWithRuntime(ctx, cfg.BindAddr, cfg, rt, opts)
 }
 
 func RunWithConfig(ctx context.Context, addr string, config shux.Config) error {
-	return RunWithRuntime(ctx, addr, config, nil)
+	return RunWithRuntime(ctx, addr, config, nil, lua.LoadOptions{})
 }
 
-func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lua.Runtime) error {
+func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lua.Runtime, loadOpts lua.LoadOptions) error {
 	config = config.WithDefaults()
 	if addr == "" {
 		addr = config.BindAddr
@@ -82,9 +82,8 @@ func RunWithRuntime(ctx context.Context, addr string, config shux.Config, rt *lu
 	}
 	app.SetRestartShutdown(srv.Shutdown)
 	app.SetRestartHandoff(func(context.Context) error {
-		// L3 handoff keeps the daemon process (and pane PTYs) alive. Transport
-		// remains up; clients are detached by shux restart and can reattach.
-		return nil
+		// L3 handoff keeps pane PTYs alive and reloads Lua config in-process.
+		return app.ReloadConfig(loadOpts)
 	})
 
 	errc := make(chan error, 1)

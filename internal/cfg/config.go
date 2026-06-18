@@ -29,6 +29,7 @@ type Config struct {
 	StateDir               string
 	Resurrection           bool
 	Keymaps                *Keymaps
+	UI                     UIConfig
 }
 
 func DefaultConfig() Config {
@@ -43,6 +44,7 @@ func DefaultConfig() Config {
 		PaneQuickSelectTimeout: DefaultPaneQuickSelectTimeout,
 		Resurrection:           true,
 		Keymaps:                DefaultKeymaps(),
+		UI:                     DefaultUIConfig(),
 	}
 }
 
@@ -79,5 +81,6 @@ func (c Config) WithDefaults() Config {
 	if c.PaneQuickSelectTimeout <= 0 {
 		c.PaneQuickSelectTimeout = DefaultPaneQuickSelectTimeout
 	}
+	c.UI = c.UI.WithDefaults()
 	return c
 }
