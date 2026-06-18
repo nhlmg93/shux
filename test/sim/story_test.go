@@ -99,7 +99,7 @@ func TestSim_gracefulRestartL3KeepsBackgroundPaneProcess(t *testing.T) {
 
 	sid, wid := app.DefaultSessionID, app.DefaultWindowID
 	runPaneCommands(t, ctx, app, sid, wid, []paneCommand{
-		{Pane: app.DefaultPaneID, Cmd: "(sleep 1; printf SHUX_SIM_L3_OK) &", Want: "$"},
+		{Pane: app.DefaultPaneID, Cmd: "(sleep 1; printf SHUX_SIM_L3_OK) & printf SHUX_SIM_L3_BG_STARTED", Want: "SHUX_SIM_L3_BG_STARTED"},
 	})
 
 	if err := app.BeginGracefulRestart(); err != nil {
