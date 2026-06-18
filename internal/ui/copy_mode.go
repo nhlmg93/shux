@@ -106,6 +106,11 @@ func (m Model) handleSearchPromptKey(msg tea.KeyPressMsg) Model {
 		}
 		runes := []rune(m.Search.Query)
 		m.Search.Query = string(runes[:len(runes)-1])
+		if m.Search.Query == "" {
+			m.clearSearchQuery()
+			return m
+		}
+		m.refreshSearchMatchesForPane(m.Search.PaneID)
 		return m
 	}
 	text := msg.Key().Text
@@ -114,6 +119,11 @@ func (m Model) handleSearchPromptKey(msg tea.KeyPressMsg) Model {
 	}
 	m.Search.Query = trimToRunes(m.Search.Query+text, searchMaxQueryRunes)
 	m.Search.Query = strings.TrimLeft(m.Search.Query, "\n\r")
+	if m.Search.Query == "" {
+		m.clearSearchQuery()
+		return m
+	}
+	m.refreshSearchMatchesForPane(m.Search.PaneID)
 	return m
 }
 

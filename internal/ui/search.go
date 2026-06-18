@@ -44,6 +44,7 @@ func newSearchState() searchState {
 }
 
 func (m *Model) beginSearch(direction searchDirection) {
+	m.clearSearchQuery()
 	m.Search.Active = true
 	m.Search.Direction = direction
 	m.Search.PaneID = m.ActivePaneID
@@ -78,7 +79,11 @@ func (m *Model) refreshSearchMatchesForPane(paneID protocol.PaneID) {
 	if m.Search.ActiveIndex >= 0 && m.Search.ActiveIndex < len(matches) {
 		return
 	}
-	m.Search.ActiveIndex = initialMatchIndex(m.Search.LastDir, len(matches))
+	dir := m.Search.LastDir
+	if m.Search.Active && m.Search.Direction != 0 {
+		dir = m.Search.Direction
+	}
+	m.Search.ActiveIndex = initialMatchIndex(dir, len(matches))
 }
 
 func (m *Model) moveSearchSelection(reverse bool) bool {

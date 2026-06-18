@@ -45,6 +45,28 @@ func TestCopyModeReverseSearchStartsFromLastMatch(t *testing.T) {
 	}
 }
 
+func TestCopyModeSearchHighlightsIncrementallyWhileTyping(t *testing.T) {
+	m := searchTestModel()
+	m, _ = m.handlePrefixKey("[")
+
+	m = sendKey(t, m, keyText("/"))
+	m = sendKey(t, m, keyText("f"))
+
+	if m.Search.Query != "f" {
+		t.Fatalf("expected query f, got %q", m.Search.Query)
+	}
+	if len(m.Search.Matches) != 3 {
+		t.Fatalf("expected 3 incremental matches, got %d", len(m.Search.Matches))
+	}
+	if m.Search.ActiveIndex != 0 {
+		t.Fatalf("expected first match active while typing, got %d", m.Search.ActiveIndex)
+	}
+	view := m.View().Content
+	if !strings.Contains(view, searchActiveANSI) {
+		t.Fatal("expected active search highlight while typing")
+	}
+}
+
 func TestCopyModeSearchNavigationNAndShiftN(t *testing.T) {
 	m := searchTestModel()
 	m, _ = m.handlePrefixKey("[")
@@ -60,6 +82,23 @@ func TestCopyModeSearchNavigationNAndShiftN(t *testing.T) {
 	}
 }
 
+func TestCopyModeNewSearchClearsPreviousQuery(t *testing.T) {
+	m := searchTestModel()
+	m, _ = m.handlePrefixKey("[")
+	m = sendSearchKeys(t, m, "/", "f", "o", "o")
+	if m.Search.Query != "foo" {
+		t.Fatalf("expected query foo, got %q", m.Search.Query)
+	}
+
+	m = sendKey(t, m, keyText("/"))
+	if m.Search.Query != "" {
+		t.Fatalf("expected new search to clear query, got %q", m.Search.Query)
+	}
+	if len(m.Search.Matches) != 0 {
+		t.Fatalf("expected new search to clear matches, got %d", len(m.Search.Matches))
+	}
+}
+
 func TestSearchMatchesRefreshOnScreenUpdate(t *testing.T) {
 	m := searchTestModelWithLines("alpha", "beta")
 	m, _ = m.handlePrefixKey("[")
@@ -71,6 +110,25 @@ func TestSearchMatchesRefreshOnScreenUpdate(t *testing.T) {
 	m = m.WithPaneScreen(screenWithLines(m.SessionID, m.WindowID, m.PaneID, "foo after replay"))
 	if len(m.Search.Matches) != 1 {
 		t.Fatalf("expected refreshed match after screen update, got %d", len(m.Search.Matches))
+	}
+}
+
+func TestFindSearchMatchesBoundsRowsAndMatchCount(t *testing.T) {
+	lines := []protocol.EventPaneScreenLine{
+		styledLine("foo old"),
+		styledLine("foo newer"),
+		styledLine("foo newest"),
+	}
+
+	matches, limited := findSearchMatches(lines, "foo", 2, 1)
+	if len(matches) != 1 {
+		t.Fatalf("expected one bounded match, got %d", len(matches))
+	}
+	if !limited {
+		t.Fatal("expected bounded search to report limited=true")
+	}
+	if matches[0].Row != 0 {
+		t.Fatalf("expected bounded row to be rebased to 0, got %d", matches[0].Row)
 	}
 }
 
