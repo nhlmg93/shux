@@ -83,7 +83,10 @@ func TestDrawInternalSplitLines_noOuterBorderSingleHorizontalSplit(t *testing.T)
 			t.Fatalf("outer top row col %d should be blank, got %q", x, got)
 		}
 	}
-	for x := 1; x < 19; x++ {
+	for x := 0; x < 20; x++ {
+		if got := canvas.buf[6][x]; got == '│' {
+			t.Fatalf("horizontal split must not use vertical caps; col %d = %q", x, got)
+		}
 		if got := canvas.buf[6][x]; got != '─' {
 			t.Fatalf("internal split col %d = %q, want horizontal line", x, got)
 		}
@@ -114,8 +117,13 @@ func TestDrawInternalSplitLines_noVerticalStickAboveHorizontal(t *testing.T) {
 	if got := canvas.buf[9][10]; got == '│' {
 		t.Fatalf("vertical must not protrude above horizontal split; row 9 col 10 = %q", got)
 	}
-	if got := canvas.buf[10][10]; got != '┼' {
-		t.Fatalf("split junction row 10 col 10 = %q, want cross", got)
+	if got := canvas.buf[10][10]; got != '┬' {
+		t.Fatalf("split junction row 10 col 10 = %q, want top join (horizontal + vertical below)", got)
+	}
+	for _, x := range []int{0, 9} {
+		if got := canvas.buf[10][x]; got != '─' {
+			t.Fatalf("horizontal split endpoint row 10 col %d = %q, want horizontal", x, got)
+		}
 	}
 
 	// Full-height left pane + right stack split horizontally.
@@ -129,25 +137,48 @@ func TestDrawInternalSplitLines_noVerticalStickAboveHorizontal(t *testing.T) {
 		{PaneID: "p-br", Col: 10, Row: 12, Cols: 10, Rows: 12},
 	}
 	canvas.drawInternalSplitLines(panes, "p-top")
-	if got := canvas.buf[11][10]; got == '│' {
-		t.Fatalf("vertical must not protrude above right-stack split; row 11 col 10 = %q", got)
+	if got := canvas.buf[11][10]; got != '│' {
+		t.Fatalf("vertical divider between left and top-right row 11 col 10 = %q, want vertical", got)
+	}
+	if got := canvas.buf[12][10]; got == '│' {
+		t.Fatalf("horizontal split junction row 12 col 10 must not be plain vertical, got %q", got)
+	}
+	if got := canvas.buf[12][10]; got != '├' {
+		t.Fatalf("horizontal split junction row 12 col 10 = %q, want left join", got)
 	}
 }
 
-func TestVerticalSegments_stopsAboveHorizontal(t *testing.T) {
-	v := splitLineV{x: 10, rowStart: 0, rowEnd: 24}
-	horiz := []splitLineH{{y: 12, colStart: 10, colEnd: 20}}
-	segs := verticalSegments(v, horiz)
-	if len(segs) != 2 {
-		t.Fatalf("expected 2 vertical segments, got %d", len(segs))
+func TestDrawInternalSplitLines_fourPaneGridCenterCross(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	_ = ctx
+
+	canvas := newRuneCanvas(20, 10, cfg.UIConfig{
+		PaneBorderLines: cfg.PaneBorderLinesSingle,
+		PaneOuterBorder: false,
+	})
+	panes := []LayoutPane{
+		{PaneID: "p-tl", Col: 0, Row: 0, Cols: 10, Rows: 5},
+		{PaneID: "p-tr", Col: 10, Row: 0, Cols: 10, Rows: 5},
+		{PaneID: "p-bl", Col: 0, Row: 5, Cols: 10, Rows: 5},
+		{PaneID: "p-br", Col: 10, Row: 5, Cols: 10, Rows: 5},
 	}
-	if segs[0] != [2]int{0, 11} {
-		t.Fatalf("segment above horizontal = %v, want [0 11)", segs[0])
+	canvas.drawInternalSplitLines(panes, "p-tl")
+
+	if got := canvas.buf[5][10]; got != '┼' {
+		t.Fatalf("center junction row 5 col 10 = %q, want cross", got)
 	}
-	if segs[1] != [2]int{13, 24} {
-		t.Fatalf("segment below horizontal = %v, want [13 24)", segs[1])
+	if got := canvas.buf[5][9]; got != '─' {
+		t.Fatalf("horizontal left of center row 5 col 9 = %q, want horizontal", got)
+	}
+	if got := canvas.buf[4][10]; got != '│' {
+		t.Fatalf("vertical above center row 4 col 10 = %q, want vertical", got)
+	}
+	if got := canvas.buf[5][10]; got == '│' {
+		t.Fatalf("center must not be plain vertical")
 	}
 }
+
 
 func TestDrawWindowBorders_activeBorderStyle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)

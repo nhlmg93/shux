@@ -5,7 +5,7 @@ import (
 	"shux/internal/protocol"
 )
 
-// Tmux border cell types (tmux.h CELL_*).
+// tmux.h CELL_* — index into border rune tables (CELL_BORDERS, SIMPLE_BORDERS, …).
 const (
 	borderCellInside = iota
 	borderCellTopBottom
@@ -76,20 +76,19 @@ func isBorderCellAt(panes []LayoutPane, x, y int) bool {
 	return false
 }
 
-// borderCellTypeAt classifies a border cell from neighboring border cells, matching
-// tmux screen_redraw_type_of_cell (tmux.h CELL_*).
-func borderCellTypeAt(panes []LayoutPane, x, y int) int {
+// borderCellTypeFromNeighbors implements tmux screen_redraw_type_of_cell.
+func borderCellTypeFromNeighbors(x, y int, isBorder func(int, int) bool) int {
 	borders := 0
-	if isBorderCellAt(panes, x-1, y) {
+	if isBorder(x-1, y) {
 		borders |= 8
 	}
-	if isBorderCellAt(panes, x+1, y) {
+	if isBorder(x+1, y) {
 		borders |= 4
 	}
-	if isBorderCellAt(panes, x, y-1) {
+	if isBorder(x, y-1) {
 		borders |= 2
 	}
-	if isBorderCellAt(panes, x, y+1) {
+	if isBorder(x, y+1) {
 		borders |= 1
 	}
 	switch borders {
@@ -116,28 +115,191 @@ func borderCellTypeAt(panes []LayoutPane, x, y int) int {
 	case 3:
 		return borderCellTopBottom
 	case 8, 4:
-		return borderCellTopBottom // tmux: vertical bar on lone left/right edge
+		return borderCellTopBottom
 	case 2, 1:
-		return borderCellLeftRight // tmux: horizontal bar on lone top/bottom edge
+		return borderCellLeftRight
 	default:
 		return borderCellOutside
 	}
 }
 
-func (c *runeCanvas) borderStyleForPane(paneID, activePane protocol.PaneID) string {
-	if paneID == activePane {
-		return c.ui.PaneActiveBorderStyle
-	}
-	return c.ui.PaneBorderStyle
+// borderCellTypeAt classifies a full pane-box border cell (tests).
+func borderCellTypeAt(panes []LayoutPane, x, y int) int {
+	isBorder := func(bx, by int) bool { return isBorderCellAt(panes, bx, by) }
+	return borderCellTypeFromNeighbors(x, y, isBorder)
 }
 
-func (c *runeCanvas) borderStyleAt(panes []LayoutPane, activePane protocol.PaneID, x, y int) string {
+type borderCellSet map[[2]int]struct{}
+
+func (s borderCellSet) contains(x, y int) bool {
+	_, ok := s[[2]int{x, y}]
+	return ok
+}
+
+func addBorderCell(cells borderCellSet, x, y, cols, rows int) {
+	if x < 0 || y < 0 || x >= cols || y >= rows {
+		return
+	}
+	cells[[2]int{x, y}] = struct{}{}
+}
+
+// internalSplitBorderCells returns shared pane boundary cells (no outer window box).
+func internalSplitBorderCells(panes []LayoutPane, cols, rows int) borderCellSet {
+	cells := make(borderCellSet)
+	for i := 0; i < len(panes); i++ {
+		a := panes[i]
+		for j := i + 1; j < len(panes); j++ {
+			b := panes[j]
+			if a.Col+a.Cols == b.Col {
+				x := b.Col
+				for y := max(a.Row, b.Row); y < min(a.Row+a.Rows, b.Row+b.Rows); y++ {
+					addBorderCell(cells, x, y, cols, rows)
+				}
+			} else if b.Col+b.Cols == a.Col {
+				x := a.Col
+				for y := max(a.Row, b.Row); y < min(a.Row+a.Rows, b.Row+b.Rows); y++ {
+					addBorderCell(cells, x, y, cols, rows)
+				}
+			}
+			if a.Row+a.Rows == b.Row {
+				y := b.Row
+				for x := max(a.Col, b.Col); x < min(a.Col+a.Cols, b.Col+b.Cols); x++ {
+					addBorderCell(cells, x, y, cols, rows)
+				}
+			} else if b.Row+b.Rows == a.Row {
+				y := a.Row
+				for x := max(a.Col, b.Col); x < min(a.Col+a.Cols, b.Col+b.Cols); x++ {
+					addBorderCell(cells, x, y, cols, rows)
+				}
+			}
+		}
+	}
+	return cells
+}
+
+// internalSplitAxes reports whether (x,y) lies on a shared horizontal and/or vertical split.
+func internalSplitAxes(panes []LayoutPane, x, y int) (horizontal, vertical bool) {
+	for i := 0; i < len(panes); i++ {
+		a := panes[i]
+		for j := i + 1; j < len(panes); j++ {
+			b := panes[j]
+			if a.Col+a.Cols == b.Col && x == b.Col &&
+				y >= max(a.Row, b.Row) && y < min(a.Row+a.Rows, b.Row+b.Rows) {
+				vertical = true
+			} else if b.Col+b.Cols == a.Col && x == a.Col &&
+				y >= max(a.Row, b.Row) && y < min(a.Row+a.Rows, b.Row+b.Rows) {
+				vertical = true
+			}
+			if a.Row+a.Rows == b.Row && y == b.Row &&
+				x >= max(a.Col, b.Col) && x < min(a.Col+a.Cols, b.Col+b.Cols) {
+				horizontal = true
+			} else if b.Row+b.Rows == a.Row && y == a.Row &&
+				x >= max(a.Col, b.Col) && x < min(a.Col+a.Cols, b.Col+b.Cols) {
+				horizontal = true
+			}
+		}
+	}
+	return horizontal, vertical
+}
+
+// internalSplitCellType classifies split-only dividers. Line endpoints stay straight
+// (─ on horizontal splits, │ on vertical) instead of perpendicular caps.
+func internalSplitCellType(panes []LayoutPane, x, y int, isBorder func(int, int) bool) int {
+	cellType := borderCellTypeFromNeighbors(x, y, isBorder)
+	horiz, vert := internalSplitAxes(panes, x, y)
+	if horiz && !vert && cellType == borderCellTopBottom {
+		return borderCellLeftRight
+	}
+	if vert && !horiz && cellType == borderCellLeftRight {
+		return borderCellTopBottom
+	}
+	return cellType
+}
+
+func paneIndexMap(panes []LayoutPane) map[protocol.PaneID]int {
+	seen := make(map[protocol.PaneID]int, len(panes))
+	for i, p := range panes {
+		seen[p.PaneID] = i
+	}
+	return seen
+}
+
+func (c *runeCanvas) borderStyleForCell(panes []LayoutPane, activePane protocol.PaneID, x, y int) string {
 	for _, p := range panes {
 		if p.PaneID == activePane && isPaneBorderCell(p, x, y) {
 			return c.ui.PaneActiveBorderStyle
 		}
 	}
 	return c.ui.PaneBorderStyle
+}
+
+func borderRune(mode string, runset [13]rune, cellType int, paneIdx int, atPaneOrigin bool) (rune, bool) {
+	if cellType == borderCellOutside {
+		return 0, false
+	}
+	ch := runset[cellType]
+	if mode == cfg.PaneBorderLinesNumber && atPaneOrigin {
+		if paneIdx == 0 {
+			ch = '0'
+		} else {
+			ch = '*'
+		}
+	}
+	return ch, true
+}
+
+func owningPaneAt(panes []LayoutPane, paneIdx map[protocol.PaneID]int, x, y int) (protocol.PaneID, int, bool) {
+	for _, p := range panes {
+		if !isPaneBorderCell(p, x, y) {
+			continue
+		}
+		atOrigin := x == p.Col && y == p.Row
+		return p.PaneID, paneIdx[p.PaneID], atOrigin
+	}
+	return "", 0, false
+}
+
+// drawBorderCell classifies and paints one border cell (tmux screen_redraw_border_set).
+func (c *runeCanvas) drawBorderCell(
+	panes []LayoutPane,
+	activePane protocol.PaneID,
+	mode string,
+	runset [13]rune,
+	x, y int,
+	isBorder func(int, int) bool,
+	paneIdx map[protocol.PaneID]int,
+) {
+	if !isBorder(x, y) {
+		return
+	}
+	cellType := borderCellTypeFromNeighbors(x, y, isBorder)
+	_, idx, atOrigin := owningPaneAt(panes, paneIdx, x, y)
+	ch, ok := borderRune(mode, runset, cellType, idx, atOrigin)
+	if !ok {
+		return
+	}
+	c.setStyled(x, y, ch, c.borderStyleForCell(panes, activePane, x, y))
+}
+
+func (c *runeCanvas) drawInternalSplitCell(
+	panes []LayoutPane,
+	activePane protocol.PaneID,
+	mode string,
+	runset [13]rune,
+	x, y int,
+	isBorder func(int, int) bool,
+	paneIdx map[protocol.PaneID]int,
+) {
+	if !isBorder(x, y) {
+		return
+	}
+	cellType := internalSplitCellType(panes, x, y, isBorder)
+	_, idx, atOrigin := owningPaneAt(panes, paneIdx, x, y)
+	ch, ok := borderRune(mode, runset, cellType, idx, atOrigin)
+	if !ok {
+		return
+	}
+	c.setStyled(x, y, ch, c.borderStyleForCell(panes, activePane, x, y))
 }
 
 func (c *runeCanvas) drawWindowBorders(panes []LayoutPane, activePane protocol.PaneID) {
@@ -158,146 +320,36 @@ func (c *runeCanvas) drawWindowBorders(panes []LayoutPane, activePane protocol.P
 	if !ok {
 		return
 	}
-	numberMode := mode == cfg.PaneBorderLinesNumber
-	seen := make(map[protocol.PaneID]int, len(panes))
-	for i, p := range panes {
-		seen[p.PaneID] = i
-	}
+	paneIdx := paneIndexMap(panes)
+	isBorder := func(bx, by int) bool { return isBorderCellAt(panes, bx, by) }
 	for _, p := range panes {
 		for y := p.Row; y < p.Row+p.Rows; y++ {
 			for x := p.Col; x < p.Col+p.Cols; x++ {
 				if !isPaneBorderCell(p, x, y) {
 					continue
 				}
-				cellType := borderCellTypeAt(panes, x, y)
-				if cellType < 0 || cellType >= len(runset) {
-					continue
-				}
-				ch := runset[cellType]
-				if numberMode && cellType != borderCellOutside && x == p.Col && y == p.Row {
-					if idx := seen[p.PaneID]; idx == 0 {
-						ch = '0'
-					} else {
-						ch = '*'
-					}
-				}
-				c.setStyled(x, y, ch, c.borderStyleForPane(p.PaneID, activePane))
+				c.drawBorderCell(panes, activePane, mode, runset, x, y, isBorder, paneIdx)
 			}
 		}
 	}
 }
 
-func paneSpanOverlap(aStart, aLen, bStart, bLen int) bool {
-	return aStart < bStart+bLen && bStart < aStart+aLen
-}
-
-type splitLineV struct {
-	x, rowStart, rowEnd int
-}
-
-type splitLineH struct {
-	y, colStart, colEnd int
-}
-
-// drawInternalSplitLines draws one line on shared pane boundaries only (no outer box).
 func (c *runeCanvas) drawInternalSplitLines(panes []LayoutPane, activePane protocol.PaneID) {
 	if len(panes) < 2 {
 		return
 	}
-	runset, ok := borderRuneSet(c.ui.EffectivePaneBorderLines())
+	mode := c.ui.EffectivePaneBorderLines()
+	runset, ok := borderRuneSet(mode)
 	if !ok {
 		return
 	}
-	vert := runset[borderCellTopBottom]
-	horiz := runset[borderCellLeftRight]
-	joint := runset[borderCellJoin]
-
-	type vSplit = splitLineV
-	type hSplit = splitLineH
-	var vertSplits []vSplit
-	var horizSplits []hSplit
-	for i := 0; i < len(panes); i++ {
-		a := panes[i]
-		for j := i + 1; j < len(panes); j++ {
-			b := panes[j]
-			if a.Col+a.Cols == b.Col && paneSpanOverlap(a.Row, a.Rows, b.Row, b.Rows) {
-				vertSplits = append(vertSplits, vSplit{
-					x:        b.Col,
-					rowStart: max(a.Row, b.Row),
-					rowEnd:   min(a.Row+a.Rows, b.Row+b.Rows),
-				})
-			}
-			if a.Row+a.Rows == b.Row && paneSpanOverlap(a.Col, a.Cols, b.Col, b.Cols) {
-				horizSplits = append(horizSplits, hSplit{
-					y:        b.Row,
-					colStart: max(a.Col, b.Col),
-					colEnd:   min(a.Col+a.Cols, b.Col+b.Cols),
-				})
-			}
-		}
+	cells := internalSplitBorderCells(panes, c.cols, c.rows)
+	if len(cells) == 0 {
+		return
 	}
-	intersections := make(map[[2]int]struct{})
-	for _, v := range vertSplits {
-		for _, h := range horizSplits {
-			if v.x >= h.colStart && v.x < h.colEnd && h.y >= v.rowStart && h.y < v.rowEnd {
-				intersections[[2]int{v.x, h.y}] = struct{}{}
-			}
-		}
+	paneIdx := paneIndexMap(panes)
+	isBorder := cells.contains
+	for cell := range cells {
+		c.drawInternalSplitCell(panes, activePane, mode, runset, cell[0], cell[1], isBorder, paneIdx)
 	}
-	for _, h := range horizSplits {
-		for col := h.colStart; col < h.colEnd; col++ {
-			ch := horiz
-			if _, ok := intersections[[2]int{col, h.y}]; ok {
-				ch = joint
-			}
-			c.setStyled(col, h.y, ch, c.borderStyleAt(panes, activePane, col, h.y))
-		}
-	}
-	for _, v := range vertSplits {
-		for _, seg := range verticalSegments(v, horizSplits) {
-			for row := seg[0]; row < seg[1]; row++ {
-				if _, ok := intersections[[2]int{v.x, row}]; ok {
-					continue
-				}
-				c.setStyled(v.x, row, vert, c.borderStyleAt(panes, activePane, v.x, row))
-			}
-		}
-	}
-}
-
-// verticalSegments returns row ranges [start,end) where a vertical split should draw,
-// stopping one row above each crossing horizontal split so the vertical does not
-// protrude through the horizontal line.
-func verticalSegments(v splitLineV, horizSplits []splitLineH) [][2]int {
-	var crossings []int
-	for _, h := range horizSplits {
-		if h.y < v.rowStart || h.y > v.rowEnd {
-			continue
-		}
-		if v.x < h.colStart || v.x >= h.colEnd {
-			continue
-		}
-		crossings = append(crossings, h.y)
-	}
-	if len(crossings) == 0 {
-		return [][2]int{{v.rowStart, v.rowEnd}}
-	}
-	// Sort ascending (insertion sort — at most a handful of splits).
-	for i := 1; i < len(crossings); i++ {
-		for j := i; j > 0 && crossings[j] < crossings[j-1]; j-- {
-			crossings[j], crossings[j-1] = crossings[j-1], crossings[j]
-		}
-	}
-	var segs [][2]int
-	start := v.rowStart
-	for _, hy := range crossings {
-		if end := hy - 1; start < end {
-			segs = append(segs, [2]int{start, end})
-		}
-		start = hy + 1
-	}
-	if start < v.rowEnd {
-		segs = append(segs, [2]int{start, v.rowEnd})
-	}
-	return segs
 }

@@ -1089,7 +1089,7 @@ func (m Model) viewString() string {
 		if len(m.Layout.Panes) == 0 {
 			canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
 		} else {
-			if !m.UI.SplitLinesOnly() && m.UI.EffectivePaneBorderLines() != cfg.PaneBorderLinesNone {
+			if m.UI.DrawsWindowBorders() {
 				canvas.drawWindowBorders(m.Layout.Panes, m.Layout.ActivePane)
 			}
 			for i, p := range m.Layout.Panes {

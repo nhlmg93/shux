@@ -81,6 +81,16 @@ func (c UIConfig) EffectivePaneBorderLines() string {
 	return PaneBorderLinesSingle
 }
 
+// DrawsWindowBorders reports whether the full pane-box border pass runs before content.
+func (c UIConfig) DrawsWindowBorders() bool {
+	switch c.EffectivePaneBorderLines() {
+	case PaneBorderLinesNone:
+		return false
+	default:
+		return !c.SplitLinesOnly()
+	}
+}
+
 // SplitLinesOnly draws internal dividers between panes without a box around the window.
 func (c UIConfig) SplitLinesOnly() bool {
 	switch c.EffectivePaneBorderLines() {

@@ -92,6 +92,24 @@ func TestUIConfigSplitLinesOnly(t *testing.T) {
 	}
 }
 
+func TestUIConfigDrawsWindowBorders(t *testing.T) {
+	cases := []struct {
+		name string
+		ui   UIConfig
+		want bool
+	}{
+		{"single full box", UIConfig{PaneBorderLines: PaneBorderLinesSingle, PaneOuterBorder: true}, true},
+		{"single split only", UIConfig{PaneBorderLines: PaneBorderLinesSingle, PaneOuterBorder: false}, false},
+		{"none", UIConfig{PaneBorderLines: PaneBorderLinesNone}, false},
+		{"spaces", UIConfig{PaneBorderLines: PaneBorderLinesSpaces}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.ui.DrawsWindowBorders(); got != tc.want {
+			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestConfigWithDefaults_appliesUI(t *testing.T) {
 	c := Config{UI: UIConfig{StatuslineStyle: "plain"}}.WithDefaults()
 	if c.UI.StatuslineStyle != "plain" {
