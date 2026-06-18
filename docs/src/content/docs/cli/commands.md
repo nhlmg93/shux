@@ -113,6 +113,32 @@ List known daemon sessions by name.
 shux list-sessions
 ```
 
+## tmux-compatible scripting commands
+
+These mirror common `tmux` CLI operations. Most accept `-t TARGET` where `TARGET` is a session name, `session:WINDOW`, or `session:WINDOW.PANE` (1-based indexes), or raw IDs (`s-1`, `w-2`, `p-3`).
+
+| Command | Description |
+| --- | --- |
+| `has-session -t NAME` | Exit 0 if session exists |
+| `new-window [-t TARGET]` | Create a window (with initial pane) |
+| `kill-window [-t TARGET]` | Close a window |
+| `kill-pane [-t TARGET]` | Close a pane |
+| `select-window [-t TARGET]` | Set default window target |
+| `split-window [-t TARGET] [-h\|-v]` | Split pane (`-h` left/right) |
+| `send-keys [-t TARGET] KEYS...` | Send keys/text (`Enter`, `C-c`, literals) |
+| `capture-pane [-t TARGET]` | Print pane screen snapshot |
+| `rename-window [-t TARGET] NAME` | Rename window |
+| `rename-pane [-t TARGET] NAME` | Rename pane |
+| `list-commands` | List remote commands |
+
+```bash
+shux has-session -t main
+shux new-window -t main
+shux split-window -t main:2 -h
+shux send-keys -t main:2.1 ls Enter
+shux capture-pane -t p-1
+```
+
 ## `shux list-windows`
 
 List windows from the running daemon without entering the TUI.
@@ -120,6 +146,7 @@ List windows from the running daemon without entering the TUI.
 ```bash
 shux list-windows
 shux list-windows --json
+shux list-windows -t work
 ```
 
 Default output is a tabular summary of the default session's windows. Use `--json` for machine-readable output.
@@ -131,6 +158,7 @@ List panes from the running daemon without entering the TUI.
 ```bash
 shux list-panes
 shux list-panes --json
+shux list-panes -t work
 ```
 
 Default output is a tabular summary of pane geometry. Use `--json` for automation and scripting.

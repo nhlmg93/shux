@@ -272,6 +272,65 @@ func TestCLIIntrospectionCommands(t *testing.T) {
 	}
 }
 
+func TestCLIWindowPaneCommands(t *testing.T) {
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := client.HasSession(ctx, addr, client.AttachOptions{}, "main"); err != nil {
+		t.Fatalf("has-session main: %v", err)
+	}
+	if err := client.HasSession(ctx, addr, client.AttachOptions{}, "missing"); err == nil {
+		t.Fatal("has-session missing should fail")
+	}
+
+	if err := client.NewWindow(ctx, addr, ""); err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+
+	windowsJSON := captureStdout(t, func() {
+		if err := client.ListWindowsWithTarget(ctx, addr, true, "main"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var windows []struct {
+		WindowID string `json:"window_id"`
+	}
+	if err := json.Unmarshal([]byte(windowsJSON), &windows); err != nil {
+		t.Fatal(err)
+	}
+	if len(windows) < 2 {
+		t.Fatalf("expected at least 2 windows after new-window, got %d", len(windows))
+	}
+
+	if err := client.SplitWindow(ctx, addr, "main:2", true); err != nil {
+		t.Fatalf("split-window: %v", err)
+	}
+
+	panesJSON := captureStdout(t, func() {
+		if err := client.ListPanesWithTarget(ctx, addr, true, "main"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var panes []struct {
+		PaneID string `json:"pane_id"`
+	}
+	if err := json.Unmarshal([]byte(panesJSON), &panes); err != nil {
+		t.Fatal(err)
+	}
+	if len(panes) < 2 {
+		t.Fatalf("expected at least 2 panes after split, got %d", len(panes))
+	}
+
+	captureStdout(t, func() {
+		if err := client.ListCommands(ctx, addr); err != nil {
+			t.Fatalf("list-commands: %v", err)
+		}
+	})
+}
+
 func startTestDaemon(t *testing.T) (string, func()) {
 	t.Helper()
 	return startTestDaemonWithConfig(t, shux.DefaultConfig())

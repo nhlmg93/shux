@@ -41,10 +41,6 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 			targetSessionID := app.DefaultSessionID
 			if command := sess.Command(); len(command) > 0 {
 				switch command[0] {
-				case "detach", "detach-client":
-					n := app.DetachAllClients()
-					_, _ = fmt.Fprintf(sess, "detached %d client(s)\n", n)
-					return
 				case "restart", "restart-daemon":
 					if err := app.BeginGracefulRestart(); err != nil {
 						wish.Fatalln(sess, err)
@@ -56,84 +52,6 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 					if err := app.FinishGracefulRestart(context.Background(), opts); err != nil {
 						wish.Fatalln(sess, err)
 					}
-					return
-				case "list-windows":
-					jsonOut, _, err := parseJSONFlag(command[1:])
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					windows := app.ListWindows()
-					if jsonOut {
-						if err := json.NewEncoder(sess).Encode(windows); err != nil {
-							wish.Fatalln(sess, err)
-							return
-						}
-						return
-					}
-					_, _ = fmt.Fprintln(sess, "INDEX\tSESSION\tWINDOW\tPANES")
-					for _, window := range windows {
-						_, _ = fmt.Fprintf(sess, "%d\t%s\t%s\t%d\n", window.Index, window.SessionID, window.WindowID, window.PaneCount)
-					}
-					return
-				case "list-panes":
-					jsonOut, _, err := parseJSONFlag(command[1:])
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					panes := app.ListPanes()
-					if jsonOut {
-						if err := json.NewEncoder(sess).Encode(panes); err != nil {
-							wish.Fatalln(sess, err)
-							return
-						}
-						return
-					}
-					_, _ = fmt.Fprintln(sess, "INDEX\tSESSION\tWINDOW\tWIN_INDEX\tPANE\tCOL\tROW\tCOLS\tROWS")
-					for _, pane := range panes {
-						_, _ = fmt.Fprintf(sess, "%d\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%d\n",
-							pane.Index,
-							pane.SessionID,
-							pane.WindowID,
-							pane.WindowIndex,
-							pane.PaneID,
-							pane.Col,
-							pane.Row,
-							pane.Cols,
-							pane.Rows,
-						)
-					}
-					return
-				case "display-message":
-					jsonOut, args, err := parseJSONFlag(command[1:])
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					if len(args) == 0 {
-						wish.Fatalln(sess, "shux: display-message requires FORMAT")
-						return
-					}
-					format := strings.Join(args, " ")
-					ctx := app.DisplayMessageContext()
-					msg := FormatDisplayMessage(format, ctx)
-					if jsonOut {
-						payload := map[string]any{
-							"message":      msg,
-							"session_id":   ctx.SessionID,
-							"window_id":    ctx.WindowID,
-							"window_index": ctx.WindowIndex,
-							"pane_id":      ctx.PaneID,
-							"pane_index":   ctx.PaneIndex,
-						}
-						if err := json.NewEncoder(sess).Encode(payload); err != nil {
-							wish.Fatalln(sess, err)
-							return
-						}
-						return
-					}
-					_, _ = fmt.Fprintln(sess, msg)
 					return
 				case "query":
 					if len(command[1:]) > 0 {
@@ -155,44 +73,6 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						wish.Fatalln(sess, err)
 					}
 					return
-				case "new-session":
-					name, err := parseSessionName(command[1:])
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					created, err := app.CreateNamedSession(sess.Context(), name)
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					_, _ = fmt.Fprintf(sess, "%s\n", created.Name)
-					return
-				case "kill-session":
-					name, err := parseKillSessionTarget(command[1:])
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					if err := app.KillSession(sess.Context(), name); err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					return
-				case "list-sessions":
-					sessions, err := app.ListSessions(sess.Context())
-					if err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					for _, session := range sessions {
-						prefix := " "
-						if session.SessionID == app.DefaultSessionID {
-							prefix = "*"
-						}
-						_, _ = fmt.Fprintf(sess, "%s %s\n", prefix, session.Name)
-					}
-					return
 				case "attach", "attach-session":
 					targetName, err := parseAttachTarget(command[1:])
 					if err != nil {
@@ -207,40 +87,15 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						}
 						targetSessionID = target.SessionID
 					}
-				case "rename-window":
-					if len(command) < 2 {
-						wish.Fatalln(sess, "usage: rename-window <name>")
-						return
-					}
-					name := strings.TrimSpace(strings.Join(command[1:], " "))
-					if err := app.supervisor.Send(sess.Context(), protocol.CommandWindowRename{
-						SessionID: app.DefaultSessionID,
-						WindowID:  app.DefaultWindowID,
-						Name:      name,
-					}); err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					_, _ = fmt.Fprintln(sess, "renamed window")
-					return
-				case "rename-pane":
-					if len(command) < 2 {
-						wish.Fatalln(sess, "usage: rename-pane <name>")
-						return
-					}
-					name := strings.TrimSpace(strings.Join(command[1:], " "))
-					if err := app.supervisor.Send(sess.Context(), protocol.CommandPaneRename{
-						SessionID: app.DefaultSessionID,
-						WindowID:  app.DefaultWindowID,
-						PaneID:    app.DefaultPaneID,
-						Name:      name,
-					}); err != nil {
-						wish.Fatalln(sess, err)
-						return
-					}
-					_, _ = fmt.Fprintln(sess, "renamed pane")
-					return
 				default:
+					handled, err := app.HandleRemoteCommand(sess.Context(), command, sess)
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					if handled {
+						return
+					}
 					wish.Fatalln(sess, "shux: unknown command")
 					return
 				}
@@ -292,10 +147,17 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 func parseJSONFlag(args []string) (bool, []string, error) {
 	jsonOut := false
 	rest := make([]string, 0, len(args))
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--json":
 			jsonOut = true
+		case "-t", "--target", "-s", "--session":
+			if i+1 >= len(args) {
+				return false, nil, fmt.Errorf("shux: missing value for %s", arg)
+			}
+			rest = append(rest, arg, args[i+1])
+			i++
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return false, nil, fmt.Errorf("shux: unknown flag %q", arg)
@@ -306,27 +168,99 @@ func parseJSONFlag(args []string) (bool, []string, error) {
 	return jsonOut, rest, nil
 }
 
+func sessionIDForQuery(app *Shux, ctx context.Context, req protocol.QueryRequest) (protocol.SessionID, error) {
+	if req.Target != "" {
+		target, err := app.ResolveCLITarget(ctx, req.Target)
+		if err != nil {
+			return "", err
+		}
+		return target.SessionID, nil
+	}
+	if req.SessionName != "" {
+		sess, err := app.ResolveSession(ctx, req.SessionName)
+		if err != nil {
+			return "", err
+		}
+		return sess.SessionID, nil
+	}
+	return app.DefaultSessionID, nil
+}
+
 func runQueryRPC(app *Shux, sess ssh.Session) (protocol.QueryResponse, error) {
 	var req protocol.QueryRequest
 	if err := json.NewDecoder(sess).Decode(&req); err != nil {
 		return protocol.QueryResponse{}, fmt.Errorf("shux: decode query request: %w", err)
 	}
+	ctx := sess.Context()
 	switch req.Method {
 	case protocol.QueryListWindows:
-		return protocol.QueryResponse{Windows: app.ListWindows()}, nil
+		sid, err := sessionIDForQuery(app, ctx, req)
+		if err != nil {
+			return protocol.QueryResponse{}, err
+		}
+		return protocol.QueryResponse{Windows: app.ListWindowsForSession(sid)}, nil
 	case protocol.QueryListPanes:
-		return protocol.QueryResponse{Panes: app.ListPanes()}, nil
+		sid, err := sessionIDForQuery(app, ctx, req)
+		if err != nil {
+			return protocol.QueryResponse{}, err
+		}
+		return protocol.QueryResponse{Panes: app.ListPanesForSession(sid)}, nil
 	case protocol.QueryDisplayMessage:
 		if req.Format == "" {
 			return protocol.QueryResponse{}, fmt.Errorf("shux: display-message requires FORMAT")
 		}
-		ctx := app.DisplayMessageContext()
+		msgCtx := app.DisplayMessageContext()
+		if req.Target != "" {
+			target, err := app.ResolveCLITarget(ctx, req.Target)
+			if err != nil {
+				return protocol.QueryResponse{}, err
+			}
+			msgCtx = app.DisplayMessageContextFor(target.SessionID, target.WindowID, target.PaneID)
+		} else if req.SessionName != "" {
+			sid, err := sessionIDForQuery(app, ctx, req)
+			if err != nil {
+				return protocol.QueryResponse{}, err
+			}
+			msgCtx = app.DisplayMessageContextFor(sid, "", "")
+		}
 		return protocol.QueryResponse{
 			Display: &protocol.DisplayMessageInfo{
-				Message:               FormatDisplayMessage(req.Format, ctx),
-				DisplayMessageContext: ctx,
+				Message:               FormatDisplayMessage(req.Format, msgCtx),
+				DisplayMessageContext: msgCtx,
 			},
 		}, nil
+	case protocol.QueryHasSession:
+		name := req.SessionName
+		if name == "" && req.Target != "" {
+			name = req.Target
+		}
+		if name == "" {
+			return protocol.QueryResponse{}, fmt.Errorf("shux: has-session requires session name")
+		}
+		_, err := app.ResolveSession(ctx, name)
+		exists := err == nil
+		return protocol.QueryResponse{Exists: &exists}, nil
+	case protocol.QueryCapturePane:
+		target, err := app.ResolveCLITarget(ctx, req.Target)
+		if err != nil {
+			return protocol.QueryResponse{}, err
+		}
+		screens := app.cache.ScreenSnapshots(target.SessionID, target.WindowID)
+		for _, screen := range screens {
+			if screen.PaneID != target.PaneID {
+				continue
+			}
+			text := screenText(screen, controlCaptureMaxBytes)
+			return protocol.QueryResponse{
+				Capture: &protocol.CapturePaneInfo{
+					SessionID: target.SessionID,
+					WindowID:  target.WindowID,
+					PaneID:    target.PaneID,
+					Text:      text,
+				},
+			}, nil
+		}
+		return protocol.QueryResponse{}, fmt.Errorf("shux: no screen snapshot for pane %q", target.PaneID)
 	case protocol.QueryCheckpointState:
 		pruned := app.checkpoint()
 		return protocol.QueryResponse{Checkpoint: &protocol.StateCheckpointInfo{Pruned: pruned}}, nil
