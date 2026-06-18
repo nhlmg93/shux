@@ -2,7 +2,9 @@ package shux
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +56,84 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						_ = app.FinishGracefulRestart(context.Background(), opts)
 					}()
 					return
+				case "list-windows":
+					jsonOut, _, err := parseJSONFlag(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					windows := app.ListWindows()
+					if jsonOut {
+						if err := json.NewEncoder(sess).Encode(windows); err != nil {
+							wish.Fatalln(sess, err)
+							return
+						}
+						return
+					}
+					_, _ = fmt.Fprintln(sess, "INDEX\tSESSION\tWINDOW\tPANES")
+					for _, window := range windows {
+						_, _ = fmt.Fprintf(sess, "%d\t%s\t%s\t%d\n", window.Index, window.SessionID, window.WindowID, window.PaneCount)
+					}
+					return
+				case "list-panes":
+					jsonOut, _, err := parseJSONFlag(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					panes := app.ListPanes()
+					if jsonOut {
+						if err := json.NewEncoder(sess).Encode(panes); err != nil {
+							wish.Fatalln(sess, err)
+							return
+						}
+						return
+					}
+					_, _ = fmt.Fprintln(sess, "INDEX\tSESSION\tWINDOW\tWIN_INDEX\tPANE\tCOL\tROW\tCOLS\tROWS")
+					for _, pane := range panes {
+						_, _ = fmt.Fprintf(sess, "%d\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%d\n",
+							pane.Index,
+							pane.SessionID,
+							pane.WindowID,
+							pane.WindowIndex,
+							pane.PaneID,
+							pane.Col,
+							pane.Row,
+							pane.Cols,
+							pane.Rows,
+						)
+					}
+					return
+				case "display-message":
+					jsonOut, args, err := parseJSONFlag(command[1:])
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					if len(args) == 0 {
+						wish.Fatalln(sess, "shux: display-message requires FORMAT")
+						return
+					}
+					format := strings.Join(args, " ")
+					ctx := app.DisplayMessageContext()
+					msg := FormatDisplayMessage(format, ctx)
+					if jsonOut {
+						payload := map[string]any{
+							"message":      msg,
+							"session_id":   ctx.SessionID,
+							"window_id":    ctx.WindowID,
+							"window_index": ctx.WindowIndex,
+							"pane_id":      ctx.PaneID,
+							"pane_index":   ctx.PaneIndex,
+						}
+						if err := json.NewEncoder(sess).Encode(payload); err != nil {
+							wish.Fatalln(sess, err)
+							return
+						}
+						return
+					}
+					_, _ = fmt.Fprintln(sess, msg)
+					return
 				default:
 					wish.Fatalln(sess, "shux: unknown command")
 					return
@@ -101,4 +181,21 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 			}
 		}
 	}
+}
+
+func parseJSONFlag(args []string) (bool, []string, error) {
+	jsonOut := false
+	rest := make([]string, 0, len(args))
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			jsonOut = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return false, nil, fmt.Errorf("shux: unknown flag %q", arg)
+			}
+			rest = append(rest, arg)
+		}
+	}
+	return jsonOut, rest, nil
 }

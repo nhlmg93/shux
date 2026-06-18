@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -207,26 +208,83 @@ func SpawnAndWaitReady(ctx context.Context, addr string, opts AttachOptions, tim
 }
 
 func Restart(ctx context.Context, addr string) error {
-	sshClient, err := dialTrusted(ctx, addr)
+	out, err := runExec(ctx, addr, "restart-daemon")
 	if err != nil {
-		return err
-	}
-	defer sshClient.Close()
-
-	sess, err := sshClient.NewSession()
-	if err != nil {
-		return fmt.Errorf("client: new ssh session: %w", err)
-	}
-	defer sess.Close()
-
-	out, err := sess.CombinedOutput("restart-daemon")
-	if err != nil {
-		return fmt.Errorf("client: restart: %w: %s", err, out)
+		return fmt.Errorf("client: restart: %w", err)
 	}
 	if len(out) > 0 {
 		_, _ = os.Stdout.Write(out)
 	}
 	return nil
+}
+
+func ListWindows(ctx context.Context, addr string, jsonOutput bool) error {
+	command := "list-windows"
+	if jsonOutput {
+		command += " --json"
+	}
+	out, err := runExec(ctx, addr, command)
+	if err != nil {
+		return fmt.Errorf("client: list-windows: %w", err)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
+func ListPanes(ctx context.Context, addr string, jsonOutput bool) error {
+	command := "list-panes"
+	if jsonOutput {
+		command += " --json"
+	}
+	out, err := runExec(ctx, addr, command)
+	if err != nil {
+		return fmt.Errorf("client: list-panes: %w", err)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
+func DisplayMessage(ctx context.Context, addr string, format string, jsonOutput bool) error {
+	command := "display-message " + shellQuote(format)
+	if jsonOutput {
+		command += " --json"
+	}
+	out, err := runExec(ctx, addr, command)
+	if err != nil {
+		return fmt.Errorf("client: display-message: %w", err)
+	}
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	return nil
+}
+
+func runExec(ctx context.Context, addr string, command string) ([]byte, error) {
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput(command)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", err, out)
+	}
+	return out, nil
+}
+
+func shellQuote(arg string) string {
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 }
 
 func WaitReady(ctx context.Context, addr string, timeout time.Duration) error {

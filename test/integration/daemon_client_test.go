@@ -3,9 +3,12 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,6 +142,82 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	}
 }
 
+func TestCLIIntrospectionCommands(t *testing.T) {
+	addr, stop := startTestDaemon(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	windowsText := captureStdout(t, func() {
+		if err := client.ListWindows(ctx, addr, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(windowsText, "WINDOW") || !strings.Contains(windowsText, "w-1") {
+		t.Fatalf("list-windows output missing expected values: %q", windowsText)
+	}
+
+	windowsJSON := captureStdout(t, func() {
+		if err := client.ListWindows(ctx, addr, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var windows []struct {
+		Index     int    `json:"index"`
+		SessionID string `json:"session_id"`
+		WindowID  string `json:"window_id"`
+		PaneCount int    `json:"pane_count"`
+	}
+	if err := json.Unmarshal([]byte(windowsJSON), &windows); err != nil {
+		t.Fatalf("unmarshal list-windows json: %v; raw=%q", err, windowsJSON)
+	}
+	if len(windows) != 1 || windows[0].WindowID != "w-1" || windows[0].PaneCount != 1 {
+		t.Fatalf("unexpected windows: %#v", windows)
+	}
+
+	panesJSON := captureStdout(t, func() {
+		if err := client.ListPanes(ctx, addr, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var panes []struct {
+		PaneID string `json:"pane_id"`
+		Cols   int    `json:"cols"`
+		Rows   int    `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(panesJSON), &panes); err != nil {
+		t.Fatalf("unmarshal list-panes json: %v; raw=%q", err, panesJSON)
+	}
+	if len(panes) != 1 || panes[0].PaneID != "p-1" {
+		t.Fatalf("unexpected panes: %#v", panes)
+	}
+
+	displayText := captureStdout(t, func() {
+		if err := client.DisplayMessage(ctx, addr, "#{pane_id}", false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(displayText) != "p-1" {
+		t.Fatalf("display-message text=%q want %q", displayText, "p-1")
+	}
+
+	displayJSON := captureStdout(t, func() {
+		if err := client.DisplayMessage(ctx, addr, "#{session_id}:#{window_id}:#{pane_id}", true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var msg struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(displayJSON), &msg); err != nil {
+		t.Fatalf("unmarshal display-message json: %v; raw=%q", err, displayJSON)
+	}
+	if msg.Message != "s-1:w-1:p-1" {
+		t.Fatalf("display-message json=%q want %q", msg.Message, "s-1:w-1:p-1")
+	}
+}
+
 func startTestDaemon(t *testing.T) (string, func()) {
 	t.Helper()
 	return startTestDaemonWithConfig(t, shux.DefaultConfig())
@@ -255,4 +334,29 @@ func freeLoopbackAddr(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return addr
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	done := make(chan string, 1)
+	go func() {
+		var b bytes.Buffer
+		_, _ = io.Copy(&b, r)
+		done <- b.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	out := <-done
+	_ = r.Close()
+	return out
 }

@@ -54,6 +54,48 @@ shux restart
 
 Clients are detached during restart. Reattach with `./shux` when the new daemon is ready.
 
+## `shux list-windows`
+
+List windows from the running daemon without entering the TUI.
+
+```bash
+shux list-windows
+shux list-windows --json
+```
+
+Default output is a tabular summary of the default session's windows. Use `--json` for machine-readable output.
+
+## `shux list-panes`
+
+List panes from the running daemon without entering the TUI.
+
+```bash
+shux list-panes
+shux list-panes --json
+```
+
+Default output is a tabular summary of pane geometry. Use `--json` for automation and scripting.
+
+## `shux display-message FORMAT`
+
+Render a format string using daemon introspection variables.
+
+```bash
+shux display-message '#{pane_id}'
+shux display-message '#{session_id}:#{window_id}:#{pane_id}'
+shux display-message '#{pane_id}' --json
+```
+
+Supported format variables:
+
+- `#{session_id}`
+- `#{window_id}`
+- `#{window_index}`
+- `#{pane_id}`
+- `#{pane_index}`
+
+Default output prints the rendered message text. Use `--json` to return a structured payload that includes context fields and `message`.
+
 ## `shux --version`
 
 Print the shux version (currently `0.1.0`).
