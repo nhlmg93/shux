@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/cfg"
+	"shux/internal/luabind"
 	"shux/internal/protocol"
 )
 
@@ -14,6 +15,10 @@ type stubLuaRuntime struct {
 
 func (s *stubLuaRuntime) CallKeymapRef(ref int) {
 	s.refs = append(s.refs, ref)
+}
+
+func (s *stubLuaRuntime) Statusline(_ luabind.StatuslineContext) (string, string) {
+	return "", ""
 }
 
 func (s *stubLuaRuntime) Close() {}

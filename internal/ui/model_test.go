@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/actor"
