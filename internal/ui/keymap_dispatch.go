@@ -12,9 +12,6 @@ import (
 
 func (m Model) handlePrefixKey(key string) (Model, tea.Cmd) {
 	m.Prefix = false
-	if !m.Supervisor.Valid() {
-		return m, nil
-	}
 	b, ok := m.Keymaps.Lookup("prefix", key)
 	if !ok {
 		return m, nil
@@ -121,6 +118,21 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case cfg.ActionCopyModeToggle:
+		if m.CopyMode {
+			return m.exitCopyMode(), nil
+		}
+		return m.enterCopyMode(), nil
+	case cfg.ActionPasteRegister:
+		if m.CopyRegister == "" {
+			return m, nil
+		}
+		return m, m.dispatch(protocol.CommandPanePaste{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+			PaneID:    m.ActivePaneID,
+			Data:      []byte(m.CopyRegister),
+		})
 	default:
 		return m, nil
 	}

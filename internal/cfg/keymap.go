@@ -36,6 +36,22 @@ const (
 	ActionSelectWindow9   BuiltinKeyAction = "select_window_9"
 	ActionSelectWindow10  BuiltinKeyAction = "select_window_10"
 	ActionListKeymaps     BuiltinKeyAction = "list_keymaps"
+	ActionCopyModeToggle  BuiltinKeyAction = "copy_mode_toggle"
+	ActionPasteRegister   BuiltinKeyAction = "paste_register"
+
+	ActionCopyLeft          BuiltinKeyAction = "copy_left"
+	ActionCopyDown          BuiltinKeyAction = "copy_down"
+	ActionCopyUp            BuiltinKeyAction = "copy_up"
+	ActionCopyRight         BuiltinKeyAction = "copy_right"
+	ActionCopyWordForward   BuiltinKeyAction = "copy_word_forward"
+	ActionCopyWordBackward  BuiltinKeyAction = "copy_word_backward"
+	ActionCopyTop           BuiltinKeyAction = "copy_top"
+	ActionCopyBottom        BuiltinKeyAction = "copy_bottom"
+	ActionCopyPageUp        BuiltinKeyAction = "copy_page_up"
+	ActionCopyPageDown      BuiltinKeyAction = "copy_page_down"
+	ActionCopySelectStart   BuiltinKeyAction = "copy_select_start"
+	ActionCopyYankSelection BuiltinKeyAction = "copy_yank_selection"
+	ActionCopyCancel        BuiltinKeyAction = "copy_cancel"
 )
 
 // KeymapBinding is one prefix-mode binding after config load.
@@ -107,43 +123,65 @@ func normalizeKeyKey(key string) string {
 // DefaultKeymaps returns tmux-style prefix bindings matching README defaults.
 func DefaultKeymaps() *Keymaps {
 	k := NewKeymaps()
-	set := func(key string, action BuiltinKeyAction, desc string) {
+	setPrefix := func(key string, action BuiltinKeyAction, desc string) {
 		k.Set("prefix", key, KeymapBinding{Builtin: action, Desc: desc})
 	}
-	set("d", ActionDetach, "Detach client")
-	set("q", ActionDisplayPanes, "Display pane numbers for quick select")
-	set("!", ActionQuit, "Quit shux when last client")
-	set("%", ActionSplitLR, "Split pane left/right")
-	set("\"", ActionSplitTB, "Split pane top/bottom")
-	set("H", ActionResizePaneLeft, "Resize pane left")
-	set("J", ActionResizePaneDown, "Resize pane down")
-	set("K", ActionResizePaneUp, "Resize pane up")
-	set("L", ActionResizePaneRight, "Resize pane right")
-	set("o", ActionNextPane, "Next pane")
-	set("h", ActionFocusPaneLeft, "Focus pane left")
-	set("j", ActionFocusPaneDown, "Focus pane down")
-	set("k", ActionFocusPaneUp, "Focus pane up")
-	set("l", ActionFocusPaneRight, "Focus pane right")
-	set("left", ActionFocusPaneLeft, "Focus pane left")
-	set("down", ActionFocusPaneDown, "Focus pane down")
-	set("up", ActionFocusPaneUp, "Focus pane up")
-	set("right", ActionFocusPaneRight, "Focus pane right")
-	set("x", ActionClosePane, "Close pane")
-	set("z", ActionTogglePaneZoom, "Toggle pane zoom")
-	set("c", ActionNewWindow, "New window")
-	set("n", ActionNextWindow, "Next window")
-	set("p", ActionPreviousWindow, "Previous window")
-	set("1", ActionSelectWindow1, "Select window 1")
-	set("2", ActionSelectWindow2, "Select window 2")
-	set("3", ActionSelectWindow3, "Select window 3")
-	set("4", ActionSelectWindow4, "Select window 4")
-	set("5", ActionSelectWindow5, "Select window 5")
-	set("6", ActionSelectWindow6, "Select window 6")
-	set("7", ActionSelectWindow7, "Select window 7")
-	set("8", ActionSelectWindow8, "Select window 8")
-	set("9", ActionSelectWindow9, "Select window 9")
-	set("0", ActionSelectWindow10, "Select window 10")
-	set("?", ActionListKeymaps, "List key bindings")
+	setPrefix("d", ActionDetach, "Detach client")
+	setPrefix("q", ActionDisplayPanes, "Display pane numbers for quick select")
+	setPrefix("!", ActionQuit, "Quit shux when last client")
+	setPrefix("%", ActionSplitLR, "Split pane left/right")
+	setPrefix("\"", ActionSplitTB, "Split pane top/bottom")
+	setPrefix("H", ActionResizePaneLeft, "Resize pane left")
+	setPrefix("J", ActionResizePaneDown, "Resize pane down")
+	setPrefix("K", ActionResizePaneUp, "Resize pane up")
+	setPrefix("L", ActionResizePaneRight, "Resize pane right")
+	setPrefix("o", ActionNextPane, "Next pane")
+	setPrefix("h", ActionFocusPaneLeft, "Focus pane left")
+	setPrefix("j", ActionFocusPaneDown, "Focus pane down")
+	setPrefix("k", ActionFocusPaneUp, "Focus pane up")
+	setPrefix("l", ActionFocusPaneRight, "Focus pane right")
+	setPrefix("left", ActionFocusPaneLeft, "Focus pane left")
+	setPrefix("down", ActionFocusPaneDown, "Focus pane down")
+	setPrefix("up", ActionFocusPaneUp, "Focus pane up")
+	setPrefix("right", ActionFocusPaneRight, "Focus pane right")
+	setPrefix("x", ActionClosePane, "Close pane")
+	setPrefix("z", ActionTogglePaneZoom, "Toggle pane zoom")
+	setPrefix("c", ActionNewWindow, "New window")
+	setPrefix("n", ActionNextWindow, "Next window")
+	setPrefix("p", ActionPreviousWindow, "Previous window")
+	setPrefix("1", ActionSelectWindow1, "Select window 1")
+	setPrefix("2", ActionSelectWindow2, "Select window 2")
+	setPrefix("3", ActionSelectWindow3, "Select window 3")
+	setPrefix("4", ActionSelectWindow4, "Select window 4")
+	setPrefix("5", ActionSelectWindow5, "Select window 5")
+	setPrefix("6", ActionSelectWindow6, "Select window 6")
+	setPrefix("7", ActionSelectWindow7, "Select window 7")
+	setPrefix("8", ActionSelectWindow8, "Select window 8")
+	setPrefix("9", ActionSelectWindow9, "Select window 9")
+	setPrefix("0", ActionSelectWindow10, "Select window 10")
+	setPrefix("?", ActionListKeymaps, "List key bindings")
+	setPrefix("[", ActionCopyModeToggle, "Enter/exit copy mode")
+	setPrefix("]", ActionPasteRegister, "Paste copy register")
+
+	setCopy := func(key string, action BuiltinKeyAction, desc string) {
+		k.Set("copy_mode", key, KeymapBinding{Builtin: action, Desc: desc})
+	}
+	setCopy("h", ActionCopyLeft, "Move left")
+	setCopy("j", ActionCopyDown, "Move down")
+	setCopy("k", ActionCopyUp, "Move up")
+	setCopy("l", ActionCopyRight, "Move right")
+	setCopy("w", ActionCopyWordForward, "Next word")
+	setCopy("b", ActionCopyWordBackward, "Previous word")
+	setCopy("g", ActionCopyTop, "Top of scrollback")
+	setCopy("shift+g", ActionCopyBottom, "Bottom of scrollback")
+	setCopy("pageup", ActionCopyPageUp, "Scroll page up")
+	setCopy("pagedown", ActionCopyPageDown, "Scroll page down")
+	setCopy("space", ActionCopySelectStart, "Start selection")
+	setCopy("v", ActionCopySelectStart, "Start selection")
+	setCopy("y", ActionCopyYankSelection, "Yank selection")
+	setCopy("enter", ActionCopyYankSelection, "Yank selection and exit")
+	setCopy("escape", ActionCopyCancel, "Exit copy mode")
+	setCopy("q", ActionCopyCancel, "Exit copy mode")
 	return k
 }
 
