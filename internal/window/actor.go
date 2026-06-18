@@ -73,6 +73,10 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleWindowResize(ctx, m)
 			case protocol.CommandPaneSplit:
 				a.handlePaneSplit(ctx, m)
+			case protocol.CommandWindowSelectLayout:
+				a.handleWindowSelectLayout(ctx, m)
+			case protocol.CommandPaneSwap:
+				a.handlePaneSwap(ctx, m)
 			case protocol.CommandPaneClose:
 				a.handlePaneClose(ctx, m)
 			default:
@@ -174,6 +178,30 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 	a.emitLayout(ctx, m.SessionID, m.WindowID)
 }
 
+func (a *Actor) handleWindowSelectLayout(ctx context.Context, m protocol.CommandWindowSelectLayout) {
+	if err := a.Layout.ApplyPreset(m.ActivePaneID, m.Preset); err != nil {
+		a.rejectLayoutPreset(ctx, m, err.Error())
+		return
+	}
+	a.revision++
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "WindowSelectLayout"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
+func (a *Actor) handlePaneSwap(ctx context.Context, m protocol.CommandPaneSwap) {
+	if _, err := a.Layout.SwapPaneByDirection(m.PaneID, m.Direction); err != nil {
+		a.rejectPaneSwap(ctx, m, err.Error())
+		return
+	}
+	a.revision++
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "PaneSwap"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
 func (a *Actor) nextPaneID() protocol.PaneID {
 	a.seq++
 	return protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
@@ -228,6 +256,28 @@ func (a *Actor) rejectSplit(ctx context.Context, m protocol.CommandPaneSplit, re
 		SessionID: m.SessionID,
 		WindowID:  m.WindowID,
 		Command:   "pane-split",
+		Reason:    reason,
+	})
+}
+
+func (a *Actor) rejectLayoutPreset(ctx context.Context, m protocol.CommandWindowSelectLayout, reason string) {
+	a.emit(ctx, protocol.EventCommandRejected{
+		ClientID:  m.Meta.ClientID,
+		RequestID: m.Meta.RequestID,
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Command:   "select-layout",
+		Reason:    reason,
+	})
+}
+
+func (a *Actor) rejectPaneSwap(ctx context.Context, m protocol.CommandPaneSwap, reason string) {
+	a.emit(ctx, protocol.EventCommandRejected{
+		ClientID:  m.Meta.ClientID,
+		RequestID: m.Meta.RequestID,
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Command:   "swap-pane",
 		Reason:    reason,
 	})
 }

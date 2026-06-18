@@ -128,6 +128,78 @@ func (l *Layout) SplitPane(target protocol.PaneID, dir protocol.SplitDirection, 
 	return l.refit()
 }
 
+// ApplyPreset rewrites the layout tree for the current panes with a named preset.
+func (l *Layout) ApplyPreset(activePaneID protocol.PaneID, preset protocol.LayoutPreset) error {
+	if !preset.Valid() {
+		return fmt.Errorf("invalid layout preset")
+	}
+	if !activePaneID.Valid() {
+		return fmt.Errorf("invalid active pane")
+	}
+	ids := l.PaneIDs()
+	if len(ids) == 0 {
+		return fmt.Errorf("empty layout")
+	}
+	if !l.hasLeaf(activePaneID) {
+		return fmt.Errorf("active pane missing")
+	}
+	prev := l.root
+	switch preset {
+	case protocol.LayoutPresetEvenHorizontal:
+		l.root = buildEvenTree(ids, protocol.SplitHorizontal)
+	case protocol.LayoutPresetEvenVertical:
+		l.root = buildEvenTree(ids, protocol.SplitVertical)
+	case protocol.LayoutPresetMainHorizontal:
+		main := activePaneID
+		others := make([]protocol.PaneID, 0, len(ids)-1)
+		for _, id := range ids {
+			if id != main {
+				others = append(others, id)
+			}
+		}
+		l.root = buildMainHorizontalTree(main, others)
+	default:
+		return fmt.Errorf("invalid layout preset")
+	}
+	if err := l.refit(); err != nil {
+		l.root = prev
+		_ = l.refit()
+		return err
+	}
+	return nil
+}
+
+// SwapPaneByDirection swaps pane ids in the layout tree with a touching neighbor.
+func (l *Layout) SwapPaneByDirection(paneID protocol.PaneID, dir protocol.PaneDirection) (protocol.PaneID, error) {
+	if !paneID.Valid() {
+		return "", fmt.Errorf("invalid pane")
+	}
+	if !dir.Valid() {
+		return "", fmt.Errorf("invalid direction")
+	}
+	if l.root == nil || !l.hasLeaf(paneID) {
+		return "", fmt.Errorf("pane missing")
+	}
+	target, ok := l.Rect(paneID)
+	if !ok {
+		return "", fmt.Errorf("pane has no geometry")
+	}
+	neighbor, ok := l.findNeighbor(paneID, target, dir)
+	if !ok {
+		return "", fmt.Errorf("no neighbor in direction")
+	}
+	if !swapLeafIDs(l.root, paneID, neighbor) {
+		return "", fmt.Errorf("pane swap failed")
+	}
+	if err := l.refit(); err != nil {
+		// swap back to preserve old layout
+		_ = swapLeafIDs(l.root, paneID, neighbor)
+		_ = l.refit()
+		return "", err
+	}
+	return neighbor, nil
+}
+
 // RemovePane removes a pane leaf from the tree. Errors if the pane isn't present.
 func (l *Layout) RemovePane(id protocol.PaneID) error {
 	if !id.Valid() {
@@ -165,6 +237,43 @@ func removeLeaf(slot **layoutNode, id protocol.PaneID) bool {
 	return removeLeaf(&n.First, id) || removeLeaf(&n.Second, id)
 }
 
+func buildEvenTree(ids []protocol.PaneID, dir protocol.SplitDirection) *layoutNode {
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) == 1 {
+		return leaf(ids[0])
+	}
+	mid := len(ids) / 2
+	ratio := uint16((uint32(mid) * uint32(splitRatioScale)) / uint32(len(ids)))
+	if ratio == 0 || ratio >= splitRatioScale {
+		ratio = defaultSplitRatio
+	}
+	return &layoutNode{
+		Split:  dir,
+		Ratio:  ratio,
+		First:  buildEvenTree(ids[:mid], dir),
+		Second: buildEvenTree(ids[mid:], dir),
+	}
+}
+
+func buildMainHorizontalTree(main protocol.PaneID, others []protocol.PaneID) *layoutNode {
+	if len(others) == 0 {
+		return leaf(main)
+	}
+	return &layoutNode{
+		Split: protocol.SplitHorizontal,
+		Ratio: defaultSplitRatio,
+		First: leaf(main),
+		Second: func() *layoutNode {
+			if len(others) == 1 {
+				return leaf(others[0])
+			}
+			return buildEvenTree(others, protocol.SplitVertical)
+		}(),
+	}
+}
+
 func (l *Layout) splitLeaf(slot **layoutNode, target protocol.PaneID, dir protocol.SplitDirection, newPane protocol.PaneID) bool {
 	n := *slot
 	if n == nil {
@@ -183,6 +292,36 @@ func (l *Layout) splitLeaf(slot **layoutNode, target protocol.PaneID, dir protoc
 		return true
 	}
 	return l.splitLeaf(&n.First, target, dir, newPane) || l.splitLeaf(&n.Second, target, dir, newPane)
+}
+
+func swapLeafIDs(n *layoutNode, left protocol.PaneID, right protocol.PaneID) bool {
+	if n == nil {
+		return false
+	}
+	var leftFound, rightFound *layoutNode
+	var walk func(node *layoutNode)
+	walk = func(node *layoutNode) {
+		if node == nil || (!node.isLeaf() && leftFound != nil && rightFound != nil) {
+			return
+		}
+		if node.isLeaf() {
+			switch node.PaneID {
+			case left:
+				leftFound = node
+			case right:
+				rightFound = node
+			}
+			return
+		}
+		walk(node.First)
+		walk(node.Second)
+	}
+	walk(n)
+	if leftFound == nil || rightFound == nil {
+		return false
+	}
+	leftFound.PaneID, rightFound.PaneID = rightFound.PaneID, leftFound.PaneID
+	return true
 }
 
 func (l *Layout) hasLeaf(target protocol.PaneID) bool {
@@ -293,6 +432,105 @@ func collectPaneIDs(n *layoutNode, ids *[]protocol.PaneID) {
 	}
 	collectPaneIDs(n.First, ids)
 	collectPaneIDs(n.Second, ids)
+}
+
+func (l *Layout) findNeighbor(paneID protocol.PaneID, src Rect, dir protocol.PaneDirection) (protocol.PaneID, bool) {
+	bestID := protocol.PaneID("")
+	bestOverlap := -1
+	bestOffset := int(^uint(0) >> 1)
+	for _, candidateID := range l.PaneIDs() {
+		if candidateID == paneID {
+			continue
+		}
+		candidate, ok := l.Rect(candidateID)
+		if !ok {
+			continue
+		}
+		touching, overlap, offset := touchingScore(src, candidate, dir)
+		if !touching {
+			continue
+		}
+		if overlap > bestOverlap || (overlap == bestOverlap && offset < bestOffset) {
+			bestID = candidateID
+			bestOverlap = overlap
+			bestOffset = offset
+		}
+	}
+	if !bestID.Valid() {
+		return "", false
+	}
+	return bestID, true
+}
+
+func touchingScore(src Rect, other Rect, dir protocol.PaneDirection) (bool, int, int) {
+	srcLeft := int(src.Col)
+	srcRight := int(src.Col) + int(src.Cols)
+	srcTop := int(src.Row)
+	srcBottom := int(src.Row) + int(src.Rows)
+	otherLeft := int(other.Col)
+	otherRight := int(other.Col) + int(other.Cols)
+	otherTop := int(other.Row)
+	otherBottom := int(other.Row) + int(other.Rows)
+
+	switch dir {
+	case protocol.PaneDirectionLeft:
+		if otherRight != srcLeft {
+			return false, 0, 0
+		}
+		overlap := rangeOverlap(srcTop, srcBottom, otherTop, otherBottom)
+		if overlap <= 0 {
+			return false, 0, 0
+		}
+		return true, overlap, abs((srcTop + srcBottom) - (otherTop + otherBottom))
+	case protocol.PaneDirectionRight:
+		if otherLeft != srcRight {
+			return false, 0, 0
+		}
+		overlap := rangeOverlap(srcTop, srcBottom, otherTop, otherBottom)
+		if overlap <= 0 {
+			return false, 0, 0
+		}
+		return true, overlap, abs((srcTop + srcBottom) - (otherTop + otherBottom))
+	case protocol.PaneDirectionUp:
+		if otherBottom != srcTop {
+			return false, 0, 0
+		}
+		overlap := rangeOverlap(srcLeft, srcRight, otherLeft, otherRight)
+		if overlap <= 0 {
+			return false, 0, 0
+		}
+		return true, overlap, abs((srcLeft + srcRight) - (otherLeft + otherRight))
+	case protocol.PaneDirectionDown:
+		if otherTop != srcBottom {
+			return false, 0, 0
+		}
+		overlap := rangeOverlap(srcLeft, srcRight, otherLeft, otherRight)
+		if overlap <= 0 {
+			return false, 0, 0
+		}
+		return true, overlap, abs((srcLeft + srcRight) - (otherLeft + otherRight))
+	default:
+		return false, 0, 0
+	}
+}
+
+func rangeOverlap(aStart, aEnd, bStart, bEnd int) int {
+	start := aStart
+	if bStart > start {
+		start = bStart
+	}
+	end := aEnd
+	if bEnd < end {
+		end = bEnd
+	}
+	return end - start
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (l *Layout) assertRectInWindow(r Rect) error {
