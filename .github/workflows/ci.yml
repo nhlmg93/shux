@@ -15,10 +15,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: latest
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y make git zig pkg-config gcc g++ libc6-dev
+          sudo apt-get install -y make git pkg-config gcc g++ libc6-dev
 
       - name: Build libghostty
         run: make libghostty
