@@ -30,6 +30,36 @@ type Actor struct {
 	savedLayout   *Layout
 }
 
+type PaneTransfer struct {
+	PaneID protocol.PaneID
+	Ref    actor.Ref[protocol.Command]
+}
+
+type DetachPaneResult struct {
+	Transfer PaneTransfer
+	Err      error
+}
+
+// CommandDetachPane asks a window to remove a pane from its layout without
+// closing the pane actor, then return ownership to the session actor.
+type CommandDetachPane struct {
+	SessionID protocol.SessionID
+	WindowID  protocol.WindowID
+	PaneID    protocol.PaneID
+	Reply     chan<- DetachPaneResult
+}
+
+// CommandAttachPane asks a window to attach an already-running pane actor.
+// If TargetPaneID is empty, the window selects a default target.
+type CommandAttachPane struct {
+	SessionID    protocol.SessionID
+	WindowID     protocol.WindowID
+	TargetPaneID protocol.PaneID
+	Direction    protocol.SplitDirection
+	Transfer     PaneTransfer
+	Reply        chan<- error
+}
+
 func NewActor(hub actor.EventRef) *Actor {
 	return NewActorWithPolicy(actor.Ref[protocol.Command]{}, hub, "", "", 1, cfg.DefaultConfig())
 }
@@ -63,6 +93,14 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			switch m := msg.(type) {
+			case CommandDetachPane:
+				a.handleDetachPane(ctx, m)
+				continue
+			case CommandAttachPane:
+				a.handleAttachPane(ctx, m)
+				continue
+			}
 			if err := protocol.ValidateCommand(msg); err != nil {
 				panic(err)
 			}
@@ -96,6 +134,89 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 			}
 		}
 	}
+}
+
+func (a *Actor) handleDetachPane(ctx context.Context, m CommandDetachPane) {
+	if m.Reply == nil {
+		panic("window: detach pane: nil reply channel")
+	}
+	ref := a.Panes.Must(m.PaneID)
+	if err := a.Layout.RemovePane(m.PaneID); err != nil {
+		m.Reply <- DetachPaneResult{Err: fmt.Errorf("window: detach pane: %w", err)}
+		return
+	}
+	a.Panes.Delete(m.PaneID)
+	for i, pid := range a.paneIDs {
+		if pid == m.PaneID {
+			a.paneIDs = append(a.paneIDs[:i], a.paneIDs[i+1:]...)
+			break
+		}
+	}
+	a.revision++
+	a.emit(ctx, protocol.EventPaneClosed{WindowID: m.WindowID, PaneID: m.PaneID})
+	if len(a.Layout.PaneIDs()) == 0 {
+		if err := a.SessionRef.Send(ctx, protocol.CommandWindowClosed{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+		}); err != nil && ctx.Err() == nil {
+			panic(fmt.Sprintf("window: detach notify session close %s: %v", m.WindowID, err))
+		}
+		a.emit(ctx, protocol.EventWindowClosed{SessionID: m.SessionID, WindowID: m.WindowID})
+	} else {
+		for _, pid := range a.Layout.PaneIDs() {
+			a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "PaneDetach"), false)
+		}
+		a.emitLayout(ctx, m.SessionID, m.WindowID)
+	}
+	m.Reply <- DetachPaneResult{
+		Transfer: PaneTransfer{
+			PaneID: m.PaneID,
+			Ref:    ref,
+		},
+	}
+}
+
+func (a *Actor) handleAttachPane(ctx context.Context, m CommandAttachPane) {
+	if m.Reply == nil {
+		panic("window: attach pane: nil reply channel")
+	}
+	if !m.Transfer.PaneID.Valid() || !m.Transfer.Ref.Valid() {
+		m.Reply <- fmt.Errorf("window: attach pane: invalid transfer")
+		return
+	}
+	if len(a.Layout.PaneIDs()) == 0 {
+		if err := a.Layout.SetSinglePane(m.Transfer.PaneID); err != nil {
+			m.Reply <- fmt.Errorf("window: attach pane single: %w", err)
+			return
+		}
+	} else {
+		target := m.TargetPaneID
+		if !target.Valid() {
+			target = a.Layout.PaneIDs()[0]
+		}
+		dir := m.Direction
+		if !dir.Valid() {
+			dir = protocol.SplitVertical
+		}
+		if err := a.Layout.SplitPane(target, dir, m.Transfer.PaneID); err != nil {
+			m.Reply <- fmt.Errorf("window: attach pane split: %w", err)
+			return
+		}
+	}
+	a.Init(m.Transfer.PaneID, m.Transfer.Ref)
+	a.paneIDs = append(a.paneIDs, m.Transfer.PaneID)
+	a.revision++
+	if err := m.Transfer.Ref.Send(ctx, pane.CommandRehome{
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+	}); err != nil && ctx.Err() == nil {
+		panic(fmt.Sprintf("window: rehome pane %s: %v", m.Transfer.PaneID, err))
+	}
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "PaneAttach"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+	m.Reply <- nil
 }
 
 func (a *Actor) handleCreatePane(ctx context.Context, m protocol.CommandCreatePane) {

@@ -1181,6 +1181,99 @@ func TestPaneInputCommandsRouteThroughActorTree(t *testing.T) {
 	}
 }
 
+func TestHub_paneMove_breakAndJoin(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-pane-move")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 20},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    20,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneMove{
+		SessionID:      initSessionID,
+		SourceWindowID: initWindowID,
+		PaneID:         initPane2ID,
+	})
+	assertEvent(t, events, protocol.EventWindowCreated{SessionID: initSessionID, WindowID: protocol.WindowID("w-2")})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  2,
+		Windows:   []protocol.WindowID{initWindowID, "w-2"},
+	})
+	assertEvent(t, events, protocol.EventPaneClosed{WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  "w-2",
+		Revision:  1,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPane2ID, Col: 0, Row: 0, Cols: 80, Rows: 24},
+		},
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneMove{
+		SessionID:      initSessionID,
+		SourceWindowID: "w-2",
+		TargetWindowID: initWindowID,
+		PaneID:         initPane2ID,
+	})
+	assertEvent(t, events, protocol.EventPaneClosed{WindowID: "w-2", PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowClosed{SessionID: initSessionID, WindowID: "w-2"})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  4,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventSessionWindowsChanged{
+		SessionID: initSessionID,
+		Revision:  3,
+		Windows:   []protocol.WindowID{initWindowID},
+	})
+}
+
 func startWindowWithEvents(t *testing.T, ctx context.Context, clientID protocol.ClientID) (commandSender, <-chan protocol.Event) {
 	t.Helper()
 	eref := hub.Start(ctx)

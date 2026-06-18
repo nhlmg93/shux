@@ -186,6 +186,17 @@ func ValidateCommand(cmd Command) error {
 		return nil
 	case CommandPaneZoomToggle:
 		return validatePaneTarget("CommandPaneZoomToggle", c.SessionID, c.WindowID, c.PaneID)
+	case CommandPaneMove:
+		if err := validateWindowTarget("CommandPaneMove", c.SessionID, c.SourceWindowID); err != nil {
+			return err
+		}
+		if !c.PaneID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneMove: invalid PaneID")
+		}
+		if c.TargetWindowID != "" && !c.TargetWindowID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneMove: invalid TargetWindowID")
+		}
+		return nil
 	default:
 		return fmt.Errorf("protocol: unknown command type %T", cmd)
 	}
@@ -262,6 +273,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 	case CommandPaneSwap:
 		return c.SessionID, true
 	case CommandPaneZoomToggle:
+		return c.SessionID, true
+	case CommandPaneMove:
 		return c.SessionID, true
 	case CommandPaneClose:
 		return c.SessionID, true
@@ -682,4 +695,15 @@ type CommandPaneZoomToggle struct {
 	SessionID SessionID
 	WindowID  WindowID
 	PaneID    PaneID
+}
+
+// CommandPaneMove moves an existing pane between windows without replacing the
+// pane actor/PTY. If TargetWindowID is empty, the session breaks PaneID into a
+// new window. If TargetWindowID is set, the session joins PaneID into that
+// existing window.
+type CommandPaneMove struct {
+	SessionID      SessionID
+	SourceWindowID WindowID
+	TargetWindowID WindowID
+	PaneID         PaneID
 }

@@ -20,6 +20,13 @@ type Actor struct {
 	PaneID    protocol.PaneID
 }
 
+// CommandRehome updates pane routing identity after session-coordinated moves.
+// It preserves the pane actor, PTY, and terminal state.
+type CommandRehome struct {
+	SessionID protocol.SessionID
+	WindowID  protocol.WindowID
+}
+
 // NewActor returns a pane actor. Terminal is initialized with dimensions by
 // CommandPaneInit.
 func NewActor() *Actor {
@@ -67,6 +74,11 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 		case <-ctx.Done():
 			return
 		case msg := <-inbox:
+			if move, ok := msg.(CommandRehome); ok {
+				a.SessionID = move.SessionID
+				a.WindowID = move.WindowID
+				continue
+			}
 			if _, ok := msg.(journalReplay); ok {
 				event, err := a.Terminal.ReplayJournalScreen()
 				if err != nil {

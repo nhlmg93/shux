@@ -44,6 +44,16 @@ func SendPaste(t testing.TB, ctx context.Context, ref commandSender, sid protoco
 	})
 }
 
+func SendMove(t testing.TB, ctx context.Context, ref commandSender, sid protocol.SessionID, source protocol.WindowID, target protocol.WindowID, pid protocol.PaneID) {
+	t.Helper()
+	MustSend(t, ctx, ref, protocol.CommandPaneMove{
+		SessionID:      sid,
+		SourceWindowID: source,
+		TargetWindowID: target,
+		PaneID:         pid,
+	})
+}
+
 func ResurrectionConfig(dir, shellPath string) shux.Config {
 	cfg := shux.DefaultConfig()
 	cfg.StateDir = dir
