@@ -550,26 +550,138 @@ func WaitReady(ctx context.Context, addr string, timeout time.Duration) error {
 }
 
 func RunControlCommand(ctx context.Context, addr string, argv ...string) (string, error) {
+	return runRemoteCommand(ctx, addr, argv...)
+}
+
+func runRemoteCommand(ctx context.Context, addr string, argv ...string) (string, error) {
 	if len(argv) == 0 {
-		return "", fmt.Errorf("client: empty control command")
+		return "", fmt.Errorf("client: empty command")
 	}
-	sshClient, err := dialTrusted(ctx, addr)
+	out, err := runExec(ctx, addr, strings.Join(argv, " "))
 	if err != nil {
 		return "", err
 	}
-	defer sshClient.Close()
-
-	sess, err := sshClient.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("client: new ssh session: %w", err)
-	}
-	defer sess.Close()
-
-	out, err := sess.CombinedOutput(strings.Join(argv, " "))
-	if err != nil {
-		return "", fmt.Errorf("client: %s: %w: %s", argv[0], err, out)
-	}
 	return string(out), nil
+}
+
+func HasSession(ctx context.Context, addr string, opts AttachOptions, name string) error {
+	if !protocol.ValidSessionName(name) {
+		return fmt.Errorf("client: invalid session name %q", name)
+	}
+	if err := ensureServer(ctx, addr, opts); err != nil {
+		return err
+	}
+	_, err := runRemoteCommand(ctx, addr, "has-session", "-t", name)
+	return err
+}
+
+func NewWindow(ctx context.Context, addr string, target string) error {
+	args := []string{"new-window"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func KillWindow(ctx context.Context, addr string, target string) error {
+	args := []string{"kill-window"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func KillPane(ctx context.Context, addr string, target string) error {
+	args := []string{"kill-pane"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func SelectWindow(ctx context.Context, addr string, target string) error {
+	args := []string{"select-window"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func SplitWindow(ctx context.Context, addr string, target string, horizontal bool) error {
+	args := []string{"split-window"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	if horizontal {
+		args = append(args, "-h")
+	} else {
+		args = append(args, "-v")
+	}
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func SendKeys(ctx context.Context, addr string, target string, keys ...string) error {
+	args := []string{"send-keys"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	args = append(args, keys...)
+	_, err := runRemoteCommand(ctx, addr, args...)
+	return err
+}
+
+func CapturePane(ctx context.Context, addr string, target string) (string, error) {
+	args := []string{"capture-pane"}
+	if target != "" {
+		args = append(args, "-t", target)
+	}
+	return runRemoteCommand(ctx, addr, args...)
+}
+
+func ListCommands(ctx context.Context, addr string) error {
+	out, err := runRemoteCommand(ctx, addr, "list-commands")
+	if err != nil {
+		return err
+	}
+	_, _ = os.Stdout.WriteString(out)
+	return nil
+}
+
+func ListWindowsWithTarget(ctx context.Context, addr string, jsonOutput bool, target string) error {
+	req := protocol.QueryRequest{Method: protocol.QueryListWindows}
+	if target != "" {
+		req.SessionName = target
+	}
+	resp, err := runQuery(ctx, addr, req)
+	if err != nil {
+		return fmt.Errorf("client: list-windows: %w", err)
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Windows)
+	}
+	writeWindowsTable(os.Stdout, resp.Windows)
+	return nil
+}
+
+func ListPanesWithTarget(ctx context.Context, addr string, jsonOutput bool, target string) error {
+	req := protocol.QueryRequest{Method: protocol.QueryListPanes}
+	if target != "" {
+		req.SessionName = target
+	}
+	resp, err := runQuery(ctx, addr, req)
+	if err != nil {
+		return fmt.Errorf("client: list-panes: %w", err)
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Panes)
+	}
+	writePanesTable(os.Stdout, resp.Panes)
+	return nil
 }
 
 func dialTrusted(ctx context.Context, addr string) (*ssh.Client, error) {

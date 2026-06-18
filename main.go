@@ -122,6 +122,78 @@ var renamePaneCmd = &cobra.Command{
 	},
 }
 
+var hasSessionCmd = &cobra.Command{
+	Use:   "has-session",
+	Short: "Test whether a session exists",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runHasSession(cmd.Context())
+	},
+}
+
+var newWindowCmd = &cobra.Command{
+	Use:   "new-window",
+	Short: "Create a new window",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNewWindow(cmd.Context())
+	},
+}
+
+var killWindowCmd = &cobra.Command{
+	Use:   "kill-window",
+	Short: "Close a window",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runKillWindow(cmd.Context())
+	},
+}
+
+var killPaneCmd = &cobra.Command{
+	Use:   "kill-pane",
+	Short: "Close a pane",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runKillPane(cmd.Context())
+	},
+}
+
+var selectWindowCmd = &cobra.Command{
+	Use:   "select-window",
+	Short: "Select a window",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSelectWindow(cmd.Context())
+	},
+}
+
+var splitWindowCmd = &cobra.Command{
+	Use:   "split-window",
+	Short: "Split the active pane",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSplitWindow(cmd.Context())
+	},
+}
+
+var sendKeysCmd = &cobra.Command{
+	Use:   "send-keys [keys...]",
+	Short: "Send keys to a pane",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runSendKeys(cmd.Context(), args)
+	},
+}
+
+var capturePaneCmd = &cobra.Command{
+	Use:   "capture-pane",
+	Short: "Capture pane contents",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runCapturePane(cmd.Context())
+	},
+}
+
+var listCommandsCmd = &cobra.Command{
+	Use:   "list-commands",
+	Short: "List available remote commands",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runListCommands(cmd.Context())
+	},
+}
+
 // ps lists live daemon state (running sessions / panes).
 var psCmd = &cobra.Command{
 	Use:   "ps",
@@ -199,6 +271,8 @@ var (
 	rmForce          bool
 	checkpointJSON   bool
 	killSessionTarget string
+	cliTarget        string
+	splitHorizontal  bool
 )
 
 func init() {
@@ -212,6 +286,17 @@ func init() {
 	_ = newSessionCmd.MarkFlagRequired("session")
 	killSessionCmd.Flags().StringVarP(&killSessionTarget, "target", "t", "", "session to kill")
 	_ = killSessionCmd.MarkFlagRequired("target")
+	hasSessionCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "session name")
+	_ = hasSessionCmd.MarkFlagRequired("target")
+	for _, c := range []*cobra.Command{newWindowCmd, killWindowCmd, killPaneCmd, selectWindowCmd, splitWindowCmd, sendKeysCmd, capturePaneCmd} {
+		c.Flags().StringVarP(&cliTarget, "target", "t", "", "target session:window.pane")
+	}
+	splitWindowCmd.Flags().BoolVarP(&splitHorizontal, "horizontal", "h", false, "split left/right")
+	listWindowsCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "session name")
+	listPanesCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "session name")
+	displayMessageCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "target session:window.pane")
+	renameWindowCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "target session:window")
+	renamePaneCmd.Flags().StringVarP(&cliTarget, "target", "t", "", "target session:window.pane")
 	psCmd.Flags().BoolVar(&psJSON, "json", false, "print machine-readable JSON")
 	psCmd.Flags().BoolVarP(&psSessions, "sessions", "s", false, "list session names only")
 	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "print machine-readable JSON")
@@ -221,7 +306,9 @@ func init() {
 	rmCmd.Flags().BoolVar(&rmForce, "force", false, "remove store even when the daemon is running")
 	checkpointCmd.Flags().BoolVar(&checkpointJSON, "json", false, "print machine-readable JSON")
 	rootCmd.AddCommand(
-		attachCmd, detachCmd, restartCmd, newSessionCmd, killSessionCmd,
+		attachCmd, detachCmd, restartCmd, newSessionCmd, killSessionCmd, hasSessionCmd,
+		newWindowCmd, killWindowCmd, killPaneCmd, selectWindowCmd, splitWindowCmd,
+		sendKeysCmd, capturePaneCmd, listCommandsCmd,
 		psCmd, lsCmd, pruneCmd, rmCmd, checkpointCmd,
 		listSessionsCmd, listWindowsCmd, listPanesCmd,
 		displayMessageCmd, renameWindowCmd, renamePaneCmd,
@@ -316,7 +403,7 @@ func runListWindows(ctx context.Context, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
-	return client.ListWindows(ctx, addr, jsonOutput)
+	return client.ListWindowsWithTarget(ctx, addr, jsonOutput, cliTarget)
 }
 
 func runListPanes(ctx context.Context, jsonOutput bool) error {
@@ -324,13 +411,26 @@ func runListPanes(ctx context.Context, jsonOutput bool) error {
 	if err != nil {
 		return err
 	}
-	return client.ListPanes(ctx, addr, jsonOutput)
+	return client.ListPanesWithTarget(ctx, addr, jsonOutput, cliTarget)
 }
 
 func runDisplayMessage(ctx context.Context, format string, jsonOutput bool) error {
 	addr, err := bindAddr()
 	if err != nil {
 		return err
+	}
+	if cliTarget != "" {
+		args := []string{"display-message", "-t", cliTarget}
+		if jsonOutput {
+			args = append(args, "--json")
+		}
+		args = append(args, format)
+		out, err := client.RunControlCommand(ctx, addr, args...)
+		if err != nil {
+			return err
+		}
+		fmt.Print(out)
+		return nil
 	}
 	return client.DisplayMessage(ctx, addr, format, jsonOutput)
 }
@@ -340,11 +440,16 @@ func runRenameWindow(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	out, err := client.RunControlCommand(ctx, addr, "rename-window", name)
+	args := []string{"rename-window"}
+	if cliTarget != "" {
+		args = append(args, "-t", cliTarget)
+	}
+	args = append(args, name)
+	out, err := client.RunControlCommand(ctx, addr, args...)
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Print(out)
+	fmt.Print(out)
 	return nil
 }
 
@@ -353,12 +458,94 @@ func runRenamePane(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	out, err := client.RunControlCommand(ctx, addr, "rename-pane", name)
+	args := []string{"rename-pane"}
+	if cliTarget != "" {
+		args = append(args, "-t", cliTarget)
+	}
+	args = append(args, name)
+	out, err := client.RunControlCommand(ctx, addr, args...)
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Print(out)
+	fmt.Print(out)
 	return nil
+}
+
+func runHasSession(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.HasSession(ctx, addr, attachOptions(), cliTarget)
+}
+
+func runNewWindow(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.NewWindow(ctx, addr, cliTarget)
+}
+
+func runKillWindow(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.KillWindow(ctx, addr, cliTarget)
+}
+
+func runKillPane(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.KillPane(ctx, addr, cliTarget)
+}
+
+func runSelectWindow(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.SelectWindow(ctx, addr, cliTarget)
+}
+
+func runSplitWindow(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.SplitWindow(ctx, addr, cliTarget, splitHorizontal)
+}
+
+func runSendKeys(ctx context.Context, keys []string) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.SendKeys(ctx, addr, cliTarget, keys...)
+}
+
+func runCapturePane(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	out, err := client.CapturePane(ctx, addr, cliTarget)
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
+}
+
+func runListCommands(ctx context.Context) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	return client.ListCommands(ctx, addr)
 }
 
 func attachOptions() client.AttachOptions {

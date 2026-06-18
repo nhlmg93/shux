@@ -13,53 +13,55 @@ import (
 
 const cliCommandTimeout = 2 * time.Second
 
-// HandleRemoteCommand executes a detached SSH/CLI command. Returns true when
-// the command was recognized (attach/control-mode are handled elsewhere).
+func (a *Shux) cliMeta() protocol.CommandMeta {
+	a.bootstrapReq++
+	return protocol.CommandMeta{ClientID: bootstrapClientID, RequestID: a.bootstrapReq}
+}
+
+// HandleRemoteCommand executes a detached SSH/CLI command.
 func (a *Shux) HandleRemoteCommand(ctx context.Context, command []string, out io.Writer) (bool, error) {
 	if len(command) == 0 {
 		return false, nil
 	}
-	name := command[0]
-	args := command[1:]
-	switch name {
+	switch command[0] {
 	case "detach", "detach-client":
 		n := a.DetachAllClients()
 		_, err := fmt.Fprintf(out, "detached %d client(s)\n", n)
 		return true, err
-	case "list-sessions", "ls":
+	case "list-sessions":
 		return true, a.cliListSessions(ctx, out)
 	case "has-session", "has":
-		return true, a.cliHasSession(ctx, args)
+		return true, a.cliHasSession(ctx, command[1:])
 	case "new-session":
-		return true, a.cliNewSession(ctx, args, out)
+		return true, a.cliNewSession(ctx, command[1:], out)
 	case "kill-session":
-		return true, a.cliKillSession(ctx, args)
+		return true, a.cliKillSession(ctx, command[1:])
 	case "new-window", "neww":
-		return true, a.cliNewWindow(ctx, args, out)
+		return true, a.cliNewWindow(ctx, command[1:], out)
 	case "kill-window", "killw":
-		return true, a.cliKillWindow(ctx, args)
+		return true, a.cliKillWindow(ctx, command[1:])
 	case "kill-pane", "killp":
-		return true, a.cliKillPane(ctx, args)
+		return true, a.cliKillPane(ctx, command[1:])
 	case "select-window", "selectw":
-		return true, a.cliSelectWindow(ctx, args)
+		return true, a.cliSelectWindow(ctx, command[1:])
 	case "select-pane", "selectp":
-		return true, a.cliSelectPane(ctx, args)
+		return true, a.cliSelectPane(ctx, command[1:])
 	case "split-window", "splitw", "split-pane", "splitp":
-		return true, a.cliSplitWindow(ctx, args, out)
+		return true, a.cliSplitWindow(ctx, command[1:], out)
 	case "send-keys", "send":
-		return true, a.cliSendKeys(ctx, args)
+		return true, a.cliSendKeys(ctx, command[1:])
 	case "capture-pane", "capturep":
-		return true, a.cliCapturePane(ctx, args, out)
+		return true, a.cliCapturePane(ctx, command[1:], out)
 	case "rename-window", "renamew":
-		return true, a.cliRenameWindow(ctx, args, out)
+		return true, a.cliRenameWindow(ctx, command[1:], out)
 	case "rename-pane":
-		return true, a.cliRenamePane(ctx, args, out)
+		return true, a.cliRenamePane(ctx, command[1:], out)
 	case "list-windows", "lsw":
-		return true, a.cliListWindows(ctx, args, out)
+		return true, a.cliListWindows(ctx, command[1:], out)
 	case "list-panes", "lsp":
-		return true, a.cliListPanes(ctx, args, out)
+		return true, a.cliListPanes(ctx, command[1:], out)
 	case "display-message", "display":
-		return true, a.cliDisplayMessage(ctx, args, out)
+		return true, a.cliDisplayMessage(ctx, command[1:], out)
 	case "list-commands", "lscm":
 		return true, a.cliListCommands(out)
 	default:
@@ -77,8 +79,7 @@ func (a *Shux) cliListSessions(ctx context.Context, out io.Writer) error {
 		if session.SessionID == a.DefaultSessionID {
 			prefix = "*"
 		}
-		_, err := fmt.Fprintf(out, "%s %s\n", prefix, session.Name)
-		if err != nil {
+		if _, err := fmt.Fprintf(out, "%s %s\n", prefix, session.Name); err != nil {
 			return err
 		}
 	}
@@ -116,26 +117,23 @@ func (a *Shux) cliKillSession(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliNewWindow(ctx context.Context, args []string, out io.Writer) error {
-	targetSpec, rest, err := ParseTargetFlag(args)
+	targetSpec, _, err := ParseTargetFlag(args)
 	if err != nil {
 		return err
 	}
-	_ = rest
 	target, err := a.ResolveCLITarget(ctx, targetSpec)
 	if err != nil {
 		return err
 	}
 	cols, rows := a.windowSize(target.SessionID, target.WindowID)
-	cmd := protocol.CommandCreateWindow{
+	if err := a.supervisor.Send(ctx, protocol.CommandCreateWindow{
 		SessionID: target.SessionID,
 		Cols:      cols,
 		Rows:      rows,
 		AutoPane:  true,
-	}
-	if err := a.supervisor.Send(ctx, cmd); err != nil {
+	}); err != nil {
 		return err
 	}
-	a.applyDefaultTarget(target)
 	_, err = fmt.Fprintln(out, "created window")
 	return err
 }
@@ -201,11 +199,12 @@ func (a *Shux) cliSelectPane(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	var target CLITarget
+	target := a.defaultCLITarget()
 	if targetSpec != "" {
 		target, err = a.ResolveCLITarget(ctx, targetSpec)
-	} else {
-		target = a.defaultCLITarget()
+		if err != nil {
+			return err
+		}
 	}
 	for _, arg := range rest {
 		switch arg {
@@ -232,15 +231,13 @@ func (a *Shux) cliSelectPane(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliFocusDirection(ctx context.Context, target CLITarget, dir protocol.PaneFocusDirection) error {
-	if err := a.supervisor.Send(ctx, protocol.CommandPaneFocus{
+	return a.supervisor.Send(ctx, protocol.CommandPaneFocus{
+		Meta:          a.cliMeta(),
 		SessionID:     target.SessionID,
 		WindowID:      target.WindowID,
 		CurrentPaneID: target.PaneID,
 		Direction:     dir,
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func (a *Shux) cliSplitWindow(ctx context.Context, args []string, out io.Writer) error {
@@ -262,6 +259,7 @@ func (a *Shux) cliSplitWindow(ctx context.Context, args []string, out io.Writer)
 		}
 	}
 	if err := a.supervisor.Send(ctx, protocol.CommandPaneSplit{
+		Meta:         a.cliMeta(),
 		SessionID:    target.SessionID,
 		WindowID:     target.WindowID,
 		TargetPaneID: target.PaneID,
@@ -294,8 +292,8 @@ func (a *Shux) cliSendKeys(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliSendOneKey(ctx context.Context, target CLITarget, token string) error {
-	keyName, text, ok := parseSendKeyToken(token)
-	if ok {
+	keyName, text, isKey := parseSendKeyToken(token)
+	if isKey {
 		return a.supervisor.Send(ctx, protocol.CommandPaneKey{
 			SessionID: target.SessionID,
 			WindowID:  target.WindowID,
@@ -337,31 +335,23 @@ func parseSendKeyToken(token string) (keyName, text string, isKey bool) {
 }
 
 func (a *Shux) cliCapturePane(ctx context.Context, args []string, out io.Writer) error {
-	targetSpec, rest, err := ParseTargetFlag(args)
+	targetSpec, _, err := ParseTargetFlag(args)
 	if err != nil {
 		return err
 	}
-	_ = rest
 	target, err := a.ResolveCLITarget(ctx, targetSpec)
 	if err != nil {
 		return err
 	}
-	screens := a.cache.ScreenSnapshots(target.SessionID, target.WindowID)
-	var screen protocol.EventPaneScreenChanged
-	found := false
-	for _, s := range screens {
-		if s.PaneID == target.PaneID {
-			screen = s
-			found = true
-			break
+	_ = ctx
+	for _, screen := range a.cache.ScreenSnapshots(target.SessionID, target.WindowID) {
+		if screen.PaneID != target.PaneID {
+			continue
 		}
+		_, err = fmt.Fprint(out, screenText(screen, controlCaptureMaxBytes))
+		return err
 	}
-	if !found {
-		return fmt.Errorf("shux: no screen snapshot for pane %q", target.PaneID)
-	}
-	text := screenText(screen, controlCaptureMaxBytes)
-	_, err = fmt.Fprint(out, text)
-	return err
+	return fmt.Errorf("shux: no screen snapshot for pane %q", target.PaneID)
 }
 
 func (a *Shux) cliRenameWindow(ctx context.Context, args []string, out io.Writer) error {
@@ -422,30 +412,19 @@ func (a *Shux) cliListWindows(ctx context.Context, args []string, out io.Writer)
 	if err != nil {
 		return err
 	}
-	sessionID := a.DefaultSessionID
-	if targetSpec != "" {
-		sess, err := a.ResolveSession(ctx, targetSpec)
-		if err != nil {
-			if strings.HasPrefix(targetSpec, "s-") {
-				sessionID = protocol.SessionID(targetSpec)
-			} else {
-				return err
-			}
-		} else {
-			sessionID = sess.SessionID
-		}
-	}
-	windows := a.ListWindowsForSession(sessionID)
-	if jsonOut {
-		return json.NewEncoder(out).Encode(windows)
-	}
-	_, err = fmt.Fprintln(out, "INDEX\tSESSION\tWINDOW\tPANES")
+	sid, err := a.sessionIDFromTargetSpec(ctx, targetSpec)
 	if err != nil {
 		return err
 	}
+	windows := a.ListWindowsForSession(sid)
+	if jsonOut {
+		return json.NewEncoder(out).Encode(windows)
+	}
+	if _, err := fmt.Fprintln(out, "INDEX\tSESSION\tWINDOW\tPANES"); err != nil {
+		return err
+	}
 	for _, w := range windows {
-		_, err = fmt.Fprintf(out, "%d\t%s\t%s\t%d\n", w.Index, w.SessionID, w.WindowID, w.PaneCount)
-		if err != nil {
+		if _, err := fmt.Fprintf(out, "%d\t%s\t%s\t%d\n", w.Index, w.SessionID, w.WindowID, w.PaneCount); err != nil {
 			return err
 		}
 	}
@@ -461,35 +440,38 @@ func (a *Shux) cliListPanes(ctx context.Context, args []string, out io.Writer) e
 	if err != nil {
 		return err
 	}
-	sessionID := a.DefaultSessionID
-	if targetSpec != "" {
-		sess, err := a.ResolveSession(ctx, targetSpec)
-		if err != nil {
-			if strings.HasPrefix(targetSpec, "s-") {
-				sessionID = protocol.SessionID(targetSpec)
-			} else {
-				return err
-			}
-		} else {
-			sessionID = sess.SessionID
-		}
-	}
-	panes := a.ListPanesForSession(sessionID)
-	if jsonOut {
-		return json.NewEncoder(out).Encode(panes)
-	}
-	_, err = fmt.Fprintln(out, "INDEX\tSESSION\tWINDOW\tWIN_INDEX\tPANE\tCOL\tROW\tCOLS\tROWS")
+	sid, err := a.sessionIDFromTargetSpec(ctx, targetSpec)
 	if err != nil {
 		return err
 	}
+	panes := a.ListPanesForSession(sid)
+	if jsonOut {
+		return json.NewEncoder(out).Encode(panes)
+	}
+	if _, err := fmt.Fprintln(out, "INDEX\tSESSION\tWINDOW\tWIN_INDEX\tPANE\tCOL\tROW\tCOLS\tROWS"); err != nil {
+		return err
+	}
 	for _, p := range panes {
-		_, err = fmt.Fprintf(out, "%d\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%d\n",
-			p.Index, p.SessionID, p.WindowID, p.WindowIndex, p.PaneID, p.Col, p.Row, p.Cols, p.Rows)
-		if err != nil {
+		if _, err := fmt.Fprintf(out, "%d\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%d\n",
+			p.Index, p.SessionID, p.WindowID, p.WindowIndex, p.PaneID, p.Col, p.Row, p.Cols, p.Rows); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (a *Shux) sessionIDFromTargetSpec(ctx context.Context, spec string) (protocol.SessionID, error) {
+	if spec == "" {
+		return a.DefaultSessionID, nil
+	}
+	if strings.HasPrefix(spec, "s-") && protocol.SessionID(spec).Valid() {
+		return protocol.SessionID(spec), nil
+	}
+	sess, err := a.ResolveSession(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	return sess.SessionID, nil
 }
 
 func (a *Shux) cliDisplayMessage(ctx context.Context, args []string, out io.Writer) error {
@@ -505,19 +487,19 @@ func (a *Shux) cliDisplayMessage(ctx context.Context, args []string, out io.Writ
 		return fmt.Errorf("shux: display-message requires FORMAT")
 	}
 	format := strings.Join(rest, " ")
-	ctxMsg := a.DisplayMessageContext()
+	msgCtx := a.DisplayMessageContext()
 	if targetSpec != "" {
 		target, err := a.ResolveCLITarget(ctx, targetSpec)
 		if err != nil {
 			return err
 		}
-		ctxMsg = a.DisplayMessageContextFor(target.SessionID, target.WindowID, target.PaneID)
+		msgCtx = a.DisplayMessageContextFor(target.SessionID, target.WindowID, target.PaneID)
 	}
-	msg := FormatDisplayMessage(format, ctxMsg)
+	msg := FormatDisplayMessage(format, msgCtx)
 	if jsonOut {
 		return json.NewEncoder(out).Encode(protocol.DisplayMessageInfo{
 			Message:               msg,
-			DisplayMessageContext: ctxMsg,
+			DisplayMessageContext: msgCtx,
 		})
 	}
 	_, err = fmt.Fprintln(out, msg)
@@ -525,16 +507,15 @@ func (a *Shux) cliDisplayMessage(ctx context.Context, args []string, out io.Writ
 }
 
 func (a *Shux) cliListCommands(out io.Writer) error {
-	commands := []string{
+	for _, cmd := range []string{
 		"attach", "attach-session", "detach", "detach-client",
 		"new-session", "kill-session", "has-session", "list-sessions",
 		"new-window", "kill-window", "select-window", "list-windows",
 		"split-window", "kill-pane", "select-pane", "list-panes",
 		"send-keys", "capture-pane", "display-message",
-		"rename-window", "rename-pane",
-		"list-commands", "query", "control-mode", "restart", "restart-daemon",
-	}
-	for _, cmd := range commands {
+		"rename-window", "rename-pane", "list-commands",
+		"query", "control-mode", "restart", "restart-daemon",
+	} {
 		if _, err := fmt.Fprintln(out, cmd); err != nil {
 			return err
 		}
