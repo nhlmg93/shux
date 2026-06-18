@@ -15,6 +15,7 @@ import (
 )
 
 const maxPendingCommands = 32
+const prefixResizeStep = 5
 
 type initialRenderMsg struct{}
 
@@ -378,6 +379,22 @@ func (m Model) startPaneSplit(dir protocol.SplitDirection) (Model, tea.Cmd) {
 		WindowID:     m.WindowID,
 		TargetPaneID: m.ActivePaneID,
 		Direction:    dir,
+	})
+}
+
+func (m Model) startPaneResize(edge protocol.PaneResizeEdge) (Model, tea.Cmd) {
+	if !m.ActivePaneID.Valid() || !m.ClientID.Valid() {
+		return m, nil
+	}
+	m.NextRequest++
+	req := m.NextRequest
+	return m, m.dispatch(protocol.CommandPaneResizeDelta{
+		Meta:         protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID:    m.SessionID,
+		WindowID:     m.WindowID,
+		TargetPaneID: m.ActivePaneID,
+		Edge:         edge,
+		Delta:        prefixResizeStep,
 	})
 }
 

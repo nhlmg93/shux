@@ -6,26 +6,30 @@ import "strings"
 type BuiltinKeyAction string
 
 const (
-	ActionDetach         BuiltinKeyAction = "detach"
-	ActionQuit           BuiltinKeyAction = "quit"
-	ActionSplitLR        BuiltinKeyAction = "split_lr"
-	ActionSplitTB        BuiltinKeyAction = "split_tb"
-	ActionNextPane       BuiltinKeyAction = "next_pane"
-	ActionClosePane      BuiltinKeyAction = "close_pane"
-	ActionNewWindow      BuiltinKeyAction = "new_window"
-	ActionNextWindow     BuiltinKeyAction = "next_window"
-	ActionPreviousWindow BuiltinKeyAction = "previous_window"
-	ActionSelectWindow1  BuiltinKeyAction = "select_window_1"
-	ActionSelectWindow2  BuiltinKeyAction = "select_window_2"
-	ActionSelectWindow3  BuiltinKeyAction = "select_window_3"
-	ActionSelectWindow4  BuiltinKeyAction = "select_window_4"
-	ActionSelectWindow5  BuiltinKeyAction = "select_window_5"
-	ActionSelectWindow6  BuiltinKeyAction = "select_window_6"
-	ActionSelectWindow7  BuiltinKeyAction = "select_window_7"
-	ActionSelectWindow8  BuiltinKeyAction = "select_window_8"
-	ActionSelectWindow9  BuiltinKeyAction = "select_window_9"
-	ActionSelectWindow10 BuiltinKeyAction = "select_window_10"
-	ActionListKeymaps    BuiltinKeyAction = "list_keymaps"
+	ActionDetach          BuiltinKeyAction = "detach"
+	ActionQuit            BuiltinKeyAction = "quit"
+	ActionSplitLR         BuiltinKeyAction = "split_lr"
+	ActionSplitTB         BuiltinKeyAction = "split_tb"
+	ActionResizePaneLeft  BuiltinKeyAction = "resize_pane_left"
+	ActionResizePaneDown  BuiltinKeyAction = "resize_pane_down"
+	ActionResizePaneUp    BuiltinKeyAction = "resize_pane_up"
+	ActionResizePaneRight BuiltinKeyAction = "resize_pane_right"
+	ActionNextPane        BuiltinKeyAction = "next_pane"
+	ActionClosePane       BuiltinKeyAction = "close_pane"
+	ActionNewWindow       BuiltinKeyAction = "new_window"
+	ActionNextWindow      BuiltinKeyAction = "next_window"
+	ActionPreviousWindow  BuiltinKeyAction = "previous_window"
+	ActionSelectWindow1   BuiltinKeyAction = "select_window_1"
+	ActionSelectWindow2   BuiltinKeyAction = "select_window_2"
+	ActionSelectWindow3   BuiltinKeyAction = "select_window_3"
+	ActionSelectWindow4   BuiltinKeyAction = "select_window_4"
+	ActionSelectWindow5   BuiltinKeyAction = "select_window_5"
+	ActionSelectWindow6   BuiltinKeyAction = "select_window_6"
+	ActionSelectWindow7   BuiltinKeyAction = "select_window_7"
+	ActionSelectWindow8   BuiltinKeyAction = "select_window_8"
+	ActionSelectWindow9   BuiltinKeyAction = "select_window_9"
+	ActionSelectWindow10  BuiltinKeyAction = "select_window_10"
+	ActionListKeymaps     BuiltinKeyAction = "list_keymaps"
 )
 
 // KeymapBinding is one prefix-mode binding after config load.
@@ -104,6 +108,14 @@ func DefaultKeymaps() *Keymaps {
 	set("q", ActionQuit, "Quit shux when last client")
 	set("%", ActionSplitLR, "Split pane left/right")
 	set("\"", ActionSplitTB, "Split pane top/bottom")
+	set("left", ActionResizePaneLeft, "Resize pane left")
+	set("down", ActionResizePaneDown, "Resize pane down")
+	set("up", ActionResizePaneUp, "Resize pane up")
+	set("right", ActionResizePaneRight, "Resize pane right")
+	set("h", ActionResizePaneLeft, "Resize pane left")
+	set("j", ActionResizePaneDown, "Resize pane down")
+	set("k", ActionResizePaneUp, "Resize pane up")
+	set("l", ActionResizePaneRight, "Resize pane right")
 	set("o", ActionNextPane, "Next pane")
 	set("x", ActionClosePane, "Close pane")
 	set("c", ActionNewWindow, "New window")

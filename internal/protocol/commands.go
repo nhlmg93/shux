@@ -106,6 +106,26 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Direction %d", int(c.Direction))
 		}
 		return nil
+	case CommandPaneResizeDelta:
+		if !c.Meta.Empty() && !c.Meta.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResizeDelta: invalid Meta")
+		}
+		if err := validateWindowTarget("CommandPaneResizeDelta", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		if !c.TargetPaneID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResizeDelta: invalid TargetPaneID")
+		}
+		if !c.Edge.Valid() {
+			return fmt.Errorf("protocol: CommandPaneResizeDelta: invalid Edge %d", int(c.Edge))
+		}
+		if c.Delta == 0 {
+			return fmt.Errorf("protocol: CommandPaneResizeDelta: zero Delta")
+		}
+		if c.Delta < -1000 || c.Delta > 1000 {
+			return fmt.Errorf("protocol: CommandPaneResizeDelta: delta out of range")
+		}
+		return nil
 	case CommandWindowSelectLayout:
 		if !c.Meta.Valid() {
 			return fmt.Errorf("protocol: CommandWindowSelectLayout: invalid Meta")
@@ -201,6 +221,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPaneSplit:
 		return c.SessionID, true
+	case CommandPaneResizeDelta:
+		return c.SessionID, true
 	case CommandWindowSelectLayout:
 		return c.SessionID, true
 	case CommandPaneSwap:
@@ -250,6 +272,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandWindowResize:
 		return c.WindowID, true
 	case CommandPaneSplit:
+		return c.WindowID, true
+	case CommandPaneResizeDelta:
 		return c.WindowID, true
 	case CommandWindowSelectLayout:
 		return c.WindowID, true
@@ -500,6 +524,34 @@ type CommandPaneSplit struct {
 	WindowID     WindowID
 	TargetPaneID PaneID
 	Direction    SplitDirection
+}
+
+// PaneResizeEdge identifies which pane edge should move for resize delta.
+type PaneResizeEdge uint8
+
+const (
+	PaneResizeEdgeLeft PaneResizeEdge = iota
+	PaneResizeEdgeRight
+	PaneResizeEdgeUp
+	PaneResizeEdgeDown
+)
+
+func (e PaneResizeEdge) Valid() bool {
+	return e == PaneResizeEdgeLeft ||
+		e == PaneResizeEdgeRight ||
+		e == PaneResizeEdgeUp ||
+		e == PaneResizeEdgeDown
+}
+
+// CommandPaneResizeDelta applies a delta resize to the target pane by moving
+// one of its edges. Positive Delta grows toward the selected edge.
+type CommandPaneResizeDelta struct {
+	Meta         CommandMeta
+	SessionID    SessionID
+	WindowID     WindowID
+	TargetPaneID PaneID
+	Edge         PaneResizeEdge
+	Delta        int
 }
 
 // CommandWindowSelectLayout applies a named layout preset across current panes.

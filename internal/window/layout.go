@@ -128,6 +128,56 @@ func (l *Layout) SplitPane(target protocol.PaneID, dir protocol.SplitDirection, 
 	return l.refit()
 }
 
+// ResizePaneDelta grows/shrinks a pane by moving one edge by Delta cells.
+// Positive delta grows toward Edge; negative delta shrinks.
+func (l *Layout) ResizePaneDelta(target protocol.PaneID, edge protocol.PaneResizeEdge, delta int) error {
+	if !target.Valid() {
+		return fmt.Errorf("invalid target pane")
+	}
+	if !edge.Valid() {
+		return fmt.Errorf("invalid pane resize edge")
+	}
+	if delta == 0 {
+		return fmt.Errorf("delta must be non-zero")
+	}
+	if l.root == nil {
+		return fmt.Errorf("empty layout")
+	}
+	rootRect := Rect{Col: 0, Row: 0, Cols: l.WindowCols, Rows: l.WindowRows}
+	path, ok := l.pathToPane(target, l.root, rootRect)
+	if !ok {
+		return fmt.Errorf("target pane missing")
+	}
+	for i := len(path) - 1; i >= 0; i-- {
+		p := path[i]
+		adjust, matched := resizeAdjustForEdge(edge, p.Split, p.inFirst)
+		if !matched {
+			continue
+		}
+		total := int(p.axisSize())
+		first, _, err := splitRect(p.rect, p.Split, p.Ratio)
+		if err != nil {
+			continue
+		}
+		firstSize := int(first.Cols)
+		if p.Split == protocol.SplitHorizontal {
+			firstSize = int(first.Rows)
+		}
+		nextFirst := firstSize + adjust*delta
+		if nextFirst < minPaneCells || total-nextFirst < minPaneCells {
+			continue
+		}
+		prevRatio := p.Ratio
+		p.Ratio = ratioFromFirst(uint16(total), nextFirst)
+		if err := l.refit(); err == nil {
+			return nil
+		}
+		p.Ratio = prevRatio
+		_ = l.refit()
+	}
+	return fmt.Errorf("minimum pane size reached")
+}
+
 // ApplyPreset rewrites the layout tree for the current panes with a named preset.
 func (l *Layout) ApplyPreset(activePaneID protocol.PaneID, preset protocol.LayoutPreset) error {
 	if !preset.Valid() {
@@ -192,7 +242,6 @@ func (l *Layout) SwapPaneByDirection(paneID protocol.PaneID, dir protocol.PaneDi
 		return "", fmt.Errorf("pane swap failed")
 	}
 	if err := l.refit(); err != nil {
-		// swap back to preserve old layout
 		_ = swapLeafIDs(l.root, paneID, neighbor)
 		_ = l.refit()
 		return "", err
@@ -219,6 +268,74 @@ func (l *Layout) RemovePane(id protocol.PaneID) error {
 		return fmt.Errorf("pane missing")
 	}
 	return l.refit()
+}
+
+type layoutPathNode struct {
+	*layoutNode
+	rect    Rect
+	inFirst bool
+}
+
+func (l *Layout) pathToPane(target protocol.PaneID, n *layoutNode, r Rect) ([]*layoutPathNode, bool) {
+	if n == nil {
+		return nil, false
+	}
+	if n.isLeaf() {
+		return nil, n.PaneID == target
+	}
+	firstRect, secondRect, err := splitRect(r, n.Split, n.Ratio)
+	if err != nil {
+		return nil, false
+	}
+	if path, ok := l.pathToPane(target, n.First, firstRect); ok {
+		return append(path, &layoutPathNode{layoutNode: n, rect: r, inFirst: true}), true
+	}
+	if path, ok := l.pathToPane(target, n.Second, secondRect); ok {
+		return append(path, &layoutPathNode{layoutNode: n, rect: r, inFirst: false}), true
+	}
+	return nil, false
+}
+
+func (n *layoutPathNode) axisSize() uint16 {
+	if n.Split == protocol.SplitVertical {
+		return n.rect.Cols
+	}
+	return n.rect.Rows
+}
+
+func resizeAdjustForEdge(edge protocol.PaneResizeEdge, split protocol.SplitDirection, inFirst bool) (int, bool) {
+	switch edge {
+	case protocol.PaneResizeEdgeLeft:
+		return -1, split == protocol.SplitVertical && !inFirst
+	case protocol.PaneResizeEdgeRight:
+		return 1, split == protocol.SplitVertical && inFirst
+	case protocol.PaneResizeEdgeUp:
+		return -1, split == protocol.SplitHorizontal && !inFirst
+	case protocol.PaneResizeEdgeDown:
+		return 1, split == protocol.SplitHorizontal && inFirst
+	default:
+		return 0, false
+	}
+}
+
+func ratioFromFirst(total uint16, first int) uint16 {
+	if total <= 1 {
+		return defaultSplitRatio
+	}
+	if first < minPaneCells {
+		first = minPaneCells
+	}
+	if first > int(total)-minPaneCells {
+		first = int(total) - minPaneCells
+	}
+	ratio := (first*int(splitRatioScale) + int(total) - 1) / int(total)
+	if ratio <= 0 {
+		ratio = 1
+	}
+	if ratio >= int(splitRatioScale) {
+		ratio = int(splitRatioScale) - 1
+	}
+	return uint16(ratio)
 }
 
 func removeLeaf(slot **layoutNode, id protocol.PaneID) bool {
