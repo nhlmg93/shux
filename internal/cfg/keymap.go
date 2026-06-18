@@ -21,6 +21,7 @@ const (
 	ActionFocusPaneDown   BuiltinKeyAction = "focus_pane_down"
 	ActionDisplayPanes    BuiltinKeyAction = "display_panes"
 	ActionClosePane       BuiltinKeyAction = "close_pane"
+	ActionCloseWindow     BuiltinKeyAction = "close_window"
 	ActionTogglePaneZoom  BuiltinKeyAction = "toggle_pane_zoom"
 	ActionNewWindow       BuiltinKeyAction = "new_window"
 	ActionNextWindow      BuiltinKeyAction = "next_window"
@@ -36,6 +37,9 @@ const (
 	ActionSelectWindow9   BuiltinKeyAction = "select_window_9"
 	ActionSelectWindow10  BuiltinKeyAction = "select_window_10"
 	ActionToggleSyncPanes BuiltinKeyAction = "toggle_sync_panes"
+	ActionChooseTreeSession BuiltinKeyAction = "choose_tree_session"
+	ActionChooseTreeWindow  BuiltinKeyAction = "choose_tree_window"
+	ActionCommandPrompt  BuiltinKeyAction = "command_prompt"
 	ActionListKeymaps     BuiltinKeyAction = "list_keymaps"
 	ActionRenameWindow    BuiltinKeyAction = "rename_window"
 	ActionRenamePane      BuiltinKeyAction = "rename_pane"
@@ -148,6 +152,8 @@ func DefaultKeymaps() *Keymaps {
 	setPrefix("up", ActionFocusPaneUp, "Focus pane up")
 	setPrefix("right", ActionFocusPaneRight, "Focus pane right")
 	setPrefix("x", ActionClosePane, "Close pane")
+	setPrefix("&", ActionCloseWindow, "Close window")
+	setPrefix(":", ActionCommandPrompt, "Command prompt")
 	setPrefix("z", ActionTogglePaneZoom, "Toggle pane zoom")
 	setPrefix("c", ActionNewWindow, "New window")
 	setPrefix("n", ActionNextWindow, "Next window")
@@ -162,7 +168,8 @@ func DefaultKeymaps() *Keymaps {
 	setPrefix("8", ActionSelectWindow8, "Select window 8")
 	setPrefix("9", ActionSelectWindow9, "Select window 9")
 	setPrefix("0", ActionSelectWindow10, "Select window 10")
-	setPrefix("s", ActionToggleSyncPanes, "Toggle synchronize panes")
+	setPrefix("s", ActionChooseTreeSession, "Tree view (sessions collapsed)")
+	setPrefix("w", ActionChooseTreeWindow, "Tree view (windows collapsed)")
 	setPrefix(",", ActionRenameWindow, "Rename active window")
 	setPrefix(".", ActionRenamePane, "Rename active pane")
 	setPrefix("?", ActionListKeymaps, "List key bindings")

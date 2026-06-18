@@ -47,10 +47,10 @@ func (a *Shux) ListPanesForSession(sessionID protocol.SessionID) []protocol.Pane
 				WindowID:    windowID,
 				WindowIndex: i + 1,
 				PaneID:      pane.PaneID,
-				Col:         pane.Col,
-				Row:         pane.Row,
-				Cols:        pane.Cols,
-				Rows:        pane.Rows,
+				Col:         int(pane.Col),
+				Row:         int(pane.Row),
+				Cols:        int(pane.Cols),
+				Rows:        int(pane.Rows),
 			})
 		}
 	}

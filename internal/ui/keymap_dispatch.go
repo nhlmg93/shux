@@ -66,6 +66,14 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 		return m.startPaneQuickSelect()
 	case cfg.ActionClosePane:
 		return m.startPaneClose(m.ActivePaneID)
+	case cfg.ActionCloseWindow:
+		return m.startWindowClose()
+	case cfg.ActionCommandPrompt:
+		return m.startCommandPrompt(), nil
+	case cfg.ActionChooseTreeSession:
+		return m.startTreeView(treeViewSessionsCollapsed)
+	case cfg.ActionChooseTreeWindow:
+		return m.startTreeView(treeViewWindowsCollapsed)
 	case cfg.ActionTogglePaneZoom:
 		return m.startPaneZoomToggle(m.ActivePaneID)
 	case cfg.ActionNewWindow:

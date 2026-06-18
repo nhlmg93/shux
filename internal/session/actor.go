@@ -75,6 +75,9 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 				continue
 			case protocol.CommandWindowRename:
 				a.WindowNames[m.WindowID] = m.Name
+			case protocol.CommandWindowSwap:
+				a.handleWindowSwap(ctx, m)
+				continue
 			case protocol.CommandSessionKill:
 				err := a.handleSessionKill(ctx, m)
 				if m.Reply != nil {
@@ -213,6 +216,24 @@ func (a *Actor) handleSessionKill(ctx context.Context, m protocol.CommandSession
 		}
 	}
 	return nil
+}
+
+func (a *Actor) handleWindowSwap(ctx context.Context, m protocol.CommandWindowSwap) {
+	i, j := -1, -1
+	for idx, wid := range a.windowIDs {
+		switch wid {
+		case m.WindowID:
+			i = idx
+		case m.WithWindowID:
+			j = idx
+		}
+	}
+	if i < 0 || j < 0 || i == j {
+		return
+	}
+	a.windowIDs[i], a.windowIDs[j] = a.windowIDs[j], a.windowIDs[i]
+	a.revision++
+	a.emitWindowsChanged(ctx, m.SessionID)
 }
 
 func (a *Actor) emitWindowsChanged(ctx context.Context, sessionID protocol.SessionID) {

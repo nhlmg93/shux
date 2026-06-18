@@ -39,6 +39,11 @@ func ValidateCommand(cmd Command) error {
 		return nil
 	case CommandKillWindow:
 		return validateWindowTarget("CommandKillWindow", c.SessionID, c.WindowID)
+	case CommandWindowSwap:
+		if err := validateWindowTarget("CommandWindowSwap", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		return validateWindowTarget("CommandWindowSwap.WithWindowID", c.SessionID, c.WithWindowID)
 	case CommandCreateWindow:
 		if err := validateSessionTarget("CommandCreateWindow", c.SessionID); err != nil {
 			return err
@@ -313,6 +318,10 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPaneClose:
 		return c.SessionID, true
+	case CommandKillWindow:
+		return c.SessionID, true
+	case CommandWindowSwap:
+		return c.SessionID, true
 	case CommandPaneResize:
 		return c.SessionID, true
 	case CommandPaneKey:
@@ -373,6 +382,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 		return c.WindowID, true
 	case CommandPaneClose:
 		return c.WindowID, true
+	case CommandKillWindow:
+		return c.WindowID, true
 	case CommandPaneResize:
 		return c.WindowID, true
 	case CommandPaneKey:
@@ -429,6 +440,13 @@ type CommandSessionEnded struct {
 // CommandSessionKill is handled by a session actor to close all windows and exit.
 type CommandSessionKill struct {
 	Reply chan<- error
+}
+
+// CommandWindowSwap exchanges two windows' positions in a session's window list.
+type CommandWindowSwap struct {
+	SessionID    SessionID
+	WindowID     WindowID
+	WithWindowID WindowID
 }
 
 // CommandKillWindow closes all panes in a window.

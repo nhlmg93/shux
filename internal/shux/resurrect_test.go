@@ -505,3 +505,90 @@ func TestResurrection_movePaneBreakJoinRoundtrip(t *testing.T) {
 		t.Fatal("restored moved pane missing journal marker")
 	}
 }
+
+func TestResurrection_killWindowRemovesPaneJournal(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+	cfg.ShellPath = "/bin/sh"
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app.TestSupervisor()
+	sid, wid1, pid1 := app.DefaultSessionID, app.DefaultWindowID, app.DefaultPaneID
+	testutil.SendPaste(t, ctx, ref, sid, wid1, pid1, "win1\n")
+	if !app.WaitPaneScreen(sid, wid1, pid1, "win1", testutil.TestWaitTimeout) {
+		t.Fatal("first window pane missing marker")
+	}
+	j1 := persist.JournalPath(dir, 1, pid1)
+	if _, err := os.Stat(j1); err != nil {
+		t.Fatalf("expected journal for closed window pane: %v", err)
+	}
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandCreateWindow{
+		SessionID: sid,
+		Cols:      80,
+		Rows:      24,
+		AutoPane:  true,
+	})
+	if !app.WaitWindowCount(sid, 2, testutil.TestWaitTimeout) {
+		t.Fatalf("window count = %d, want 2", app.WindowCount(sid))
+	}
+	var wid2 protocol.WindowID
+	for _, wid := range app.WindowIDs(sid) {
+		if wid != wid1 {
+			wid2 = wid
+			break
+		}
+	}
+	if !wid2.Valid() {
+		t.Fatal("missing second window")
+	}
+	pid2, ok := app.FirstPaneID(sid, wid2)
+	if !ok {
+		t.Fatal("second window missing pane")
+	}
+	testutil.SendPaste(t, ctx, ref, sid, wid2, pid2, "win2\n")
+	if !app.WaitPaneScreen(sid, wid2, pid2, "win2", testutil.TestWaitTimeout) {
+		t.Fatal("second window pane missing marker")
+	}
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandKillWindow{SessionID: sid, WindowID: wid1})
+	if !app.WaitWindowCount(sid, 1, testutil.TestWaitTimeout) {
+		t.Fatalf("window count after kill = %d, want 1", app.WindowCount(sid))
+	}
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for {
+		if _, err := os.Stat(j1); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("journal for killed window pane still present at %s", j1)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(120 * time.Millisecond) // allow debounced checkpoint watcher
+	app.TestCheckpoint()
+
+	if app.WindowCount(sid) != 1 {
+		t.Fatalf("window count after checkpoint = %d, want 1", app.WindowCount(sid))
+	}
+	for _, wid := range app.WindowIDs(sid) {
+		if wid == wid1 {
+			t.Fatalf("killed window %s still listed in session", wid1)
+		}
+	}
+	if !app.WaitPaneScreen(sid, wid2, pid2, "win2", testutil.TestWaitTimeout) {
+		t.Fatal("surviving window lost pane content after kill")
+	}
+}
