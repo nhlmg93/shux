@@ -30,6 +30,8 @@ func (w *sessionLifecycleWatcher) handleSessionClosed(closed protocol.EventSessi
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	w.app.sessionEnv.RemoveSession(closed.SessionID)
+
 	w.app.stateMu.Lock()
 	if w.app.DefaultSessionID == closed.SessionID {
 		w.app.DefaultSessionID = ""

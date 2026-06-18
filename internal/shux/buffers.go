@@ -35,18 +35,6 @@ func (b *bufferStore) Get(name string) ([]byte, bool) {
 	return append([]byte(nil), data...), true
 }
 
-func (b *bufferStore) Delete(name string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.entries, name)
-	for i, n := range b.order {
-		if n == name {
-			b.order = append(b.order[:i], b.order[i+1:]...)
-			break
-		}
-	}
-}
-
 func (b *bufferStore) List() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

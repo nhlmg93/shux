@@ -277,7 +277,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case SessionSnapshotMsg:
-		return m.applySessionSnapshot(msg), nil
+		return m.ApplySessionSnapshot(msg), nil
 	}
 	return m, nil
 }

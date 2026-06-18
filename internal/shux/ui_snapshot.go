@@ -23,7 +23,11 @@ func (a *Shux) sessionSnapshotMsg(sessionID protocol.SessionID) ui.SessionSnapsh
 			msg.Layouts[windowID] = ui.LayoutSnapshotFromEvent(layout)
 		}
 		if panes := a.cache.PaneNames(sessionID, windowID); panes != nil {
-			msg.PaneNames[windowID] = panes
+			copied := make(map[protocol.PaneID]string, len(panes))
+			for id, name := range panes {
+				copied[id] = name
+			}
+			msg.PaneNames[windowID] = copied
 		}
 		for _, screen := range a.cache.ScreenSnapshots(sessionID, windowID) {
 			if msg.WindowScreens[windowID] == nil {

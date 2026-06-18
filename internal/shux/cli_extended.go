@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"shux/internal/cfg"
 	"shux/internal/lua"
 	"shux/internal/protocol"
@@ -74,28 +72,27 @@ func (a *Shux) cliKillServer() error {
 }
 
 func (a *Shux) cliSourceFile(ctx context.Context, args []string, out io.Writer) error {
+	_ = ctx
 	if len(args) == 0 {
 		return fmt.Errorf("shux: source-file requires PATH")
 	}
-	path := args[len(args)-1]
-	if !filepath.IsAbs(path) {
-		if home, err := os.UserHomeDir(); err == nil {
-			candidate := filepath.Join(home, ".config", "shux", path)
-			if _, err := os.Stat(candidate); err == nil {
-				path = candidate
-			}
-		}
+	path, err := resolveLuaConfigPath(args[len(args)-1])
+	if err != nil {
+		return err
 	}
-	opts := lua.LoadOptions{Bash: a.Config.ShellPath == cfg.BashShellPath}
+	opts := lua.LoadOptions{
+		Bash:       a.Config.ShellPath == cfg.BashShellPath,
+		SourceFile: path,
+	}
 	if err := a.ReloadConfig(opts); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(out, "sourced %s\n", path)
+	_, err = fmt.Fprintf(out, "sourced %s\n", path)
 	return err
 }
 
 func (a *Shux) cliListClients(out io.Writer) error {
-	for _, c := range a.clientReg.List() {
+	for _, c := range a.listClients() {
 		marker := " "
 		if c.SessionID == a.DefaultSessionID {
 			marker = "*"
@@ -108,7 +105,11 @@ func (a *Shux) cliListClients(out io.Writer) error {
 }
 
 func (a *Shux) cliSwitchClient(ctx context.Context, args []string) error {
-	targetSpec, rest, err := ParseTargetFlag(args)
+	clientSpec, rest, err := ParseClientFlag(args)
+	if err != nil {
+		return err
+	}
+	targetSpec, rest, err := ParseTargetFlag(rest)
 	if err != nil {
 		return err
 	}
@@ -119,23 +120,22 @@ func (a *Shux) cliSwitchClient(ctx context.Context, args []string) error {
 	if sessionName == "" {
 		return fmt.Errorf("shux: switch-client requires -t SESSION")
 	}
+	target, err := a.ResolveCLITarget(ctx, sessionName)
+	if err != nil {
+		return err
+	}
+	a.applyDefaultTarget(target)
 	sess, err := a.ResolveSession(ctx, sessionName)
 	if err != nil {
 		return err
 	}
-	a.DefaultSessionID = sess.SessionID
 	a.DefaultSession = sess.Name
-	windowIDs := a.cache.WindowIDs(sess.SessionID)
-	if len(windowIDs) > 0 {
-		a.DefaultWindowID = windowIDs[0]
-		if layout, ok := a.cache.LayoutSnapshot(sess.SessionID, windowIDs[0]); ok && len(layout.Panes) > 0 {
-			a.DefaultPaneID = layout.Panes[0].PaneID
-		}
+	id, err := a.resolveClientID(clientSpec)
+	if err != nil {
+		return err
 	}
-	if id, ok := a.clientReg.First(); ok {
-		a.clientReg.SetSession(id, sess.SessionID)
-		a.sendClientUI(id, ui.ClientUIMsg{Action: ui.ClientUIActionSwitchSession, SessionID: sess.SessionID})
-	}
+	a.setClientSession(id, target.SessionID)
+	a.sendClientUI(id, ui.ClientUIMsg{Action: ui.ClientUIActionSwitchSession, SessionID: target.SessionID})
 	return nil
 }
 
@@ -151,15 +151,20 @@ func (a *Shux) cliShowOptions(args []string, out io.Writer) error {
 		"resurrection":              strconv.FormatBool(c.Resurrection),
 		"pane-quick-select-timeout": c.PaneQuickSelectTimeout.String(),
 	}
-	key := ""
+	filter := ""
 	if len(args) > 0 {
-		key = args[len(args)-1]
+		filter = args[len(args)-1]
 	}
-	for k, v := range opts {
-		if key != "" && k != key {
+	keys := make([]string, 0, len(opts))
+	for k := range opts {
+		if filter != "" && k != filter {
 			continue
 		}
-		if _, err := fmt.Fprintf(out, "%s %s\n", k, v); err != nil {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, err := fmt.Fprintf(out, "%s %s\n", k, opts[k]); err != nil {
 			return err
 		}
 	}
@@ -202,7 +207,7 @@ func (a *Shux) cliShowEnvironment(ctx context.Context, args []string, out io.Wri
 
 func (a *Shux) cliSetEnvironment(ctx context.Context, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("shux: set-environment requires -t SESSION VAR VALUE")
+		return fmt.Errorf("shux: set-environment requires VAR VALUE")
 	}
 	targetSpec, rest, err := ParseTargetFlag(args)
 	if err != nil {
@@ -257,16 +262,9 @@ func (a *Shux) cliBindKey(args []string) error {
 
 func (a *Shux) notifyClientsKeymaps() {
 	a.clientsMu.Lock()
-	programs := make([]*tea.Program, 0, len(a.clients))
-	for _, p := range a.clients {
-		programs = append(programs, p)
-	}
 	keymaps := a.Config.Keymaps.Clone()
 	a.clientsMu.Unlock()
-	msg := ui.KeymapsUpdatedMsg{Keymaps: keymaps}
-	for _, p := range programs {
-		p.Send(msg)
-	}
+	a.broadcastToClients(ui.KeymapsUpdatedMsg{Keymaps: keymaps})
 }
 
 func (a *Shux) cliListBuffers(out io.Writer) error {
@@ -392,7 +390,32 @@ func (a *Shux) cliSwapPane(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliMovePane(ctx context.Context, args []string) error {
-	return a.cliJoinPane(ctx, args)
+	sourceSpec, targetSpec, _, err := ParseSourceTargetFlags(args)
+	if err != nil {
+		return err
+	}
+	source, err := a.ResolveCLITarget(ctx, sourceSpec)
+	if err != nil {
+		return err
+	}
+	if targetSpec == "" {
+		return a.supervisor.Send(ctx, protocol.CommandPaneMove{
+			SessionID:      source.SessionID,
+			SourceWindowID: source.WindowID,
+			TargetWindowID: "",
+			PaneID:         source.PaneID,
+		})
+	}
+	dest, err := a.ResolveCLITarget(ctx, targetSpec)
+	if err != nil {
+		return err
+	}
+	return a.supervisor.Send(ctx, protocol.CommandPaneMove{
+		SessionID:      source.SessionID,
+		SourceWindowID: source.WindowID,
+		TargetWindowID: dest.WindowID,
+		PaneID:         source.PaneID,
+	})
 }
 
 func (a *Shux) cliBreakPane(ctx context.Context, args []string) error {
@@ -413,24 +436,18 @@ func (a *Shux) cliBreakPane(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliJoinPane(ctx context.Context, args []string) error {
-	targetSpec, rest, err := ParseTargetFlag(args)
+	sourceSpec, targetSpec, _, err := ParseSourceTargetFlags(args)
 	if err != nil {
 		return err
 	}
-	source, err := a.ResolveCLITarget(ctx, targetSpec)
-	if err != nil {
-		return err
-	}
-	destSpec := ""
-	for i, arg := range rest {
-		if arg == "-t" && i+1 < len(rest) {
-			destSpec = rest[i+1]
-		}
-	}
-	if destSpec == "" {
+	if targetSpec == "" {
 		return fmt.Errorf("shux: join-pane requires -t DEST-WINDOW")
 	}
-	dest, err := a.ResolveCLITarget(ctx, destSpec)
+	source, err := a.ResolveCLITarget(ctx, sourceSpec)
+	if err != nil {
+		return err
+	}
+	dest, err := a.ResolveCLITarget(ctx, targetSpec)
 	if err != nil {
 		return err
 	}
@@ -472,8 +489,12 @@ func (a *Shux) cliSelectLayout(ctx context.Context, args []string) error {
 }
 
 func (a *Shux) cliChooseTree(args []string) error {
+	clientSpec, rest, err := ParseClientFlag(args)
+	if err != nil {
+		return err
+	}
 	mode := ui.ClientUITreeDefault
-	for _, arg := range args {
+	for _, arg := range rest {
 		switch arg {
 		case "-s":
 			mode = ui.ClientUITreeSessionsCollapsed
@@ -481,34 +502,33 @@ func (a *Shux) cliChooseTree(args []string) error {
 			mode = ui.ClientUITreeWindowsCollapsed
 		}
 	}
-	id, ok := a.clientReg.First()
-	if !ok {
-		return fmt.Errorf("shux: choose-tree requires an attached client")
+	id, err := a.resolveClientID(clientSpec)
+	if err != nil {
+		return err
 	}
 	a.sendClientUI(id, ui.ClientUIMsg{Action: ui.ClientUIActionChooseTree, TreeMode: mode})
 	return nil
 }
 
 func (a *Shux) cliCommandPrompt(args []string) error {
-	_ = args
-	id, ok := a.clientReg.First()
-	if !ok {
-		return fmt.Errorf("shux: command-prompt requires an attached client")
+	clientSpec, _, err := ParseClientFlag(args)
+	if err != nil {
+		return err
+	}
+	id, err := a.resolveClientID(clientSpec)
+	if err != nil {
+		return err
 	}
 	a.sendClientUI(id, ui.ClientUIMsg{Action: ui.ClientUIActionCommandPrompt})
 	return nil
 }
 
-func (a *Shux) cliDisplayMenu(out io.Writer) error {
-	_, err := fmt.Fprintln(out, "shux display-menu: use choose-tree or prefix bindings")
-	return err
+func (a *Shux) cliDisplayMenu(_ io.Writer) error {
+	return fmt.Errorf("shux: display-menu is not implemented; use choose-tree or prefix bindings")
 }
 
 func (a *Shux) sendClientUI(clientID protocol.ClientID, msg ui.ClientUIMsg) {
-	a.clientsMu.Lock()
-	p := a.clients[clientID]
-	a.clientsMu.Unlock()
-	if p != nil {
+	if p := a.clientProgram(clientID); p != nil {
 		p.Send(msg)
 	}
 }

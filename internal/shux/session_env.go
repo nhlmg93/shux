@@ -34,16 +34,6 @@ func (s *sessionEnvStore) Unset(sessionID protocol.SessionID, key string) {
 	}
 }
 
-func (s *sessionEnvStore) Get(sessionID protocol.SessionID, key string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if vars := s.data[sessionID]; vars != nil {
-		v, ok := vars[key]
-		return v, ok
-	}
-	return "", false
-}
-
 func (s *sessionEnvStore) List(sessionID protocol.SessionID) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

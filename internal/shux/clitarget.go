@@ -38,12 +38,28 @@ func (a *Shux) applyDefaultTarget(t CLITarget) {
 
 // ParseTargetFlag extracts -t/--target from argv.
 func ParseTargetFlag(args []string) (target string, rest []string, err error) {
+	return parseFlagValue(args, "-t", "--target")
+}
+
+// ParseClientFlag extracts -c/--client from argv.
+func ParseClientFlag(args []string) (client string, rest []string, err error) {
+	return parseFlagValue(args, "-c", "--client")
+}
+
+// ParseSourceTargetFlags extracts -s/--source and -t/--target from argv.
+func ParseSourceTargetFlags(args []string) (source, target string, rest []string, err error) {
 	rest = make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "-s", "--source":
+			if i+1 >= len(args) {
+				return "", "", nil, fmt.Errorf("shux: missing value for %s", args[i])
+			}
+			source = strings.TrimSpace(args[i+1])
+			i++
 		case "-t", "--target":
 			if i+1 >= len(args) {
-				return "", nil, fmt.Errorf("shux: missing value for %s", args[i])
+				return "", "", nil, fmt.Errorf("shux: missing value for %s", args[i])
 			}
 			target = strings.TrimSpace(args[i+1])
 			i++
@@ -51,7 +67,24 @@ func ParseTargetFlag(args []string) (target string, rest []string, err error) {
 			rest = append(rest, args[i])
 		}
 	}
-	return target, rest, nil
+	return source, target, rest, nil
+}
+
+func parseFlagValue(args []string, names ...string) (value string, rest []string, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case names[0], names[1]:
+			if i+1 >= len(args) {
+				return "", nil, fmt.Errorf("shux: missing value for %s", args[i])
+			}
+			value = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return value, rest, nil
 }
 
 func (a *Shux) ResolveCLITarget(ctx context.Context, spec string) (CLITarget, error) {

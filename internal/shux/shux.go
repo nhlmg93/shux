@@ -57,8 +57,7 @@ type Shux struct {
 	restartHandoff  func(context.Context) error
 
 	clientsMu sync.Mutex
-	clients   map[protocol.ClientID]*tea.Program
-	clientReg *clientRegistry
+	clients   map[protocol.ClientID]clientEntry
 	buffers   *bufferStore
 	sessionEnv *sessionEnvStore
 
@@ -79,8 +78,7 @@ func NewShuxWithConfig(config Config) (*Shux, error) {
 		Logger:     logger,
 		Config:     config.WithDefaults(),
 		shutdown:   make(chan struct{}),
-		clients:    make(map[protocol.ClientID]*tea.Program),
-		clientReg:  newClientRegistry(),
+		clients:    make(map[protocol.ClientID]clientEntry),
 		buffers:    newBufferStore(),
 		sessionEnv: newSessionEnvStore(),
 	}, nil
@@ -105,8 +103,8 @@ func (a *Shux) RequestShutdown() {
 func (a *Shux) DetachAllClients() int {
 	a.clientsMu.Lock()
 	programs := make([]*tea.Program, 0, len(a.clients))
-	for _, p := range a.clients {
-		programs = append(programs, p)
+	for _, entry := range a.clients {
+		programs = append(programs, entry.program)
 	}
 	a.clientsMu.Unlock()
 
@@ -116,20 +114,22 @@ func (a *Shux) DetachAllClients() int {
 	return len(programs)
 }
 
-func (a *Shux) notifyClientsUIConfig() {
-	uiCfg := a.Config.UI.WithDefaults()
+func (a *Shux) broadcastToClients(msg tea.Msg) {
 	a.clientsMu.Lock()
 	programs := make([]*tea.Program, 0, len(a.clients))
-	for _, p := range a.clients {
-		programs = append(programs, p)
+	for _, entry := range a.clients {
+		programs = append(programs, entry.program)
 	}
 	a.clientsMu.Unlock()
-	msg := ui.ConfigUpdatedMsg{UI: uiCfg}
 	for _, p := range programs {
 		if p != nil {
 			p.Send(msg)
 		}
 	}
+}
+
+func (a *Shux) notifyClientsUIConfig() {
+	a.broadcastToClients(ui.ConfigUpdatedMsg{UI: a.Config.UI.WithDefaults()})
 }
 
 func (a *Shux) SetRestartShutdown(fn func(context.Context) error) {
@@ -265,21 +265,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 			return a.sessionSnapshotMsg(sid)
 		},
 	})
-	model = model.WithWindowIDs(windowIDs)
-	for wid, name := range a.cache.WindowNames(sessionID) {
-		model.WindowNames[wid] = name
-	}
-	for _, windowID := range windowIDs {
-		if layout, ok := a.cache.LayoutSnapshot(sessionID, windowID); ok {
-			model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
-		}
-		if panes := a.cache.PaneNames(sessionID, windowID); panes != nil {
-			model.PaneNames[windowID] = panes
-		}
-		for _, screen := range a.cache.ScreenSnapshots(sessionID, windowID) {
-			model = model.WithPaneScreen(screen)
-		}
-	}
+	model = model.ApplySessionSnapshot(a.sessionSnapshotMsg(sessionID))
 	p := tea.NewProgram(model, opts...)
 
 	a.clientsMu.Lock()
@@ -287,8 +273,7 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		a.clientsMu.Unlock()
 		return nil, nil, fmt.Errorf("shux: duplicate client id %q", clientID)
 	}
-	a.clients[clientID] = p
-	a.clientReg.Register(clientID, sessionID)
+	a.clients[clientID] = clientEntry{program: p, sessionID: sessionID}
 	a.clientsMu.Unlock()
 
 	if err := a.hub.Send(ctx, protocol.EventRegisterSubscriber{ClientID: clientID, Sink: &ui.ProgramEventSink{P: p}}); err != nil {
@@ -308,7 +293,6 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 
 		a.clientsMu.Lock()
 		delete(a.clients, clientID)
-		a.clientReg.Unregister(clientID)
 		remaining := len(a.clients)
 		a.clientsMu.Unlock()
 

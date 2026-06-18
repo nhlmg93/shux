@@ -329,41 +329,7 @@ func (m Model) treeKillTagged() (Model, tea.Cmd) {
 }
 
 func (m Model) applyTreeSession(sessionID protocol.SessionID) Model {
-	for _, sess := range m.TreeView.Snapshot.Sessions {
-		if sess.SessionID != sessionID {
-			continue
-		}
-		m.SessionID = sessionID
-		windowIDs := make([]protocol.WindowID, 0, len(sess.Windows))
-		for _, w := range sess.Windows {
-			windowIDs = append(windowIDs, w.WindowID)
-		}
-		m = m.WithWindowIDs(windowIDs)
-		for _, w := range sess.Windows {
-			if w.Layout.WindowID.Valid() {
-				m = m.WithLayoutSnapshot(w.Layout)
-			}
-			if name := strings.TrimSpace(w.Name); name != "" {
-				if m.WindowNames == nil {
-					m.WindowNames = make(map[protocol.WindowID]string)
-				}
-				m.WindowNames[w.WindowID] = name
-			}
-			if m.PaneNames[w.WindowID] == nil {
-				m.PaneNames[w.WindowID] = make(map[protocol.PaneID]string)
-			}
-			for _, p := range w.Panes {
-				if name := strings.TrimSpace(p.Name); name != "" {
-					m.PaneNames[w.WindowID][p.PaneID] = name
-				}
-			}
-		}
-		if len(windowIDs) > 0 {
-			m = m.switchWindow(windowIDs[0])
-		}
-		return m
-	}
-	return m
+	return m.ApplySessionSnapshot(SessionSnapshotFromTree(m.TreeView.Snapshot, sessionID))
 }
 
 func (m Model) drawTreeView(canvas *runeCanvas) {

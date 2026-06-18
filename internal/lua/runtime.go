@@ -31,6 +31,8 @@ type Runtime struct {
 type LoadOptions struct {
 	// Bash overrides shell when spawning a new daemon (--bash flag).
 	Bash bool
+	// SourceFile is an extra Lua file to execute after init.lua and plugins.
+	SourceFile string
 }
 
 // Load reads init.lua (if present), user modules, and plugin scripts.
@@ -57,6 +59,10 @@ func Load(opts LoadOptions) (*Runtime, error) {
 		return nil, err
 	}
 	if err := rt.loadPlugins(); err != nil {
+		L.Close()
+		return nil, err
+	}
+	if err := rt.loadExtraSource(opts.SourceFile); err != nil {
 		L.Close()
 		return nil, err
 	}
@@ -507,6 +513,29 @@ func (rt *Runtime) apiNotify(L *glua.LState) int {
 	msg := L.CheckString(1)
 	fmt.Fprintf(os.Stderr, "shux: %s\n", msg)
 	return 0
+}
+
+func (rt *Runtime) loadExtraSource(path string) error {
+	if path == "" {
+		return nil
+	}
+	configDir, err := Stdpath("config")
+	if err != nil {
+		return err
+	}
+	initPath := filepath.Join(configDir, "init.lua")
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	absInit, err := filepath.Abs(initPath)
+	if err != nil {
+		return err
+	}
+	if absPath == absInit {
+		return nil
+	}
+	return rt.doFile(path)
 }
 
 func (rt *Runtime) loadUserConfig() error {
