@@ -7,6 +7,7 @@ import (
 
 	"shux/internal/cfg"
 	"shux/internal/lua"
+	"shux/internal/luabind"
 )
 
 func TestLoad_defaultConfigWithoutInitLua(t *testing.T) {
@@ -99,5 +100,42 @@ func TestStdpath_config(t *testing.T) {
 	want := filepath.Join(root, "cfg", "shux")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestLoad_statuslineOption(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "shux")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+
+	initLua := `shux.opt.statusline = {
+  left = function(ctx) return ctx.session_id .. ":" .. ctx.window_index end,
+  right = { "pane", function(ctx) return ctx.active_pane end }
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, "init.lua"), []byte(initLua), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rt, err := lua.Load(lua.LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+
+	left, right := rt.Statusline(luabind.StatuslineContext{
+		SessionID:   "s-1",
+		WindowIndex: 2,
+		ActivePane:  "p-2",
+	})
+	if left != "s-1:2" {
+		t.Fatalf("left = %q", left)
+	}
+	if right != "pane p-2" {
+		t.Fatalf("right = %q", right)
 	}
 }
