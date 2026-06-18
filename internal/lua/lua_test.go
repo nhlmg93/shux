@@ -185,8 +185,8 @@ func TestLoad_uiOption(t *testing.T) {
 	if ui.Statusline {
 		t.Fatal("expected statusline disabled")
 	}
-	if ui.PaneBorders {
-		t.Fatal("expected pane borders disabled")
+	if ui.EffectivePaneBorderLines() != cfg.PaneBorderLinesNone {
+		t.Fatalf("expected pane_border_lines none, got %q", ui.EffectivePaneBorderLines())
 	}
 	if ui.PaneLabels {
 		t.Fatal("expected pane labels disabled")

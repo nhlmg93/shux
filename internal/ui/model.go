@@ -223,6 +223,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.PaneQuickSelectEnabled && msg.Nonce == m.paneQuickSelectNonce {
 			m.PaneQuickSelectEnabled = false
 		}
+	case ConfigUpdatedMsg:
+		m.UI = msg.UI.WithDefaults()
 	}
 	return m, nil
 }
@@ -1087,6 +1089,9 @@ func (m Model) viewString() string {
 		if len(m.Layout.Panes) == 0 {
 			canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
 		} else {
+			if !m.UI.SplitLinesOnly() && m.UI.EffectivePaneBorderLines() != cfg.PaneBorderLinesNone {
+				canvas.drawWindowBorders(m.Layout.Panes, m.Layout.ActivePane)
+			}
 			for i, p := range m.Layout.Panes {
 				active := p.PaneID == m.Layout.ActivePane
 				if m.Layout.ActivePane == "" && i == 0 {
@@ -1105,6 +1110,9 @@ func (m Model) viewString() string {
 				overlay := m.searchOverlayForPane(p.PaneID)
 				label := m.paneLabel(p)
 				canvas.drawPaneWithScreenEvent(p, label, active, quickLabel, screen, overlay)
+			}
+			if m.UI.SplitLinesOnly() {
+				canvas.drawInternalSplitLines(m.Layout.Panes, m.Layout.ActivePane)
 			}
 		}
 		if m.CopyMode {

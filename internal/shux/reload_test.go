@@ -35,7 +35,7 @@ func TestReloadConfig_appliesUIChanges(t *testing.T) {
 		t.Fatal("expected default statusline visible before reload")
 	}
 
-	initLua := `shux.opt.ui = { statusline = false, pane_borders = false }`
+	initLua := `shux.opt.ui = { statusline = false, pane_border_lines = "none" }`
 	if err := os.WriteFile(filepath.Join(configDir, "init.lua"), []byte(initLua), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestReloadConfig_appliesUIChanges(t *testing.T) {
 	if app.Config.UI.Statusline {
 		t.Fatal("expected statusline disabled after reload")
 	}
-	if app.Config.UI.PaneBorders {
-		t.Fatal("expected pane borders disabled after reload")
+	if app.Config.UI.EffectivePaneBorderLines() != "none" {
+		t.Fatalf("expected pane_border_lines none after reload, got %q", app.Config.UI.EffectivePaneBorderLines())
 	}
 }
 

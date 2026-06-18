@@ -109,6 +109,22 @@ func (a *Shux) DetachAllClients() int {
 	return len(programs)
 }
 
+func (a *Shux) notifyClientsUIConfig() {
+	uiCfg := a.Config.UI.WithDefaults()
+	a.clientsMu.Lock()
+	programs := make([]*tea.Program, 0, len(a.clients))
+	for _, p := range a.clients {
+		programs = append(programs, p)
+	}
+	a.clientsMu.Unlock()
+	msg := ui.ConfigUpdatedMsg{UI: uiCfg}
+	for _, p := range programs {
+		if p != nil {
+			p.Send(msg)
+		}
+	}
+}
+
 func (a *Shux) SetRestartShutdown(fn func(context.Context) error) {
 	a.restartShutdown = fn
 }

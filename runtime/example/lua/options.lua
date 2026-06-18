@@ -6,12 +6,21 @@ shux.opt.journal_replay_delay_ms = 200
 shux.opt.resurrection = true
 -- shux.opt.ui = {
 --   statusline = true,              -- bottom status bar (false to hide)
---   pane_borders = true,            -- border characters around panes
+--   pane_borders = true,            -- deprecated; use pane_border_lines
+--   pane_border_lines = "single",   -- tmux: single, double, heavy, simple, number, spaces, none
+--   pane_outer_border = true,       -- false = internal split lines only (no window box)
 --   pane_labels = true,             -- pane title labels in borders
 --   statusline_style = "reverse",   -- "reverse", "plain", or ANSI SGR string
 --   search_match_ansi = nil,        -- optional ANSI for search matches
 --   search_active_ansi = nil,       -- optional ANSI for the active search match
 --   copy_mode_status_ansi = nil,    -- optional ANSI for copy-mode status text
+-- }
+-- tmux-like pane chrome
+-- shux.opt.ui = {
+--   pane_border_lines = "single",  -- single|double|heavy|simple|number|spaces|none
+--   pane_outer_border = false,     -- shux only: internal dividers, no window box
+--   pane_active_border_style = "\27[1;34m",
+--   pane_border_style = "\27[90m",
 -- }
 shux.opt.statusline = {
   left = function(ctx)

@@ -16,7 +16,8 @@ shux.opt.resurrection = true
 -- Chrome visibility and ANSI styling (see "UI chrome" below)
 -- shux.opt.ui = {
 --   statusline = true,
---   pane_borders = true,
+--   pane_border_lines = "single",
+--   pane_outer_border = true,
 --   pane_labels = true,
 --   statusline_style = "reverse",
 -- }
@@ -76,7 +77,11 @@ shux.opt.statusline = {
 | Field | Default | Description |
 | --- | --- | --- |
 | `statusline` | `true` | Show the bottom status bar; `false` hides it and gives panes the full window height |
-| `pane_borders` | `true` | Draw box-drawing borders around panes |
+| `pane_borders` | `true` | Legacy toggle; prefer `pane_border_lines` |
+| `pane_border_lines` | `"single"` | Tmux `pane-border-lines` mode (see below) |
+| `pane_outer_border` | `true` | Draw a box around the window; `false` = split dividers only (shux extension) |
+| `pane_border_style` | `""` | ANSI/SGR prefix for inactive pane border cells (tmux `pane-border-style` subset) |
+| `pane_active_border_style` | `""` | ANSI/SGR prefix for the active pane's border cells |
 | `pane_labels` | `true` | Show pane title labels on borders |
 | `statusline_style` | `"reverse"` | Status bar row styling (see below) |
 | `search_match_ansi` | built-in | ANSI SGR prefix for copy-mode search matches in pane content |
@@ -84,6 +89,46 @@ shux.opt.statusline = {
 | `copy_mode_status_ansi` | built-in | ANSI SGR prefix for copy-mode overlay status text |
 
 Unset ANSI fields use shux's built-in highlights. Set a field to override only that highlight.
+
+### Pane borders (tmux-compatible)
+
+`pane_border_lines` matches tmux [`pane-border-lines`](https://man.openbsd.org/tmux.1#pane-border-lines). Accepted values:
+
+| Value | Effect |
+| --- | --- |
+| `single` | Light box-drawing (`│`, `─`, corners) — tmux default |
+| `double` | Double-line box |
+| `heavy` | Heavy box |
+| `simple` | ASCII `+`, `\|`, `-` |
+| `number` | Like `single`, with pane index at each pane's top-left |
+| `spaces` | Blank border cells (padding, no lines) |
+| `none` | No borders |
+
+Legacy `pane_borders = false` is equivalent to `pane_border_lines = "none"`. Shux also accepts `"off"` → `none` and `"full"` → `single`.
+
+`pane_border_style` and `pane_active_border_style` accept raw ANSI SGR prefixes (e.g. `"\27[90m"` for dim, `"\27[1;34m"` for bold blue). Tmux `fg=green` style strings are not parsed yet—use ANSI directly.
+
+`pane_outer_border` is a shux extension (default `true`). Set it to `false` to draw **split dividers only**—internal lines between panes without a box around the window edge. Ignored when `pane_border_lines` is `none` or `spaces`.
+
+Examples:
+
+```lua
+-- tmux default: full box around the window
+shux.opt.ui = { pane_border_lines = "single" }
+
+-- minimal splits: dividers only, no outer box or labels
+shux.opt.ui = {
+  pane_border_lines = "single",
+  pane_outer_border = false,
+  pane_labels = false,
+}
+
+-- tmux simple ASCII borders
+shux.opt.ui = { pane_border_lines = "simple" }
+
+-- borders off
+shux.opt.ui = { pane_border_lines = "none" }
+```
 
 ### `statusline_style`
 
@@ -96,7 +141,7 @@ Minimal UI (no status bar or borders):
 ```lua
 shux.opt.ui = {
   statusline = false,
-  pane_borders = false,
+  pane_border_lines = "none",
   pane_labels = false,
 }
 ```

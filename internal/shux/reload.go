@@ -27,6 +27,7 @@ func (a *Shux) ReloadConfig(opts lua.LoadOptions) error {
 	a.Config = newCfg
 	a.SetLuaRuntime(rt)
 	a.SetAutocmds(rt.Autocmds)
+	a.notifyClientsUIConfig()
 	a.Logger.Info("shux: reloaded lua configuration")
 	return nil
 }

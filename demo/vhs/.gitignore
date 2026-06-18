@@ -1,4 +1,5 @@
 demo/vhs/debug-user.log
+demo/vhs/daemon.log
 demo/vhs/debug-user-config.gif
 demo/vhs/debug-user-fixed.gif
 demo/vhs/state/
@@ -8,4 +9,5 @@ demo/vhs/keys.log
 demo/vhs/*.mp4
 demo/vhs/*.webm
 demo/vhs/test.gif
+demo/vhs/border-config-test.gif
 demo/vhs/quote-test.gif

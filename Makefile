@@ -77,6 +77,9 @@ demo: build
 	$(QUIET)command -v node >/dev/null || (echo "install node (demo heartbeat pane)" && exit 1)
 	$(QUIET)vhs demo/vhs/shux-demo.tape
 
+demo-borders: build
+	$(QUIET)bash demo/vhs/verify-border-config.sh
+
 $(GHOSTTY_SRC)/.git:
 	$(QUIET)mkdir -p $(DEPS_DIR)
 	@echo "Cloning Ghostty $(GHOSTTY_REF) (shallow)…"

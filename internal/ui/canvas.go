@@ -84,7 +84,7 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, label string, active 
 		return
 	}
 
-	if !c.ui.PaneBorders {
+	if !c.ui.DrawsPaneBorders() {
 		contentX, contentY, contentW, contentH := x, y, w, h
 		if label != "" {
 			c.drawText(x, y, label)
@@ -103,49 +103,19 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, label string, active 
 		return
 	}
 
-	horiz, vert := '─', '│'
-	tl, tr, bl, br := '┌', '┐', '└', '┘'
-	if active {
-		horiz, vert = '═', '║'
-		tl, tr, bl, br = '╔', '╗', '╚', '╝'
-	}
-
-	if h == 1 {
-		for col := x; col < x+w; col++ {
-			c.set(col, y, horiz)
-		}
-		c.drawText(x, y, label)
-		if quickSelectLabel != "" {
-			c.drawText(x+1, y, quickSelectLabel)
-		}
+	contentX, contentY, contentW, contentH := x+1, y+1, w-2, h-2
+	if w <= 2 || h <= 2 {
 		return
 	}
-	if w == 1 {
-		for row := y; row < y+h; row++ {
-			c.set(x, row, vert)
-		}
-		return
+	if label != "" {
+		c.drawText(x+1, y, label)
 	}
-
-	c.set(x, y, tl)
-	c.set(x+w-1, y, tr)
-	c.set(x, y+h-1, bl)
-	c.set(x+w-1, y+h-1, br)
-	for col := x + 1; col < x+w-1; col++ {
-		c.set(col, y, horiz)
-		c.set(col, y+h-1, horiz)
-	}
-	for row := y + 1; row < y+h-1; row++ {
-		c.set(x, row, vert)
-		c.set(x+w-1, row, vert)
-	}
-	c.drawText(x+1, y, label)
-	c.drawPaneContent(x+1, y+1, w-2, h-2, lines, overlay)
 	if quickSelectLabel != "" {
 		c.drawText(x+2, y+1, quickSelectLabel)
 	}
+	c.drawPaneContent(contentX, contentY, contentW, contentH, lines, overlay)
 	if active {
-		c.drawCursor(x+1, y+1, w-2, h-2, screen.Cursor)
+		c.drawCursor(contentX, contentY, contentW, contentH, screen.Cursor)
 	}
 }
 

@@ -21,7 +21,7 @@ In `shux.opt.state_dir`, which defaults to your XDG state directory. Journals an
 
 ## Can I hide the status bar or pane borders?
 
-Yes. Set fields on `shux.opt.ui` in your Lua config—for example `shux.opt.ui = { statusline = false }` or `shux.opt.ui = { pane_borders = false }`. See [UI chrome](/configuration/options/#ui-chrome/) for defaults and examples. UI options follow the same daemon-start reload rules as the rest of your config (see above).
+Yes. Set fields on `shux.opt.ui` in your Lua config—for example `shux.opt.ui = { statusline = false }` or `shux.opt.ui = { pane_border_lines = "none" }`. See [UI chrome](/configuration/options/#ui-chrome/) and [pane borders](/configuration/options/#pane-borders-tmux-compatible) for defaults and examples. UI options follow the same daemon-start reload rules as the rest of your config (see above).
 
 ## How do I kill a session?
 

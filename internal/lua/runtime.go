@@ -235,8 +235,23 @@ func (rt *Runtime) uiFromLua(v glua.LValue) {
 	if val := tbl.RawGetString("statusline"); val != glua.LNil {
 		u.Statusline = luaBool(val)
 	}
+	// Deprecated: prefer pane_border_lines.
 	if val := tbl.RawGetString("pane_borders"); val != glua.LNil {
 		u.PaneBorders = luaBool(val)
+	}
+	if val := tbl.RawGetString("pane_border_lines"); val != glua.LNil {
+		if mode := cfg.NormalizePaneBorderLines(luaString(val)); mode != "" {
+			u.PaneBorderLines = mode
+		}
+	}
+	if val := tbl.RawGetString("pane_outer_border"); val != glua.LNil {
+		u.PaneOuterBorder = luaBool(val)
+	}
+	if val := tbl.RawGetString("pane_border_style"); val != glua.LNil {
+		u.PaneBorderStyle = luaString(val)
+	}
+	if val := tbl.RawGetString("pane_active_border_style"); val != glua.LNil {
+		u.PaneActiveBorderStyle = luaString(val)
 	}
 	if val := tbl.RawGetString("pane_labels"); val != glua.LNil {
 		u.PaneLabels = luaBool(val)
@@ -253,7 +268,15 @@ func (rt *Runtime) uiFromLua(v glua.LValue) {
 	if val := tbl.RawGetString("copy_mode_status_ansi"); val != glua.LNil {
 		u.CopyModeStatusANSI = luaString(val)
 	}
-	rt.Config.UI = u
+	if tbl.RawGetString("pane_border_lines") == glua.LNil {
+		u.PaneBorderLines = ""
+		if u.PaneBorders {
+			u.PaneBorderLines = cfg.PaneBorderLinesSingle
+		} else {
+			u.PaneBorderLines = cfg.PaneBorderLinesNone
+		}
+	}
+	rt.Config.UI = u.WithDefaults()
 }
 
 func (rt *Runtime) uiTable() *glua.LTable {
@@ -261,6 +284,14 @@ func (rt *Runtime) uiTable() *glua.LTable {
 	tbl := rt.L.NewTable()
 	rt.L.SetField(tbl, "statusline", glua.LBool(u.Statusline))
 	rt.L.SetField(tbl, "pane_borders", glua.LBool(u.PaneBorders))
+	rt.L.SetField(tbl, "pane_border_lines", glua.LString(u.EffectivePaneBorderLines()))
+	rt.L.SetField(tbl, "pane_outer_border", glua.LBool(u.PaneOuterBorder))
+	if u.PaneBorderStyle != "" {
+		rt.L.SetField(tbl, "pane_border_style", glua.LString(u.PaneBorderStyle))
+	}
+	if u.PaneActiveBorderStyle != "" {
+		rt.L.SetField(tbl, "pane_active_border_style", glua.LString(u.PaneActiveBorderStyle))
+	}
 	rt.L.SetField(tbl, "pane_labels", glua.LBool(u.PaneLabels))
 	rt.L.SetField(tbl, "statusline_style", glua.LString(u.StatuslineStyle))
 	if u.SearchMatchANSI != "" {

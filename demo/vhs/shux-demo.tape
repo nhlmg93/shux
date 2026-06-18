@@ -23,7 +23,7 @@ Enter
 Sleep 500ms
 Type "./demo/vhs/run-shux.sh"
 Enter
-Wait+Screen@30s /SYNC:OFF/
+Sleep 5s
 Show
 Sleep 1.5s
 
