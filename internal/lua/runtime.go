@@ -11,6 +11,7 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 	"shux/internal/cfg"
+	"shux/internal/luabind"
 )
 
 // Runtime holds the embedded Lua VM and frozen side effects from config load.
@@ -21,6 +22,9 @@ type Runtime struct {
 	globals  map[string]glua.LValue
 	cbTable  *glua.LTable
 	cbSeq    int
+
+	statuslineLeft  glua.LValue
+	statuslineRight glua.LValue
 }
 
 // LoadOptions configures config loading.
@@ -74,6 +78,12 @@ func (rt *Runtime) Close() {
 // CallKeymapRef invokes a Lua keymap callback registered via shux.keymap.set.
 func (rt *Runtime) CallKeymapRef(ref int) {
 	rt.callLuaRef(ref, nil)
+}
+
+func (rt *Runtime) Statusline(ctx luabind.StatuslineContext) (left, right string) {
+	left = rt.evalStatuslineSegment(rt.statuslineLeft, ctx)
+	right = rt.evalStatuslineSegment(rt.statuslineRight, ctx)
+	return left, right
 }
 
 func (rt *Runtime) installGlobals() {
@@ -161,6 +171,8 @@ func (rt *Runtime) optIndex(L *glua.LState) int {
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":
 		L.Push(glua.LBool(rt.Config.Resurrection))
+	case "statusline":
+		L.Push(rt.statuslineTable())
 	default:
 		L.Push(glua.LNil)
 	}
@@ -185,8 +197,75 @@ func (rt *Runtime) optNewIndex(L *glua.LState) int {
 		rt.Config.StateDir = luaString(val)
 	case "resurrection":
 		rt.Config.Resurrection = luaBool(val)
+	case "statusline":
+		rt.statuslineFromLua(val)
 	}
 	return 0
+}
+
+func (rt *Runtime) statuslineFromLua(v glua.LValue) {
+	rt.statuslineLeft = glua.LNil
+	rt.statuslineRight = glua.LNil
+	tbl, ok := v.(*glua.LTable)
+	if !ok {
+		return
+	}
+	rt.statuslineLeft = tbl.RawGetString("left")
+	rt.statuslineRight = tbl.RawGetString("right")
+}
+
+func (rt *Runtime) statuslineTable() *glua.LTable {
+	tbl := rt.L.NewTable()
+	if rt.statuslineLeft != nil && rt.statuslineLeft != glua.LNil {
+		rt.L.SetField(tbl, "left", rt.statuslineLeft)
+	}
+	if rt.statuslineRight != nil && rt.statuslineRight != glua.LNil {
+		rt.L.SetField(tbl, "right", rt.statuslineRight)
+	}
+	return tbl
+}
+
+func (rt *Runtime) evalStatuslineSegment(segment glua.LValue, ctx luabind.StatuslineContext) string {
+	switch v := segment.(type) {
+	case glua.LString:
+		return strings.TrimSpace(string(v))
+	case *glua.LTable:
+		return strings.TrimSpace(rt.evalStatuslineList(v, ctx))
+	case *glua.LFunction:
+		L := rt.L
+		ctxTable := L.NewTable()
+		L.SetField(ctxTable, "session_id", glua.LString(ctx.SessionID))
+		L.SetField(ctxTable, "window_id", glua.LString(ctx.WindowID))
+		L.SetField(ctxTable, "window_index", glua.LNumber(ctx.WindowIndex))
+		L.SetField(ctxTable, "window_name", glua.LString(ctx.WindowName))
+		L.SetField(ctxTable, "active_pane", glua.LString(ctx.ActivePane))
+		L.SetField(ctxTable, "hostname", glua.LString(ctx.Hostname))
+		L.SetField(ctxTable, "title", glua.LString(ctx.Title))
+		L.SetField(ctxTable, "status", glua.LString(ctx.Status))
+		if err := L.CallByParam(glua.P{Fn: v, NRet: 1, Protect: true}, ctxTable); err != nil {
+			fmt.Fprintf(os.Stderr, "shux: statusline callback: %v\n", err)
+			return ""
+		}
+		out := L.Get(-1)
+		L.Pop(1)
+		if out == glua.LNil {
+			return ""
+		}
+		return strings.TrimSpace(out.String())
+	default:
+		return ""
+	}
+}
+
+func (rt *Runtime) evalStatuslineList(tbl *glua.LTable, ctx luabind.StatuslineContext) string {
+	parts := make([]string, 0, tbl.Len())
+	for i := 1; i <= tbl.Len(); i++ {
+		part := strings.TrimSpace(rt.evalStatuslineSegment(tbl.RawGetInt(i), ctx))
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func (rt *Runtime) fnStdpath(L *glua.LState) int {
@@ -246,6 +325,8 @@ func (rt *Runtime) apiGetOption(L *glua.LState) int {
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":
 		L.Push(glua.LBool(rt.Config.Resurrection))
+	case "statusline":
+		L.Push(rt.statuslineTable())
 	default:
 		L.Push(glua.LNil)
 	}

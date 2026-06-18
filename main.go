@@ -16,6 +16,7 @@ var bashShell bool
 var listWindowsJSON bool
 var listPanesJSON bool
 var displayMessageJSON bool
+var controlMode bool
 
 var rootCmd = &cobra.Command{
 	Use:     "shux",
@@ -82,6 +83,7 @@ func init() {
 	listWindowsCmd.Flags().BoolVar(&listWindowsJSON, "json", false, "print machine-readable JSON")
 	listPanesCmd.Flags().BoolVar(&listPanesJSON, "json", false, "print machine-readable JSON")
 	displayMessageCmd.Flags().BoolVar(&displayMessageJSON, "json", false, "print machine-readable JSON")
+	attachCmd.Flags().BoolVarP(&controlMode, "control", "C", false, "attach in experimental line-oriented control mode")
 	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, listWindowsCmd, listPanesCmd, displayMessageCmd)
 }
 
@@ -162,7 +164,7 @@ func runDisplayMessage(ctx context.Context, format string, jsonOutput bool) erro
 }
 
 func attachOptions() client.AttachOptions {
-	return client.AttachOptions{Bash: bashShell}
+	return client.AttachOptions{Bash: bashShell, Control: controlMode}
 }
 
 func isInteractiveTerminal() bool {

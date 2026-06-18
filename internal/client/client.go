@@ -23,7 +23,8 @@ import (
 )
 
 type AttachOptions struct {
-	Bash bool
+	Bash    bool
+	Control bool
 }
 
 func clientTerm() string {
@@ -46,13 +47,20 @@ func AttachOrSpawnWithOptions(ctx context.Context, addr string, opts AttachOptio
 	if available {
 		// Attach never mutates daemon startup policy. In particular, --bash only
 		// affects a newly spawned daemon child; existing daemons keep their shell.
-		return Attach(ctx, addr)
+		return attachWithMode(ctx, addr, opts)
 	}
 	if err := spawnDetached(opts); err != nil {
 		return err
 	}
 	if err := WaitReady(ctx, addr, 2*time.Second); err != nil {
 		return err
+	}
+	return attachWithMode(ctx, addr, opts)
+}
+
+func attachWithMode(ctx context.Context, addr string, opts AttachOptions) error {
+	if opts.Control {
+		return AttachControl(ctx, addr)
 	}
 	return Attach(ctx, addr)
 }
@@ -104,6 +112,40 @@ func Attach(ctx context.Context, addr string) error {
 	case err := <-done:
 		if err != nil && err != io.EOF {
 			return fmt.Errorf("client: ssh session: %w", err)
+		}
+		return nil
+	}
+}
+
+func AttachControl(ctx context.Context, addr string) error {
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	sess.Stdin = os.Stdin
+	sess.Stdout = os.Stdout
+	sess.Stderr = os.Stderr
+	if err := sess.Start("control-mode"); err != nil {
+		return fmt.Errorf("client: start control mode: %w", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- sess.Wait() }()
+	select {
+	case <-ctx.Done():
+		_ = sess.Close()
+		return ctx.Err()
+	case err := <-done:
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("client: control session: %w", err)
 		}
 		return nil
 	}
