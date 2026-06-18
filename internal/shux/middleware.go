@@ -54,6 +54,11 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 						_ = app.FinishGracefulRestart(context.Background(), opts)
 					}()
 					return
+				case "control-mode":
+					if err := app.RunControlMode(sess.Context(), ids.Next(), sess, sess); err != nil {
+						wish.Fatalln(sess, err)
+					}
+					return
 				default:
 					wish.Fatalln(sess, "shux: unknown command")
 					return

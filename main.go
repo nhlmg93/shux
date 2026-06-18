@@ -13,6 +13,7 @@ import (
 )
 
 var bashShell bool
+var controlMode bool
 
 var rootCmd = &cobra.Command{
 	Use:     "shux",
@@ -51,6 +52,7 @@ var restartCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
+	attachCmd.Flags().BoolVarP(&controlMode, "control", "C", false, "attach in experimental line-oriented control mode")
 	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd)
 }
 
@@ -107,7 +109,7 @@ func runRestart(ctx context.Context) error {
 }
 
 func attachOptions() client.AttachOptions {
-	return client.AttachOptions{Bash: bashShell}
+	return client.AttachOptions{Bash: bashShell, Control: controlMode}
 }
 
 func isInteractiveTerminal() bool {
