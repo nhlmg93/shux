@@ -74,6 +74,7 @@ Integration-style tests should be focused on Sessions/Window/Pane/Config/Plugin 
 When reproducing UI, attach/detach, or resurrection bugs, prefer observable, repeatable tools:
 
 - **[VHS](https://github.com/charmbracelet/vhs)** — script terminal sessions as `.tape` files and render GIFs/videos. Useful for reproducing multiplexer flows (splits, detach, reattach) and for README demos. See `demo/vhs/` and `make demo` (needs `vhs`, `ttyd`, `ffmpeg`).
+- **Real-config debugging** — `demo/vhs/debug-user-config.tape` records `./shux` with the user's actual `~/.config/shux` (output gitignored). Pair with `debug-user-fix.sh` to clear a corrupt resurrection store and re-record `debug-user-fixed.tape`.
 - **shux logs** — the daemon writes structured lines to `~/.local/share/shux/shux.log`. Client spawn failures append to `~/.cache/shux/daemon.log`.
 
 **Clean up after yourself.** Debug artifacts are fine while investigating, but do not leave them behind once the bug is fixed:

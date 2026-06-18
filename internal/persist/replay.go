@@ -13,6 +13,7 @@ func ReplayJournal(term *libghostty.Terminal, path string) error {
 	if len(data) == 0 {
 		return nil
 	}
+	data = TailJournalBytes(data, MaxJournalReplayBytes)
 	term.VTWrite(data)
 	return nil
 }

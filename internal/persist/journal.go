@@ -80,7 +80,7 @@ func (j *Journal) enforceCapLocked() error {
 		return err
 	}
 	if uint64(len(raw)) > j.maxBytes {
-		raw = raw[len(raw)-int(j.maxBytes):]
+		raw = TailJournalBytes(raw, int(j.maxBytes))
 	}
 	if err := os.WriteFile(j.path, raw, 0o600); err != nil {
 		return err

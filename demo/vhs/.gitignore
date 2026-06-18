@@ -1,4 +1,6 @@
-demo/vhs/daemon.log
+demo/vhs/debug-user.log
+demo/vhs/debug-user-config.gif
+demo/vhs/debug-user-fixed.gif
 demo/vhs/state/
 demo/vhs/draft.txt
 demo/vhs/draft.txt.save

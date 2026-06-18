@@ -47,6 +47,8 @@ type Terminal struct {
 	revision           uint64
 	journalReplayed    bool
 	journalReplayDelay time.Duration
+	replayPending      bool
+	preReplayOut       []byte
 	rowIter            *libghostty.RenderStateRowIterator
 	rowCells           *libghostty.RenderStateRowCells
 }
@@ -152,6 +154,7 @@ func (t *Terminal) Init(ctx context.Context, self actor.Ref[protocol.Command], c
 	t.revision++
 	go readPTY(ctx, self, t, ptyFile)
 	if t.journalNeedsReplay() {
+		t.replayPending = true
 		go t.scheduleJournalReplay(ctx, self)
 	}
 	return t.ScreenChanged()
@@ -187,9 +190,11 @@ func (t *Terminal) ReplayJournalScreen() (protocol.EventPaneScreenChanged, error
 		return protocol.EventPaneScreenChanged{}, err
 	}
 	if t.journalReplayed || t.Journal == nil {
+		t.finishJournalReplay()
 		return t.ScreenChanged()
 	}
 	if err := persist.ReplayJournal(t.VT, t.Journal.Path()); err != nil {
+		t.finishJournalReplay()
 		if os.IsNotExist(err) {
 			return t.ScreenChanged()
 		}
@@ -197,7 +202,23 @@ func (t *Terminal) ReplayJournalScreen() (protocol.EventPaneScreenChanged, error
 	}
 	t.journalReplayed = true
 	t.revision++
-	return t.ScreenChanged()
+	event, err := t.ScreenChanged()
+	t.finishJournalReplay()
+	return event, err
+}
+
+func (t *Terminal) finishJournalReplay() {
+	if !t.replayPending {
+		return
+	}
+	t.replayPending = false
+	if len(t.preReplayOut) == 0 || t.VT == nil {
+		t.preReplayOut = nil
+		return
+	}
+	t.VT.VTWrite(t.preReplayOut)
+	t.preReplayOut = nil
+	t.revision++
 }
 
 func readPTY(ctx context.Context, self actor.Ref[protocol.Command], term *Terminal, ptyFile *os.File) {
@@ -237,6 +258,10 @@ func (t *Terminal) FeedOutput(chunk []byte) (protocol.EventPaneScreenChanged, bo
 		return protocol.EventPaneScreenChanged{}, false, err
 	}
 	if len(chunk) == 0 {
+		return protocol.EventPaneScreenChanged{}, false, nil
+	}
+	if t.replayPending && !t.journalReplayed {
+		t.preReplayOut = append(t.preReplayOut, chunk...)
 		return protocol.EventPaneScreenChanged{}, false, nil
 	}
 	t.VT.VTWrite(chunk)
