@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -30,7 +31,7 @@ type ptyOutput []byte
 // Terminal owns the running terminal state for a pane: shell process, PTY,
 // libghostty VT, render state, dimensions, and screen revision.
 type Terminal struct {
-	ShellPath string
+	ShellPath     string
 	MaxScrollback uint
 
 	VT           *libghostty.Terminal
@@ -41,11 +42,20 @@ type Terminal struct {
 	Shell        *exec.Cmd
 	Journal      *persist.Journal
 
-	cols              uint16
-	rows              uint16
-	revision          uint64
-	journalReplayed   bool
+	cols               uint16
+	rows               uint16
+	revision           uint64
+	journalReplayed    bool
 	journalReplayDelay time.Duration
+	rowIter            *libghostty.RenderStateRowIterator
+	rowCells           *libghostty.RenderStateRowCells
+}
+
+var ptyReadBufferPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 4096)
+		return &buf
+	},
 }
 
 func NewTerminal(policy cfg.Config, windowOrdinal int, paneID protocol.PaneID) *Terminal {
@@ -151,8 +161,11 @@ func (t *Terminal) journalNeedsReplay() bool {
 	if t.Journal == nil {
 		return false
 	}
-	data, err := persist.ReadJournal(t.Journal.Path())
-	return err == nil && len(data) > 0
+	info, err := os.Stat(t.Journal.Path())
+	if err != nil {
+		return false
+	}
+	return info.Size() > 0
 }
 
 func (t *Terminal) scheduleJournalReplay(ctx context.Context, self actor.Ref[protocol.Command]) {
@@ -188,7 +201,9 @@ func (t *Terminal) ReplayJournalScreen() (protocol.EventPaneScreenChanged, error
 }
 
 func readPTY(ctx context.Context, self actor.Ref[protocol.Command], term *Terminal, ptyFile *os.File) {
-	buf := make([]byte, 4096)
+	pooled := ptyReadBufferPool.Get().(*[]byte)
+	buf := *pooled
+	defer ptyReadBufferPool.Put(pooled)
 	for {
 		n, err := ptyFile.Read(buf)
 		if n > 0 {
@@ -547,6 +562,14 @@ func (t *Terminal) Close() {
 		t.RenderState.Close()
 		t.RenderState = nil
 	}
+	if t.rowCells != nil {
+		t.rowCells.Close()
+		t.rowCells = nil
+	}
+	if t.rowIter != nil {
+		t.rowIter.Close()
+		t.rowIter = nil
+	}
 	if t.VT != nil {
 		t.VT.Close()
 		t.VT = nil
@@ -554,17 +577,10 @@ func (t *Terminal) Close() {
 }
 
 func (t *Terminal) screenLines() ([]protocol.EventPaneScreenLine, error) {
-	rowIter, err := libghostty.NewRenderStateRowIterator()
-	if err != nil {
-		return nil, fmt.Errorf("pane: NewRenderStateRowIterator: %w", err)
+	if err := t.ensureScreenIterators(); err != nil {
+		return nil, err
 	}
-	defer rowIter.Close()
-	cells, err := libghostty.NewRenderStateRowCells()
-	if err != nil {
-		return nil, fmt.Errorf("pane: NewRenderStateRowCells: %w", err)
-	}
-	defer cells.Close()
-	if err := t.RenderState.RowIterator(rowIter); err != nil {
+	if err := t.RenderState.RowIterator(t.rowIter); err != nil {
 		return nil, fmt.Errorf("pane: RenderState.RowIterator: %w", err)
 	}
 	// Resolve libghostty's active 256-color palette so we can emit truecolor
@@ -574,14 +590,14 @@ func (t *Terminal) screenLines() ([]protocol.EventPaneScreenLine, error) {
 		palette = nil
 	}
 	lines := make([]protocol.EventPaneScreenLine, 0, int(t.rows))
-	for row := 0; row < int(t.rows) && rowIter.Next(); row++ {
-		if err := rowIter.Cells(cells); err != nil {
+	for row := 0; row < int(t.rows) && t.rowIter.Next(); row++ {
+		if err := t.rowIter.Cells(t.rowCells); err != nil {
 			return nil, fmt.Errorf("pane: RowIterator.Cells: %w", err)
 		}
 		line := protocol.EventPaneScreenLine{Cells: make([]protocol.EventPaneScreenCell, 0, int(t.cols))}
 		var text strings.Builder
-		for col := 0; col < int(t.cols) && cells.Next(); col++ {
-			cell, err := screenCell(cells, palette)
+		for col := 0; col < int(t.cols) && t.rowCells.Next(); col++ {
+			cell, err := screenCell(t.rowCells, palette)
 			if err != nil {
 				return nil, err
 			}
@@ -592,6 +608,24 @@ func (t *Terminal) screenLines() ([]protocol.EventPaneScreenLine, error) {
 		lines = append(lines, line)
 	}
 	return lines, nil
+}
+
+func (t *Terminal) ensureScreenIterators() error {
+	if t.rowIter == nil {
+		iter, err := libghostty.NewRenderStateRowIterator()
+		if err != nil {
+			return fmt.Errorf("pane: NewRenderStateRowIterator: %w", err)
+		}
+		t.rowIter = iter
+	}
+	if t.rowCells == nil {
+		cells, err := libghostty.NewRenderStateRowCells()
+		if err != nil {
+			return fmt.Errorf("pane: NewRenderStateRowCells: %w", err)
+		}
+		t.rowCells = cells
+	}
+	return nil
 }
 
 func screenCell(cells *libghostty.RenderStateRowCells, palette *libghostty.Palette) (protocol.EventPaneScreenCell, error) {

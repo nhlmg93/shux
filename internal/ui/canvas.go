@@ -249,41 +249,55 @@ func (c *runeCanvas) dumpDebug(rendered string) {
 }
 
 func cellANSI(cell protocol.EventPaneScreenCell) string {
-	codes := make([]string, 0, 8)
+	var codes [12]string
+	count := 0
+	appendCode := func(code string) {
+		codes[count] = code
+		count++
+	}
 	if cell.Bold {
-		codes = append(codes, "1")
+		appendCode("1")
 	}
 	if cell.Italic {
-		codes = append(codes, "3")
+		appendCode("3")
 	}
 	if cell.Faint {
-		codes = append(codes, "2")
+		appendCode("2")
 	}
 	if cell.Blink {
-		codes = append(codes, "5")
+		appendCode("5")
 	}
 	if cell.Inverse {
-		codes = append(codes, "7")
+		appendCode("7")
 	}
 	if cell.Invisible {
-		codes = append(codes, "8")
+		appendCode("8")
 	}
 	if cell.Underline {
-		codes = append(codes, "4")
+		appendCode("4")
 	}
 	if cell.Strikethrough {
-		codes = append(codes, "9")
+		appendCode("9")
 	}
 	if fg := colorANSI(cell.Foreground, true); fg != "" {
-		codes = append(codes, fg)
+		appendCode(fg)
 	}
 	if bg := colorANSI(cell.Background, false); bg != "" {
-		codes = append(codes, bg)
+		appendCode(bg)
 	}
-	if len(codes) == 0 {
+	if count == 0 {
 		return ""
 	}
-	return "\x1b[" + strings.Join(codes, ";") + "m"
+	var b strings.Builder
+	b.WriteString("\x1b[")
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		b.WriteString(codes[i])
+	}
+	b.WriteByte('m')
+	return b.String()
 }
 
 func colorANSI(color protocol.EventPaneScreenColor, fg bool) string {
@@ -293,9 +307,23 @@ func colorANSI(color protocol.EventPaneScreenColor, fg bool) string {
 	}
 	switch color.Kind {
 	case "palette":
-		return base + ";5;" + strconv.Itoa(int(color.Index))
+		var b strings.Builder
+		b.Grow(18)
+		b.WriteString(base)
+		b.WriteString(";5;")
+		b.WriteString(strconv.Itoa(int(color.Index)))
+		return b.String()
 	case "rgb":
-		return base + ";2;" + strconv.Itoa(int(color.R)) + ";" + strconv.Itoa(int(color.G)) + ";" + strconv.Itoa(int(color.B))
+		var b strings.Builder
+		b.Grow(32)
+		b.WriteString(base)
+		b.WriteString(";2;")
+		b.WriteString(strconv.Itoa(int(color.R)))
+		b.WriteByte(';')
+		b.WriteString(strconv.Itoa(int(color.G)))
+		b.WriteByte(';')
+		b.WriteString(strconv.Itoa(int(color.B)))
+		return b.String()
 	default:
 		return ""
 	}

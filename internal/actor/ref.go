@@ -38,7 +38,7 @@ func Start[M any](ctx context.Context, run func(context.Context, Ref[M], <-chan 
 	if run == nil {
 		panic("actor: Start: nil run")
 	}
-	inbox := make(chan M)
+	inbox := make(chan M, 32)
 	done := make(chan struct{})
 	ref := Ref[M]{inbox: inbox, done: done}
 
