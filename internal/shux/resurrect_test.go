@@ -343,7 +343,10 @@ func TestResurrection_checkpointPersistsResizedPaneGeometry(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load manifest: ok=%v err=%v", ok, err)
 	}
-	layout := manifest.Layouts["w-1"]
+	if len(manifest.Sessions) == 0 {
+		t.Fatal("manifest missing sessions")
+	}
+	layout := manifest.Sessions[0].Layouts["w-1"]
 	if len(layout.Panes) != 2 {
 		t.Fatalf("manifest panes = %d, want 2", len(layout.Panes))
 	}
