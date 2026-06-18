@@ -240,7 +240,7 @@ func validateSize(name string, cols, rows uint16) error {
 
 // RouteSessionID returns the SessionID a command should be forwarded to.
 // Reports false for commands that the supervisor handles directly (CommandNoop,
-// CommandCreateSession) or for unknown types.
+// CommandCreateSession, CommandListSessions) or for unknown types.
 func RouteSessionID(cmd Command) (SessionID, bool) {
 	switch c := cmd.(type) {
 	case CommandCreateWindow:
