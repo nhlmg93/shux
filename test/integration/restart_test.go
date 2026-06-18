@@ -11,15 +11,12 @@ import (
 	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/shux"
+	"shux/test/testutil"
 )
 
 func TestDaemon_gracefulRestartReplacesBackend(t *testing.T) {
 	dir := t.TempDir()
-	cfg := shux.DefaultConfig()
-	cfg.StateDir = dir
-	cfg.Resurrection = true
-	cfg.ShellPath = "/bin/true"
-	cfg.JournalReplayDelay = 0
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 
 	layout := persist.LayoutSnapshot{
 		WindowID: "w-1",

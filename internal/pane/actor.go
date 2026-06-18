@@ -23,11 +23,7 @@ type Actor struct {
 // NewActor returns a pane actor. Terminal is initialized with dimensions by
 // CommandPaneInit.
 func NewActor() *Actor {
-	return NewActorWithConfig(nil, "", "", "", "/bin/sh")
-}
-
-func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, windowID, 1, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
+	return NewActorWithPolicy(nil, "", "", 1, "", cfg.Config{ShellPath: "/bin/sh"}.WithDefaults())
 }
 
 func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, paneID protocol.PaneID, policy cfg.Config) *Actor {
@@ -140,10 +136,6 @@ func (a *Actor) Run(ctx context.Context, self actor.Ref[protocol.Command], inbox
 
 func Start(ctx context.Context) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor().Run)
-}
-
-func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, windowID, 1, paneID, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
 func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, paneID protocol.PaneID, policy cfg.Config) actor.Ref[protocol.Command] {

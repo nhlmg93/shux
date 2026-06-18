@@ -20,19 +20,15 @@ type Actor struct {
 	WindowID      protocol.WindowID
 	WindowOrdinal int
 	Policy        cfg.Config
-	Layout    Layout
-	paneIDs   []protocol.PaneID
-	hub       actor.EventRef
-	seq       uint64
-	revision  uint64
+	Layout        Layout
+	paneIDs       []protocol.PaneID
+	hub           actor.EventRef
+	seq           uint64
+	revision      uint64
 }
 
 func NewActor(hub actor.EventRef) *Actor {
 	return NewActorWithPolicy(hub, "", "", 1, cfg.DefaultConfig())
-}
-
-func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, windowID, 1, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
 func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) *Actor {
@@ -275,10 +271,6 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 // StartWithHub is [Start] with optional hub; lifecycle events are best-effort when hub is non-nil.
 func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
-}
-
-func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, windowID, 1, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
 func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, windowID protocol.WindowID, windowOrdinal int, policy cfg.Config) actor.Ref[protocol.Command] {

@@ -10,17 +10,8 @@ import (
 	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/shux"
+	"shux/test/testutil"
 )
-
-func fastResurrectionConfig(t *testing.T, dir string) shux.Config {
-	t.Helper()
-	cfg := shux.DefaultConfig()
-	cfg.ShellPath = "/bin/true"
-	cfg.StateDir = dir
-	cfg.Resurrection = true
-	cfg.JournalReplayDelay = 0
-	return cfg
-}
 
 var fourPaneLayout = persist.LayoutSnapshot{
 	WindowID: "w-1",
@@ -36,7 +27,7 @@ var fourPaneLayout = persist.LayoutSnapshot{
 
 func TestRestoreFromManifest_fourPaneLayout(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 
 	m := persist.BuildManifest(
 		protocol.SessionID("s-1"),
@@ -60,14 +51,14 @@ func TestRestoreFromManifest_fourPaneLayout(t *testing.T) {
 	if err := app.RestoreFromCheckpoint(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !app.WaitLayoutPanes(app.DefaultSessionID, app.DefaultWindowID, 4, 500*time.Millisecond) {
+	if !app.WaitLayoutPanes(app.DefaultSessionID, app.DefaultWindowID, 4, testutil.TestWaitTimeout) {
 		t.Fatal("restored window missing four panes")
 	}
 }
 
 func TestRestoreFromManifest_twoWindows(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 
 	singlePane := func(wid string) persist.LayoutSnapshot {
 		return persist.LayoutSnapshot{
@@ -109,7 +100,7 @@ func TestRestoreFromManifest_twoWindows(t *testing.T) {
 
 func TestResurrection_journalReplayOnRestore(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 	marker := "SHUX_L2_MARKER"
 
 	layout := persist.LayoutSnapshot{
@@ -151,14 +142,14 @@ func TestResurrection_journalReplayOnRestore(t *testing.T) {
 	if err := app.RestoreFromCheckpoint(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !app.WaitPaneScreen(app.DefaultSessionID, app.DefaultWindowID, "p-1", marker, 500*time.Millisecond) {
+	if !app.WaitPaneScreen(app.DefaultSessionID, app.DefaultWindowID, "p-1", marker, testutil.TestWaitTimeout) {
 		t.Fatalf("restored pane missing journal marker %q", marker)
 	}
 }
 
 func TestResurrection_eventDrivenCheckpoint(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -174,7 +165,8 @@ func TestResurrection_eventDrivenCheckpoint(t *testing.T) {
 
 	ref := app.TestSupervisor()
 	sid, wid := app.DefaultSessionID, app.DefaultWindowID
-	splitPane(t, ctx, ref, sid, wid, "p-1", protocol.SplitVertical)
+	var splitReq protocol.RequestID
+	testutil.SendSplit(t, ctx, ref, &splitReq, "resurrect-test", sid, wid, "p-1", protocol.SplitVertical)
 
 	time.Sleep(200 * time.Millisecond)
 	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); err != nil {
@@ -184,7 +176,7 @@ func TestResurrection_eventDrivenCheckpoint(t *testing.T) {
 
 func TestResurrection_liveJournalReplayRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 	cfg.ShellPath = "/bin/sh"
 	marker := "SHUX_LIVE_MARKER"
 
@@ -201,8 +193,8 @@ func TestResurrection_liveJournalReplayRoundtrip(t *testing.T) {
 
 	ref := app1.TestSupervisor()
 	sid, wid, pid := app1.DefaultSessionID, app1.DefaultWindowID, app1.DefaultPaneID
-	pastePane(t, ctx, ref, sid, wid, pid, marker+"\n")
-	if !app1.WaitPaneScreen(sid, wid, pid, marker, 500*time.Millisecond) {
+	testutil.SendPaste(t, ctx, ref, sid, wid, pid, marker+"\n")
+	if !app1.WaitPaneScreen(sid, wid, pid, marker, testutil.TestWaitTimeout) {
 		t.Fatal("live pane missing marker before checkpoint")
 	}
 	if err := app1.Close(); err != nil {
@@ -217,14 +209,14 @@ func TestResurrection_liveJournalReplayRoundtrip(t *testing.T) {
 	if err := app2.BootstrapDefaultSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !app2.WaitPaneScreen(app2.DefaultSessionID, app2.DefaultWindowID, pid, marker, 500*time.Millisecond) {
+	if !app2.WaitPaneScreen(app2.DefaultSessionID, app2.DefaultWindowID, pid, marker, testutil.TestWaitTimeout) {
 		t.Fatal("restored pane missing live journal marker")
 	}
 }
 
 func TestResurrection_checkpointLayoutRoundtrip(t *testing.T) {
 	dir := t.TempDir()
-	cfg := fastResurrectionConfig(t, dir)
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
@@ -239,10 +231,11 @@ func TestResurrection_checkpointLayoutRoundtrip(t *testing.T) {
 
 	ref := app1.TestSupervisor()
 	sid, wid := app1.DefaultSessionID, app1.DefaultWindowID
-	splitPane(t, ctx, ref, sid, wid, "p-1", protocol.SplitVertical)
-	splitPane(t, ctx, ref, sid, wid, "p-1", protocol.SplitHorizontal)
-	splitPane(t, ctx, ref, sid, wid, "p-2", protocol.SplitHorizontal)
-	if !app1.WaitLayoutPanes(sid, wid, 4, 500*time.Millisecond) {
+	var splitReq protocol.RequestID
+	testutil.SendSplit(t, ctx, ref, &splitReq, "resurrect-test", sid, wid, "p-1", protocol.SplitVertical)
+	testutil.SendSplit(t, ctx, ref, &splitReq, "resurrect-test", sid, wid, "p-1", protocol.SplitHorizontal)
+	testutil.SendSplit(t, ctx, ref, &splitReq, "resurrect-test", sid, wid, "p-2", protocol.SplitHorizontal)
+	if !app1.WaitLayoutPanes(sid, wid, 4, testutil.TestWaitTimeout) {
 		t.Fatal("live layout never reached four panes")
 	}
 
@@ -258,39 +251,7 @@ func TestResurrection_checkpointLayoutRoundtrip(t *testing.T) {
 	if err := app2.BootstrapDefaultSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !app2.WaitLayoutPanes(app2.DefaultSessionID, app2.DefaultWindowID, 4, 500*time.Millisecond) {
+	if !app2.WaitLayoutPanes(app2.DefaultSessionID, app2.DefaultWindowID, 4, testutil.TestWaitTimeout) {
 		t.Fatal("restored layout missing four panes")
-	}
-}
-
-var testSplitReq protocol.RequestID
-
-func splitPane(t *testing.T, ctx context.Context, ref interface {
-	Send(context.Context, protocol.Command) error
-}, sid protocol.SessionID, wid protocol.WindowID, target protocol.PaneID, dir protocol.SplitDirection) {
-	t.Helper()
-	testSplitReq++
-	if err := ref.Send(ctx, protocol.CommandPaneSplit{
-		Meta:         protocol.CommandMeta{ClientID: "resurrect-test", RequestID: testSplitReq},
-		SessionID:    sid,
-		WindowID:     wid,
-		TargetPaneID: target,
-		Direction:    dir,
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func pastePane(t *testing.T, ctx context.Context, ref interface {
-	Send(context.Context, protocol.Command) error
-}, sid protocol.SessionID, wid protocol.WindowID, pid protocol.PaneID, data string) {
-	t.Helper()
-	if err := ref.Send(ctx, protocol.CommandPanePaste{
-		SessionID: sid,
-		WindowID:  wid,
-		PaneID:    pid,
-		Data:      []byte(data),
-	}); err != nil {
-		t.Fatal(err)
 	}
 }

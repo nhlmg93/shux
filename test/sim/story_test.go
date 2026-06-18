@@ -1,23 +1,22 @@
 package sim
 
 import (
+	"bytes"
 	"context"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/shux"
+	"shux/test/testutil"
 )
 
-// TestSim_fourPaneDailyDriverResurrection is the AGENTS.md user story at sim scope:
-// four panes running distinct commands, checkpoint on shutdown, new daemon restores
-// layout and replays live PTY journals (not pre-seeded files).
+// TestSim_fourPaneDailyDriverResurrection exercises live PTY journals (not pre-seeded files).
 func TestSim_fourPaneDailyDriverResurrection(t *testing.T) {
 	dir := t.TempDir()
-	cfg := simResurrectionConfig(dir)
+	cfg := simPolicy(dir, true)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -49,7 +48,7 @@ func TestSim_fourPaneDailyDriverResurrection(t *testing.T) {
 		if err != nil {
 			t.Fatalf("journal %s: %v", pid, err)
 		}
-		if !strings.Contains(string(data), marker) {
+		if !bytes.Contains(data, []byte(marker)) {
 			t.Fatalf("journal %s missing live PTY marker %q: %q", pid, marker, data)
 		}
 	}
@@ -66,8 +65,15 @@ func TestSim_fourPaneDailyDriverResurrection(t *testing.T) {
 	if err := app2.BootstrapDefaultSession(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !app2.WaitLayoutPanes(app2.DefaultSessionID, app2.DefaultWindowID, 4, 500*time.Millisecond) {
+	if app2.DefaultSessionID != sid || app2.DefaultWindowID != wid {
+		t.Fatalf("restored ids = %q %q, want %q %q", app2.DefaultSessionID, app2.DefaultWindowID, sid, wid)
+	}
+	if !app2.WaitLayoutPanes(sid, wid, 4, testutil.TestWaitTimeout) {
 		t.Fatal("restored layout missing four panes")
 	}
-	assertPaneMarkers(t, app2, app2.DefaultSessionID, app2.DefaultWindowID, markers)
+	for pid, marker := range markers {
+		if !app2.WaitPaneScreen(sid, wid, pid, marker, testutil.TestWaitTimeout) {
+			t.Fatalf("restored pane %s missing marker %q", pid, marker)
+		}
+	}
 }

@@ -28,10 +28,6 @@ func NewActor(hub actor.EventRef) *Actor {
 	return NewActorWithPolicy(hub, "", cfg.DefaultConfig())
 }
 
-func NewActorWithConfig(hub actor.EventRef, sessionID protocol.SessionID, shellPath string) *Actor {
-	return NewActorWithPolicy(hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
-}
-
 func NewActorWithPolicy(hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) *Actor {
 	if hub != nil && !hub.Valid() {
 		panic("session: NewActor: invalid hub ref")
@@ -114,10 +110,6 @@ func Start(ctx context.Context) actor.Ref[protocol.Command] {
 // StartWithHub is [Start] with optional hub; lifecycle events are best-effort when hub is non-nil.
 func StartWithHub(ctx context.Context, hub actor.EventRef) actor.Ref[protocol.Command] {
 	return actor.Start[protocol.Command](ctx, NewActor(hub).Run)
-}
-
-func StartWithConfig(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, shellPath string) actor.Ref[protocol.Command] {
-	return StartWithPolicy(ctx, hub, sessionID, cfg.Config{ShellPath: shellPath}.WithDefaults())
 }
 
 func StartWithPolicy(ctx context.Context, hub actor.EventRef, sessionID protocol.SessionID, policy cfg.Config) actor.Ref[protocol.Command] {
