@@ -9,6 +9,7 @@ import (
 const (
 	MaxPaneInputTextBytes = 4096
 	MaxPanePasteBytes     = 65536
+	MaxEntityNameBytes    = 256
 )
 
 type Command any
@@ -52,6 +53,11 @@ func ValidateCommand(cmd Command) error {
 			return err
 		}
 		return validateSize("CommandWindowResize", c.Cols, c.Rows)
+	case CommandWindowRename:
+		if err := validateWindowTarget("CommandWindowRename", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		return validateName("CommandWindowRename", c.Name)
 	case CommandWindowClosed:
 		return validateWindowTarget("CommandWindowClosed", c.SessionID, c.WindowID)
 	case CommandPaneKey:
@@ -106,6 +112,11 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneScroll: delta out of range")
 		}
 		return nil
+	case CommandPaneRename:
+		if err := validatePaneTarget("CommandPaneRename", c.SessionID, c.WindowID, c.PaneID); err != nil {
+			return err
+		}
+		return validateName("CommandPaneRename", c.Name)
 	case CommandPaneSplit:
 		if !c.Meta.Valid() {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Meta")
@@ -249,6 +260,13 @@ func validateSize(name string, cols, rows uint16) error {
 	return nil
 }
 
+func validateName(name, value string) error {
+	if len(value) > MaxEntityNameBytes {
+		return fmt.Errorf("protocol: %s: name too large", name)
+	}
+	return nil
+}
+
 // RouteSessionID returns the SessionID a command should be forwarded to.
 // Reports false for commands that the supervisor handles directly (CommandNoop,
 // CommandCreateSession, CommandListSessions) or for unknown types.
@@ -261,6 +279,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 	case CommandCreatePane:
 		return c.SessionID, true
 	case CommandWindowResize:
+		return c.SessionID, true
+	case CommandWindowRename:
 		return c.SessionID, true
 	case CommandPaneSplit:
 		return c.SessionID, true
@@ -287,6 +307,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 	case CommandPanePaste:
 		return c.SessionID, true
 	case CommandPaneScroll:
+		return c.SessionID, true
+	case CommandPaneRename:
 		return c.SessionID, true
 	}
 	return "", false
@@ -343,6 +365,10 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandPanePaste:
 		return c.WindowID, true
 	case CommandPaneScroll:
+		return c.WindowID, true
+	case CommandPaneRename:
+		return c.WindowID, true
+	case CommandWindowRename:
 		return c.WindowID, true
 	}
 	return "", false
@@ -503,6 +529,13 @@ type CommandWindowResize struct {
 	Rows      uint16
 }
 
+// CommandWindowRename sets a user-visible window name.
+type CommandWindowRename struct {
+	SessionID SessionID
+	WindowID  WindowID
+	Name      string
+}
+
 // CommandWindowClosed notifies the session that a window is gone and should be
 // removed from session-level window bookkeeping.
 type CommandWindowClosed struct {
@@ -621,6 +654,14 @@ type CommandPaneScroll struct {
 	WindowID  WindowID
 	PaneID    PaneID
 	Delta     int
+}
+
+// CommandPaneRename sets a user-visible pane name.
+type CommandPaneRename struct {
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Name      string
 }
 
 // CommandPaneSplit requests splitting an explicit target pane. Client-originated

@@ -48,6 +48,8 @@ const (
 	ActionSelectWindow9   = cfg.ActionSelectWindow9
 	ActionSelectWindow10  = cfg.ActionSelectWindow10
 	ActionListKeymaps     = cfg.ActionListKeymaps
+	ActionRenameWindow    = cfg.ActionRenameWindow
+	ActionRenamePane      = cfg.ActionRenamePane
 	ActionCopyModeToggle  = cfg.ActionCopyModeToggle
 	ActionPasteRegister   = cfg.ActionPasteRegister
 
@@ -85,7 +87,9 @@ const (
 	EventClientDetached      = cfg.EventClientDetached
 	EventPaneCreated         = cfg.EventPaneCreated
 	EventPaneClosed          = cfg.EventPaneClosed
+	EventPaneRenamed         = cfg.EventPaneRenamed
 	EventWindowCreated       = cfg.EventWindowCreated
+	EventWindowRenamed       = cfg.EventWindowRenamed
 	EventWindowClosed        = cfg.EventWindowClosed
 	EventWindowLayoutChanged = cfg.EventWindowLayoutChanged
 )

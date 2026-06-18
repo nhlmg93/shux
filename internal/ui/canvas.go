@@ -54,7 +54,7 @@ func newRuneCanvas(cols, rows int) *runeCanvas {
 	return &runeCanvas{cols: cols, rows: rows, buf: buf, ansi: ansi}
 }
 
-func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, quickSelectLabel string, screen protocol.EventPaneScreenChanged, overlay paneSearchOverlay) {
+func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, label string, active bool, quickSelectLabel string, screen protocol.EventPaneScreenChanged, overlay paneSearchOverlay) {
 	lines := screen.Lines
 	x, y := p.Col, p.Row
 	w, h := p.Cols, p.Rows
@@ -90,7 +90,7 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, quickSel
 		for col := x; col < x+w; col++ {
 			c.set(col, y, horiz)
 		}
-		c.drawText(x, y, labelForPane(p))
+		c.drawText(x, y, label)
 		if quickSelectLabel != "" {
 			c.drawText(x+1, y, quickSelectLabel)
 		}
@@ -115,7 +115,7 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, quickSel
 		c.set(x, row, vert)
 		c.set(x+w-1, row, vert)
 	}
-	c.drawText(x+1, y, labelForPane(p))
+	c.drawText(x+1, y, label)
 	c.drawPaneContent(x+1, y+1, w-2, h-2, lines, overlay)
 	if quickSelectLabel != "" {
 		c.drawText(x+2, y+1, quickSelectLabel)
@@ -148,8 +148,12 @@ func (c *runeCanvas) drawPaneContent(x, y, w, h int, lines []protocol.EventPaneS
 	}
 }
 
-func labelForPane(p LayoutPane) string {
-	return string(p.PaneID) + " " + strconv.Itoa(p.Cols) + "x" + strconv.Itoa(p.Rows) + " @" + strconv.Itoa(p.Col) + "," + strconv.Itoa(p.Row)
+func labelForPane(id protocol.PaneID, name string, p LayoutPane) string {
+	prefix := string(id)
+	if name != "" {
+		prefix = name + " [" + string(id) + "]"
+	}
+	return prefix + " " + strconv.Itoa(p.Cols) + "x" + strconv.Itoa(p.Rows) + " @" + strconv.Itoa(p.Col) + "," + strconv.Itoa(p.Row)
 }
 
 func (c *runeCanvas) drawText(x, y int, s string) {

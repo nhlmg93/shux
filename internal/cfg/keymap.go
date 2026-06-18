@@ -36,6 +36,8 @@ const (
 	ActionSelectWindow9   BuiltinKeyAction = "select_window_9"
 	ActionSelectWindow10  BuiltinKeyAction = "select_window_10"
 	ActionListKeymaps     BuiltinKeyAction = "list_keymaps"
+	ActionRenameWindow    BuiltinKeyAction = "rename_window"
+	ActionRenamePane      BuiltinKeyAction = "rename_pane"
 	ActionCopyModeToggle  BuiltinKeyAction = "copy_mode_toggle"
 	ActionPasteRegister   BuiltinKeyAction = "paste_register"
 
@@ -159,6 +161,8 @@ func DefaultKeymaps() *Keymaps {
 	setPrefix("8", ActionSelectWindow8, "Select window 8")
 	setPrefix("9", ActionSelectWindow9, "Select window 9")
 	setPrefix("0", ActionSelectWindow10, "Select window 10")
+	setPrefix(",", ActionRenameWindow, "Rename active window")
+	setPrefix(".", ActionRenamePane, "Rename active pane")
 	setPrefix("?", ActionListKeymaps, "List key bindings")
 	setPrefix("[", ActionCopyModeToggle, "Enter/exit copy mode")
 	setPrefix("]", ActionPasteRegister, "Paste copy register")

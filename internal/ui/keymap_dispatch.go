@@ -133,6 +133,10 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 			PaneID:    m.ActivePaneID,
 			Data:      []byte(m.CopyRegister),
 		})
+	case cfg.ActionRenameWindow:
+		return m.startWindowRename()
+	case cfg.ActionRenamePane:
+		return m.startPaneRename()
 	default:
 		return m, nil
 	}

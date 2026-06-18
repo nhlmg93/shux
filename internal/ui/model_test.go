@@ -298,3 +298,28 @@ func TestDispatchBuiltinPasteRegisterSendsPanePaste(t *testing.T) {
 		t.Fatal("timed out waiting for pane paste command")
 	}
 }
+
+func TestPaneRenameUpdatesPaneLabel(t *testing.T) {
+	m := NewModel(ModelConfig{
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	})
+	m = m.WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 80,
+		WindowRows: 24,
+		Panes:      []LayoutPane{{PaneID: "p-1", Col: 0, Row: 0, Cols: 80, Rows: 24}},
+	})
+	updated, _ := m.Update(HubEvent{E: protocol.EventPaneRenamed{
+		SessionID: "s-1",
+		WindowID:  "w-1",
+		PaneID:    "p-1",
+		Name:      "logs",
+	}})
+	view := updated.(Model).View().Content
+	if !strings.Contains(view, "logs [p-1]") {
+		t.Fatalf("expected renamed pane label in view, got %q", view)
+	}
+}

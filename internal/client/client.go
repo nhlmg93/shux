@@ -500,6 +500,29 @@ func WaitReady(ctx context.Context, addr string, timeout time.Duration) error {
 	}
 }
 
+func RunControlCommand(ctx context.Context, addr string, argv ...string) (string, error) {
+	if len(argv) == 0 {
+		return "", fmt.Errorf("client: empty control command")
+	}
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return "", err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	out, err := sess.CombinedOutput(strings.Join(argv, " "))
+	if err != nil {
+		return "", fmt.Errorf("client: %s: %w: %s", argv[0], err, out)
+	}
+	return string(out), nil
+}
+
 func dialTrusted(ctx context.Context, addr string) (*ssh.Client, error) {
 	hostKeyPath, err := sshkey.HostKeyPath()
 	if err != nil {

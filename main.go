@@ -96,6 +96,24 @@ var displayMessageCmd = &cobra.Command{
 	},
 }
 
+var renameWindowCmd = &cobra.Command{
+	Use:   "rename-window <name>",
+	Short: "Rename active window",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRenameWindow(cmd.Context(), args[0])
+	},
+}
+
+var renamePaneCmd = &cobra.Command{
+	Use:   "rename-pane <name>",
+	Short: "Rename active pane",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runRenamePane(cmd.Context(), args[0])
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&bashShell, "bash", false, "use /bin/bash for panes when spawning a new daemon; ignored when attaching to an existing daemon")
 	listWindowsCmd.Flags().BoolVar(&listWindowsJSON, "json", false, "print machine-readable JSON")
@@ -105,7 +123,7 @@ func init() {
 	attachCmd.Flags().StringVarP(&attachTarget, "target", "t", "", "attach to named session")
 	newSessionCmd.Flags().StringVarP(&sessionName, "session", "s", "", "session name")
 	_ = newSessionCmd.MarkFlagRequired("session")
-	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, newSessionCmd, listSessionsCmd, listWindowsCmd, listPanesCmd, displayMessageCmd)
+	rootCmd.AddCommand(attachCmd, detachCmd, restartCmd, newSessionCmd, listSessionsCmd, listWindowsCmd, listPanesCmd, displayMessageCmd, renameWindowCmd, renamePaneCmd)
 }
 
 func main() {
@@ -205,6 +223,32 @@ func runDisplayMessage(ctx context.Context, format string, jsonOutput bool) erro
 		return err
 	}
 	return client.DisplayMessage(ctx, addr, format, jsonOutput)
+}
+
+func runRenameWindow(ctx context.Context, name string) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	out, err := client.RunControlCommand(ctx, addr, "rename-window", name)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Print(out)
+	return nil
+}
+
+func runRenamePane(ctx context.Context, name string) error {
+	addr, err := bindAddr()
+	if err != nil {
+		return err
+	}
+	out, err := client.RunControlCommand(ctx, addr, "rename-pane", name)
+	if err != nil {
+		return err
+	}
+	_, _ = fmt.Print(out)
+	return nil
 }
 
 func attachOptions() client.AttachOptions {

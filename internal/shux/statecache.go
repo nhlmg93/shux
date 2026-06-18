@@ -10,12 +10,17 @@ import (
 type (
 	windowLayoutSnapshots map[protocol.WindowID]protocol.EventWindowLayoutChanged
 	paneScreenSnapshots   map[protocol.PaneID]protocol.EventPaneScreenChanged
+	windowNamesByID       map[protocol.WindowID]string
+	paneNamesByID         map[protocol.PaneID]string
 
 	layoutsBySession map[protocol.SessionID]windowLayoutSnapshots
 	screensByWindow  map[protocol.WindowID]paneScreenSnapshots
 	screensBySession map[protocol.SessionID]screensByWindow
 	windowsBySession map[protocol.SessionID][]protocol.WindowID
 	namesBySession   map[protocol.SessionID]string
+	windowNames      map[protocol.SessionID]windowNamesByID
+	paneNamesByWin   map[protocol.WindowID]paneNamesByID
+	paneNames        map[protocol.SessionID]paneNamesByWin
 )
 
 // stateCache subscribes to hub events and holds the latest layout and screen
@@ -27,6 +32,8 @@ type stateCache struct {
 	screens screensBySession
 	windows windowsBySession
 	names   namesBySession
+	wNames  windowNames
+	pNames  paneNames
 }
 
 func newStateCache() *stateCache {
@@ -35,6 +42,8 @@ func newStateCache() *stateCache {
 		screens: make(screensBySession),
 		windows: make(windowsBySession),
 		names:   make(namesBySession),
+		wNames:  make(windowNames),
+		pNames:  make(paneNames),
 	}
 }
 
@@ -68,6 +77,13 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 				}
 			}
 		}
+	case protocol.EventWindowRenamed:
+		windows := c.wNames[event.SessionID]
+		if windows == nil {
+			windows = make(windowNamesByID)
+			c.wNames[event.SessionID] = windows
+		}
+		windows[event.WindowID] = event.Name
 	case protocol.EventPaneScreenChanged:
 		windows := c.screens[event.SessionID]
 		if windows == nil {
@@ -80,6 +96,24 @@ func (c *stateCache) DeliverEvent(_ context.Context, e protocol.Event) error {
 			windows[event.WindowID] = panes
 		}
 		panes[event.PaneID] = event
+	case protocol.EventPaneRenamed:
+		windows := c.pNames[event.SessionID]
+		if windows == nil {
+			windows = make(paneNamesByWin)
+			c.pNames[event.SessionID] = windows
+		}
+		panes := windows[event.WindowID]
+		if panes == nil {
+			panes = make(paneNamesByID)
+			windows[event.WindowID] = panes
+		}
+		panes[event.PaneID] = event.Name
+	case protocol.EventPaneClosed:
+		for _, windows := range c.pNames {
+			if panes := windows[event.WindowID]; panes != nil {
+				delete(panes, event.PaneID)
+			}
+		}
 	}
 	return nil
 }
@@ -95,8 +129,14 @@ func (c *stateCache) removeWindow(sessionID protocol.SessionID, windowID protoco
 	if layouts := c.layouts[sessionID]; layouts != nil {
 		delete(layouts, windowID)
 	}
+	if names := c.wNames[sessionID]; names != nil {
+		delete(names, windowID)
+	}
 	if screens := c.screens[sessionID]; screens != nil {
 		delete(screens, windowID)
+	}
+	if panes := c.pNames[sessionID]; panes != nil {
+		delete(panes, windowID)
 	}
 }
 
@@ -140,4 +180,32 @@ func (c *stateCache) SessionName(sessionID protocol.SessionID) (string, bool) {
 	defer c.mu.Unlock()
 	name, ok := c.names[sessionID]
 	return name, ok
+}
+
+func (c *stateCache) WindowNames(sessionID protocol.SessionID) map[protocol.WindowID]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[protocol.WindowID]string)
+	for wid, name := range c.wNames[sessionID] {
+		out[wid] = name
+	}
+	return out
+}
+
+func (c *stateCache) PaneNames(sessionID protocol.SessionID, windowID protocol.WindowID) map[protocol.PaneID]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	windows := c.pNames[sessionID]
+	if windows == nil {
+		return nil
+	}
+	panes := windows[windowID]
+	if panes == nil {
+		return nil
+	}
+	out := make(map[protocol.PaneID]string)
+	for pid, name := range panes {
+		out[pid] = name
+	}
+	return out
 }

@@ -227,9 +227,15 @@ func (a *Shux) NewClientProgramForSession(ctx context.Context, clientID protocol
 		PaneQuickSelectTimeout: a.Config.PaneQuickSelectTimeout,
 	})
 	model = model.WithWindowIDs(windowIDs)
+	for wid, name := range a.cache.WindowNames(sessionID) {
+		model.WindowNames[wid] = name
+	}
 	for _, windowID := range windowIDs {
 		if layout, ok := a.cache.LayoutSnapshot(sessionID, windowID); ok {
 			model = model.WithLayoutSnapshot(ui.LayoutSnapshotFromEvent(layout))
+		}
+		if panes := a.cache.PaneNames(sessionID, windowID); panes != nil {
+			model.PaneNames[windowID] = panes
 		}
 		for _, screen := range a.cache.ScreenSnapshots(sessionID, windowID) {
 			model = model.WithPaneScreen(screen)

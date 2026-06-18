@@ -47,6 +47,88 @@ func TestDaemon_gracefulRestartReplacesBackend(t *testing.T) {
 	attachAndDetach(t, addr)
 }
 
+func TestResurrectionCheckpoint_persistsWindowAndPaneNames(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app.TestSupervisor()
+	sid, wid, pid := app.DefaultSessionID, app.DefaultWindowID, app.DefaultPaneID
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowRename{
+		SessionID: sid,
+		WindowID:  wid,
+		Name:      "workspace",
+	})
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneRename{
+		SessionID: sid,
+		WindowID:  wid,
+		PaneID:    pid,
+		Name:      "shell",
+	})
+
+	deadline := time.Now().Add(testutil.TestWaitTimeout)
+	for time.Now().Before(deadline) {
+		m, ok, err := persist.LoadManifest(dir)
+		if err == nil && ok && len(m.Sessions) > 0 &&
+			m.Sessions[0].WindowNames[string(wid)] == "workspace" &&
+			m.Sessions[0].PaneNames[persist.PaneNameMapKey(wid, pid)] == "shell" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("checkpoint manifest missing renamed window/pane names")
+}
+
+func TestResurrection_windowAndPaneNamesSurviveRestart(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app1, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app1.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ref := app1.TestSupervisor()
+	sid, wid, pid := app1.DefaultSessionID, app1.DefaultWindowID, app1.DefaultPaneID
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowRename{SessionID: sid, WindowID: wid, Name: "editor"})
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneRename{SessionID: sid, WindowID: wid, PaneID: pid, Name: "logs"})
+	time.Sleep(200 * time.Millisecond)
+	if err := app1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app2, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app2.Close()
+	if err := app2.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app2.WindowName(app2.DefaultSessionID, app2.DefaultWindowID); got != "editor" {
+		t.Fatalf("window name = %q, want %q", got, "editor")
+	}
+	if got, _ := app2.PaneName(app2.DefaultSessionID, app2.DefaultWindowID, app2.DefaultPaneID); got != "logs" {
+		t.Fatalf("pane name = %q, want %q", got, "logs")
+	}
+}
+
 func startTestDaemonWithConfig(t *testing.T, cfg shux.Config) (string, func()) {
 	t.Helper()
 	addr := freeLoopbackAddr(t)

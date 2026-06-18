@@ -36,12 +36,15 @@ func (a *Shux) checkpoint() {
 			continue
 		}
 		layouts := make(map[string]persist.LayoutSnapshot, len(windows))
+		windowNames := a.cache.WindowNames(session.SessionID)
+		paneNames := make(map[protocol.WindowID]map[protocol.PaneID]string, len(windows))
 		for _, wid := range windows {
 			if lay, ok := a.cache.LayoutSnapshot(session.SessionID, wid); ok {
 				layouts[string(wid)] = persist.LayoutFromEvent(lay)
 			}
+			paneNames[wid] = a.cache.PaneNames(session.SessionID, wid)
 		}
-		snapshots = append(snapshots, persist.BuildSessionManifest(session.Name, a.Config.StateDir, windows, layouts))
+		snapshots = append(snapshots, persist.BuildSessionManifest(session.Name, a.Config.StateDir, windows, layouts, windowNames, paneNames))
 	}
 	if len(snapshots) == 0 {
 		return
@@ -121,18 +124,67 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 		if err != nil {
 			return fmt.Errorf("restore session %q: %w", saved.Name, err)
 		}
+		windowIDMap := make(map[protocol.WindowID]protocol.WindowID, len(saved.WindowIDs))
+		paneIDMap := make(map[protocol.WindowID]map[protocol.PaneID]protocol.PaneID, len(saved.WindowIDs))
 		for _, wid := range saved.WindowIDs {
 			layout, ok := saved.Layouts[string(wid)]
 			if !ok || len(layout.Panes) == 0 {
 				return fmt.Errorf("restore session %q window %s: missing layout", saved.Name, wid)
 			}
-			windowID, paneID, err := a.restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
+			windowID, paneID, paneMap, err := a.restoreWindow(ctx, a.supervisor, events, session.SessionID, layout)
 			if err != nil {
 				return fmt.Errorf("restore session %q window %s: %w", saved.Name, wid, err)
 			}
+			windowIDMap[wid] = windowID
+			paneIDMap[wid] = paneMap
 			if _, ok := sessionWindows[saved.Name]; !ok {
 				sessionWindows[saved.Name] = windowID
 				sessionPanes[saved.Name] = paneID
+			}
+		}
+		for oldWindowID, newWindowID := range windowIDMap {
+			if name, ok := saved.WindowNames[string(oldWindowID)]; ok {
+				if err := a.supervisor.Send(ctx, protocol.CommandWindowRename{
+					SessionID: session.SessionID,
+					WindowID:  newWindowID,
+					Name:      name,
+				}); err != nil {
+					return fmt.Errorf("restore session %q window name %s: %w", saved.Name, oldWindowID, err)
+				}
+				if err := waitWindowRenamed(ctx, events, session.SessionID, newWindowID, name); err != nil {
+					return fmt.Errorf("restore session %q window name %s: %w", saved.Name, oldWindowID, err)
+				}
+				_ = a.cache.DeliverEvent(ctx, protocol.EventWindowRenamed{
+					SessionID: session.SessionID,
+					WindowID:  newWindowID,
+					Name:      name,
+				})
+			}
+		}
+		for oldWindowID, panes := range paneIDMap {
+			newWindowID := windowIDMap[oldWindowID]
+			for oldPaneID, newPaneID := range panes {
+				name, ok := saved.PaneNames[persist.PaneNameMapKey(oldWindowID, oldPaneID)]
+				if !ok {
+					continue
+				}
+				if err := a.supervisor.Send(ctx, protocol.CommandPaneRename{
+					SessionID: session.SessionID,
+					WindowID:  newWindowID,
+					PaneID:    newPaneID,
+					Name:      name,
+				}); err != nil {
+					return fmt.Errorf("restore session %q pane name %s/%s: %w", saved.Name, oldWindowID, oldPaneID, err)
+				}
+				if err := waitPaneRenamed(ctx, events, session.SessionID, newWindowID, newPaneID, name); err != nil {
+					return fmt.Errorf("restore session %q pane name %s/%s: %w", saved.Name, oldWindowID, oldPaneID, err)
+				}
+				_ = a.cache.DeliverEvent(ctx, protocol.EventPaneRenamed{
+					SessionID: session.SessionID,
+					WindowID:  newWindowID,
+					PaneID:    newPaneID,
+					Name:      name,
+				})
 			}
 		}
 	}
@@ -155,7 +207,13 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 	return nil
 }
 
-func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Command], events <-chan protocol.Event, sessionID protocol.SessionID, layout persist.LayoutSnapshot) (protocol.WindowID, protocol.PaneID, error) {
+func (a *Shux) restoreWindow(
+	ctx context.Context,
+	super actor.Ref[protocol.Command],
+	events <-chan protocol.Event,
+	sessionID protocol.SessionID,
+	layout persist.LayoutSnapshot,
+) (protocol.WindowID, protocol.PaneID, map[protocol.PaneID]protocol.PaneID, error) {
 	cols, rows := uint16(layout.Cols), uint16(layout.Rows)
 	if cols == 0 || rows == 0 {
 		cols, rows = 80, 24
@@ -167,10 +225,14 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		AutoPane:  true,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
+	}
+	createdPane, err := waitPaneCreatedForWindow(ctx, events, window.WindowID)
+	if err != nil {
+		return "", "", nil, err
 	}
 	if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, 1, restoreLayoutWait); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	targetPanes := layout.Panes
@@ -178,17 +240,20 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 		targetPanes = layout.SavedPanes
 	}
 	targetPanes = sortedLayoutPanes(targetPanes)
-	firstPane := protocol.PaneID(targetPanes[0].PaneID)
+	firstPane := createdPane
+	paneMap := map[protocol.PaneID]protocol.PaneID{
+		protocol.PaneID(targetPanes[0].PaneID): createdPane,
+	}
 	currentCount := 1
 	for currentCount < len(targetPanes) {
 		layoutSnap, ok := a.cache.LayoutSnapshot(sessionID, window.WindowID)
 		if !ok {
-			return "", "", fmt.Errorf("restore window %s: missing layout", window.WindowID)
+			return "", "", nil, fmt.Errorf("restore window %s: missing layout", window.WindowID)
 		}
 		next := targetPanes[currentCount]
 		parent, dir, ok := findSplitTarget(layoutSnap, next)
 		if !ok {
-			return "", "", fmt.Errorf("cannot infer split for pane %s", next.PaneID)
+			return "", "", nil, fmt.Errorf("cannot infer split for pane %s", next.PaneID)
 		}
 		a.bootstrapReq++
 		if err := super.Send(ctx, protocol.CommandPaneSplit{
@@ -198,29 +263,38 @@ func (a *Shux) restoreWindow(ctx context.Context, super actor.Ref[protocol.Comma
 			TargetPaneID: parent,
 			Direction:    dir,
 		}); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
+		split, err := waitSplitCompleted(ctx, events, a.bootstrapReq)
+		if err != nil {
+			return "", "", nil, err
+		}
+		paneMap[protocol.PaneID(next.PaneID)] = split.NewPaneID
 		currentCount++
 		if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, currentCount, restoreLayoutWait); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 	}
 
 	if layout.ZoomedPaneID != "" {
+		zoomPaneID := paneMap[protocol.PaneID(layout.ZoomedPaneID)]
+		if !zoomPaneID.Valid() {
+			zoomPaneID = protocol.PaneID(layout.ZoomedPaneID)
+		}
 		a.bootstrapReq++
 		if err := super.Send(ctx, protocol.CommandPaneZoomToggle{
 			SessionID: sessionID,
 			WindowID:  window.WindowID,
-			PaneID:    protocol.PaneID(layout.ZoomedPaneID),
+			PaneID:    zoomPaneID,
 		}); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		if err := a.waitLayoutPanes(ctx, sessionID, window.WindowID, 1, restoreLayoutWait); err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 	}
 
-	return window.WindowID, firstPane, nil
+	return window.WindowID, firstPane, paneMap, nil
 }
 
 func (a *Shux) waitLayoutPanes(ctx context.Context, sessionID protocol.SessionID, windowID protocol.WindowID, minPanes int, timeout time.Duration) error {
@@ -272,4 +346,70 @@ func paneIDSeq(id string) int {
 	id = strings.TrimPrefix(id, "p-")
 	n, _ := strconv.Atoi(id)
 	return n
+}
+
+func waitPaneCreatedForWindow(ctx context.Context, events <-chan protocol.Event, windowID protocol.WindowID) (protocol.PaneID, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case evt := <-events:
+			e, ok := evt.(protocol.EventPaneCreated)
+			if !ok || e.WindowID != windowID {
+				continue
+			}
+			return e.PaneID, nil
+		}
+	}
+}
+
+func waitSplitCompleted(ctx context.Context, events <-chan protocol.Event, requestID protocol.RequestID) (protocol.EventPaneSplitCompleted, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return protocol.EventPaneSplitCompleted{}, ctx.Err()
+		case evt := <-events:
+			e, ok := evt.(protocol.EventPaneSplitCompleted)
+			if !ok || e.RequestID != requestID {
+				continue
+			}
+			return e, nil
+		}
+	}
+}
+
+func waitWindowRenamed(ctx context.Context, events <-chan protocol.Event, sessionID protocol.SessionID, windowID protocol.WindowID, name string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case evt := <-events:
+			e, ok := evt.(protocol.EventWindowRenamed)
+			if !ok {
+				continue
+			}
+			if e.SessionID != sessionID || e.WindowID != windowID || e.Name != name {
+				continue
+			}
+			return nil
+		}
+	}
+}
+
+func waitPaneRenamed(ctx context.Context, events <-chan protocol.Event, sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID, name string) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case evt := <-events:
+			e, ok := evt.(protocol.EventPaneRenamed)
+			if !ok {
+				continue
+			}
+			if e.SessionID != sessionID || e.WindowID != windowID || e.PaneID != paneID || e.Name != name {
+				continue
+			}
+			return nil
+		}
+	}
 }
