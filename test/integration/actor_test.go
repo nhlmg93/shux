@@ -1372,8 +1372,7 @@ func TestWindowSyncPanes_fansOutPaneKeyInput(t *testing.T) {
 		Key:       "enter",
 	})
 
-	waitForPaneScreenText(t, events, initPaneID, "sync-panes-15")
-	waitForPaneScreenText(t, events, initPane2ID, "sync-panes-15")
+	waitForPaneScreensText(t, events, []protocol.PaneID{initPaneID, initPane2ID}, "sync-panes-15")
 }
 
 func startWindowWithEvents(t *testing.T, ctx context.Context, clientID protocol.ClientID) (commandSender, <-chan protocol.Event) {
@@ -1480,6 +1479,35 @@ func waitForPaneScreenText(t *testing.T, events <-chan protocol.Event, paneID pr
 			}
 		case <-deadline:
 			t.Fatalf("timed out waiting for pane %s to contain %q", paneID, want)
+		}
+	}
+}
+
+func waitForPaneScreensText(t *testing.T, events <-chan protocol.Event, paneIDs []protocol.PaneID, want string) {
+	t.Helper()
+	remaining := make(map[protocol.PaneID]struct{}, len(paneIDs))
+	for _, paneID := range paneIDs {
+		remaining[paneID] = struct{}{}
+	}
+	deadline := time.After(time.Second)
+	for len(remaining) > 0 {
+		select {
+		case evt := <-events:
+			screen, ok := evt.(protocol.EventPaneScreenChanged)
+			if !ok {
+				continue
+			}
+			if _, needsPane := remaining[screen.PaneID]; !needsPane {
+				continue
+			}
+			for _, line := range screen.Lines {
+				if strings.Contains(line.Text, want) {
+					delete(remaining, screen.PaneID)
+					break
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for panes %v to contain %q", paneIDs, want)
 		}
 	}
 }
