@@ -55,6 +55,8 @@ type Shux struct {
 
 	clientsMu sync.Mutex
 	clients   map[protocol.ClientID]*tea.Program
+
+	checkpoints *checkpointWatcher
 }
 
 func NewShux() (*Shux, error) {
@@ -111,6 +113,9 @@ func (a *Shux) SetRestartShutdown(fn func(context.Context) error) {
 
 func (a *Shux) Close() error {
 	a.checkpoint()
+	if a.checkpoints != nil {
+		a.checkpoints.stop()
+	}
 	a.stateMu.Lock()
 	if a.state == stateClosed {
 		a.stateMu.Unlock()
@@ -249,6 +254,9 @@ func (a *Shux) NewClientProgram(ctx context.Context, clientID protocol.ClientID,
 		if a.Autocmds != nil {
 			a.Autocmds.Emit(ctx, EventClientDetached, map[string]any{"client_id": string(clientID)})
 		}
+		if a.checkpoints != nil {
+			a.checkpoints.schedule()
+		}
 		if intent == ui.ExitQuit && remaining == 0 {
 			a.RequestShutdown()
 		}
@@ -310,6 +318,14 @@ func (a *Shux) Start(ctx context.Context) error {
 	}
 	a.hub = hubRef
 	a.cache = cache
+	watcher := newCheckpointWatcher(a)
+	if a.Config.Resurrection && a.Config.StateDir != "" {
+		if err := hubRef.Send(ctx, protocol.EventRegisterSubscriber{ClientID: checkpointClientID, Sink: watcher}); err != nil {
+			cancel()
+			return err
+		}
+	}
+	a.checkpoints = watcher
 	a.supervisor = supervisor.StartWithPolicy(actorCtx, &hubRef, a.Config)
 	a.actorCancel = cancel
 	a.state = stateStarted

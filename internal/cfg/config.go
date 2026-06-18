@@ -55,6 +55,8 @@ func (c Config) WithDefaults() Config {
 	}
 	if c.MapLeader == "" {
 		c.MapLeader = DefaultMapLeader
+	} else {
+		c.MapLeader = NormalizeMapLeader(c.MapLeader)
 	}
 	if c.Scrollback == 0 {
 		c.Scrollback = DefaultScrollback

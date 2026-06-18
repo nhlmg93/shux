@@ -55,6 +55,14 @@ func (a *Shux) WaitLayoutPanes(sessionID protocol.SessionID, windowID protocol.W
 	return false
 }
 
+// WindowCount returns the number of live windows in a session.
+func (a *Shux) WindowCount(sessionID protocol.SessionID) int {
+	if a.cache == nil {
+		return 0
+	}
+	return len(a.cache.WindowIDs(sessionID))
+}
+
 // PaneScreenText returns the cached screen text for a pane. It is intended for
 // integration tests observing resurrection replay.
 func (a *Shux) PaneScreenText(sessionID protocol.SessionID, windowID protocol.WindowID, paneID protocol.PaneID) (string, bool) {

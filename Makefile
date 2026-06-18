@@ -7,8 +7,8 @@ GHOSTTY_REF  ?= main
 
 DEPS_DIR := .deps
 GHOSTTY_SRC := $(DEPS_DIR)/ghostty
-PREFIX := $(abspath $(DEPS_DIR)/prefix)
-PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PREFIX)/share/pkgconfig
+DEPS_PREFIX := $(abspath $(DEPS_DIR)/prefix)
+PKG_CONFIG_PATH := $(DEPS_PREFIX)/lib/pkgconfig:$(DEPS_PREFIX)/share/pkgconfig
 
 GO_TEST_FLAGS := -count=1 -shuffle=off -timeout 5s
 GO_TEST := CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go test $(GO_TEST_FLAGS)
@@ -18,7 +18,9 @@ ifeq ($(V),1)
   QUIET :=
 endif
 
-.PHONY: build test test-unit test-sim test-e2e test-integration libghostty clean help docs-dev docs-build
+.PHONY: build test test-unit test-sim test-sim-native test-e2e test-integration install libghostty clean help docs-dev docs-build
+
+PREFIX ?= /usr/local
 
 build: libghostty
 	$(QUIET)CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux .
@@ -26,8 +28,9 @@ build: libghostty
 help:
 	@echo "make            — build shux"
 	@echo "make build      — build shux"
-	@echo "make test       — run sim and e2e tests"
+	@echo "make test       — run unit, integration, e2e, and sim tests"
 	@echo "make test-unit  — run internal package tests (5s budget)"
+	@echo "make install    — install shux binary to $(PREFIX)/bin"
 	@echo "make test-sim   — run deterministic sim tests in Docker"
 	@echo "make test-e2e   — run e2e tests locally"
 	@echo "make test-integration — run integration tests locally"
@@ -35,7 +38,7 @@ help:
 	@echo "make docs-build  — build Starlight docs site"
 	@echo "make clean      — remove local libghostty build"
 
-test: test-sim test-e2e
+test: test-unit test-integration test-e2e test-sim-native
 
 test-unit: libghostty
 	$(QUIET)$(GO_TEST) ./internal/...
@@ -54,6 +57,9 @@ test-e2e: libghostty
 test-integration: libghostty
 	$(QUIET)$(GO_TEST) ./test/integration/...
 
+install: build
+	$(QUIET)install -Dm755 shux $(DESTDIR)$(PREFIX)/bin/shux
+
 docs-dev:
 	$(QUIET)cd docs && npm run dev
 
@@ -66,7 +72,7 @@ $(GHOSTTY_SRC)/.git:
 	$(QUIET)git clone --depth 1 --branch $(GHOSTTY_REF) $(GHOSTTY_REPO) $(GHOSTTY_SRC)
 
 libghostty: $(GHOSTTY_SRC)/.git
-	$(QUIET)cd $(GHOSTTY_SRC) && zig build install -p $(PREFIX) -Doptimize=ReleaseFast -Demit-lib-vt=true --summary none
+	$(QUIET)cd $(GHOSTTY_SRC) && zig build install -p $(DEPS_PREFIX) -Doptimize=ReleaseFast -Demit-lib-vt=true --summary none
 
 clean:
 	$(QUIET)rm -rf $(GHOSTTY_SRC) $(DEPS_DIR)/prefix

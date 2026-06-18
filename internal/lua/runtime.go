@@ -137,7 +137,7 @@ func (rt *Runtime) gNewIndex(L *glua.LState) int {
 	rt.globals[key] = val
 	if key == "mapleader" {
 		if s, ok := val.(glua.LString); ok {
-			rt.Config.MapLeader = string(s)
+			rt.Config.MapLeader = cfg.NormalizeMapLeader(string(s))
 		}
 	}
 	return 0

@@ -13,7 +13,7 @@ Resurrection is shux's durability layer. When enabled (`shux.opt.resurrection`, 
 | **Manifest** | Window/pane layout snapshot and metadata |
 | **State directory** | `shux.opt.state_dir` (defaults to XDG state path) |
 
-Checkpoints run on meaningful events and before graceful restart.
+Checkpoints run on layout changes (debounced), client detach, and before graceful restart.
 
 ## Typical workflow
 

@@ -58,7 +58,7 @@ shux.keymap.set("prefix", "<leader>d", "detach", { desc = "custom detach" })
 	if rt.Config.ShellPath != "/bin/bash" {
 		t.Fatalf("shell = %q", rt.Config.ShellPath)
 	}
-	if rt.Config.MapLeader != "<C-a>" {
+	if rt.Config.MapLeader != "ctrl+a" {
 		t.Fatalf("mapleader = %q", rt.Config.MapLeader)
 	}
 	b, ok := rt.Config.Keymaps.Lookup("prefix", "d")
