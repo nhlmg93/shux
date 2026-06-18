@@ -73,6 +73,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleWindowResize(ctx, m)
 			case protocol.CommandPaneSplit:
 				a.handlePaneSplit(ctx, m)
+			case protocol.CommandPaneResizeDelta:
+				a.handlePaneResizeDelta(ctx, m)
 			case protocol.CommandPaneClose:
 				a.handlePaneClose(ctx, m)
 			default:
@@ -174,6 +176,18 @@ func (a *Actor) handlePaneClose(ctx context.Context, m protocol.CommandPaneClose
 	a.emitLayout(ctx, m.SessionID, m.WindowID)
 }
 
+func (a *Actor) handlePaneResizeDelta(ctx context.Context, m protocol.CommandPaneResizeDelta) {
+	if err := a.Layout.ResizePaneDelta(m.TargetPaneID, m.Edge, m.Delta); err != nil {
+		a.rejectCommand(ctx, m.Meta, m.SessionID, m.WindowID, "pane-resize-delta", err.Error())
+		return
+	}
+	a.revision++
+	for _, pid := range a.Layout.PaneIDs() {
+		a.sendPaneGeometry(ctx, m.SessionID, m.WindowID, pid, a.mustRect(pid, "PaneResizeDelta"), false)
+	}
+	a.emitLayout(ctx, m.SessionID, m.WindowID)
+}
+
 func (a *Actor) nextPaneID() protocol.PaneID {
 	a.seq++
 	return protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
@@ -222,12 +236,19 @@ func (a *Actor) emitLayout(ctx context.Context, sid protocol.SessionID, wid prot
 }
 
 func (a *Actor) rejectSplit(ctx context.Context, m protocol.CommandPaneSplit, reason string) {
+	a.rejectCommand(ctx, m.Meta, m.SessionID, m.WindowID, "pane-split", reason)
+}
+
+func (a *Actor) rejectCommand(ctx context.Context, meta protocol.CommandMeta, sessionID protocol.SessionID, windowID protocol.WindowID, command, reason string) {
+	if meta.Empty() {
+		return
+	}
 	a.emit(ctx, protocol.EventCommandRejected{
-		ClientID:  m.Meta.ClientID,
-		RequestID: m.Meta.RequestID,
-		SessionID: m.SessionID,
-		WindowID:  m.WindowID,
-		Command:   "pane-split",
+		ClientID:  meta.ClientID,
+		RequestID: meta.RequestID,
+		SessionID: sessionID,
+		WindowID:  windowID,
+		Command:   command,
 		Reason:    reason,
 	})
 }

@@ -243,6 +243,113 @@ func TestHub_rejects_missing_target_split_without_crashing(t *testing.T) {
 	})
 }
 
+func TestHub_pane_resize_delta_updates_layout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-pane-resize")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneResizeDelta{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 2},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Edge:         protocol.PaneResizeEdgeRight,
+		Delta:        5,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 45, Rows: 24},
+			{PaneID: initPane2ID, Col: 45, Row: 0, Cols: 35, Rows: 24},
+		},
+	})
+}
+
+func TestHub_pane_resize_delta_rejected_when_min_size_hit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-pane-resize-reject")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneResizeDelta{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 2},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Edge:         protocol.PaneResizeEdgeRight,
+		Delta:        80,
+	})
+	assertEvent(t, events, protocol.EventCommandRejected{
+		ClientID:  testClientID,
+		RequestID: 2,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Command:   "pane-resize-delta",
+		Reason:    "minimum pane size reached",
+	})
+}
+
 func TestHub_fansOutPaneScreenChanged(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

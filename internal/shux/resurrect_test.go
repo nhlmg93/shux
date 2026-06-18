@@ -255,3 +255,69 @@ func TestResurrection_checkpointLayoutRoundtrip(t *testing.T) {
 		t.Fatal("restored layout missing four panes")
 	}
 }
+
+func TestResurrection_checkpointPersistsResizedPaneGeometry(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app1, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app1.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app1.TestSupervisor()
+	sid, wid := app1.DefaultSessionID, app1.DefaultWindowID
+	var splitReq protocol.RequestID
+	testutil.SendSplit(t, ctx, ref, &splitReq, "resurrect-test", sid, wid, "p-1", protocol.SplitVertical)
+	if !app1.WaitLayoutPanes(sid, wid, 2, testutil.TestWaitTimeout) {
+		t.Fatal("live layout never reached two panes")
+	}
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneResizeDelta{
+		Meta:         protocol.CommandMeta{ClientID: "resurrect-test", RequestID: splitReq + 1},
+		SessionID:    sid,
+		WindowID:     wid,
+		TargetPaneID: "p-1",
+		Edge:         protocol.PaneResizeEdgeRight,
+		Delta:        6,
+	})
+	time.Sleep(200 * time.Millisecond)
+	if err := app1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, ok, err := persist.LoadManifest(dir)
+	if err != nil || !ok {
+		t.Fatalf("load manifest: ok=%v err=%v", ok, err)
+	}
+	layout := manifest.Layouts["w-1"]
+	if len(layout.Panes) != 2 {
+		t.Fatalf("manifest panes = %d, want 2", len(layout.Panes))
+	}
+	var leftCols int
+	for _, pane := range layout.Panes {
+		if pane.PaneID == "p-1" {
+			leftCols = pane.Cols
+		}
+	}
+	if leftCols <= 40 {
+		t.Fatalf("resized pane width = %d, want > 40", leftCols)
+	}
+
+	app2, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app2.Close()
+	if err := app2.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !app2.WaitLayoutPanes(app2.DefaultSessionID, app2.DefaultWindowID, 2, testutil.TestWaitTimeout) {
+		t.Fatal("restored layout missing two panes")
+	}
+}

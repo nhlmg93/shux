@@ -45,6 +45,14 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 		return m.startPaneSplit(protocol.SplitVertical)
 	case cfg.ActionSplitTB:
 		return m.startPaneSplit(protocol.SplitHorizontal)
+	case cfg.ActionResizePaneLeft:
+		return m.startPaneResize(protocol.PaneResizeEdgeLeft)
+	case cfg.ActionResizePaneDown:
+		return m.startPaneResize(protocol.PaneResizeEdgeDown)
+	case cfg.ActionResizePaneUp:
+		return m.startPaneResize(protocol.PaneResizeEdgeUp)
+	case cfg.ActionResizePaneRight:
+		return m.startPaneResize(protocol.PaneResizeEdgeRight)
 	case cfg.ActionNextPane:
 		m.ActivePaneID = cycleActivePane(m.ActivePaneID, m.Layout.Panes)
 		m.Layout.ActivePane = m.ActivePaneID
