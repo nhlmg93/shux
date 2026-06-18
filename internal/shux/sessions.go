@@ -7,6 +7,19 @@ import (
 	"shux/internal/protocol"
 )
 
+func (a *Shux) createSession(ctx context.Context, name string) (protocol.SessionDescriptor, error) {
+	reply := make(chan protocol.CommandCreateSessionResult, 1)
+	if err := a.supervisor.Send(ctx, protocol.CommandCreateSession{Name: name, Reply: reply}); err != nil {
+		return protocol.SessionDescriptor{}, err
+	}
+	select {
+	case <-ctx.Done():
+		return protocol.SessionDescriptor{}, ctx.Err()
+	case result := <-reply:
+		return result.Session, result.Err
+	}
+}
+
 func (a *Shux) ListSessions(ctx context.Context) ([]protocol.SessionDescriptor, error) {
 	reply := make(chan []protocol.SessionDescriptor, 1)
 	if err := a.supervisor.Send(ctx, protocol.CommandListSessions{Reply: reply}); err != nil {
@@ -43,19 +56,9 @@ func (a *Shux) CreateNamedSession(ctx context.Context, name string) (protocol.Se
 	}
 	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
 
-	reply := make(chan protocol.CommandCreateSessionResult, 1)
-	if err := a.supervisor.Send(ctx, protocol.CommandCreateSession{Name: name, Reply: reply}); err != nil {
+	created, err := a.createSession(ctx, name)
+	if err != nil {
 		return protocol.SessionDescriptor{}, err
-	}
-	var created protocol.SessionDescriptor
-	select {
-	case <-ctx.Done():
-		return protocol.SessionDescriptor{}, ctx.Err()
-	case result := <-reply:
-		if result.Err != nil {
-			return protocol.SessionDescriptor{}, result.Err
-		}
-		created = result.Session
 	}
 	window, err := bootstrapStep[protocol.EventWindowCreated](ctx, a.supervisor, events, protocol.CommandCreateWindow{SessionID: created.SessionID})
 	if err != nil {

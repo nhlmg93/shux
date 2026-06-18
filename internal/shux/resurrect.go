@@ -75,7 +75,7 @@ func (a *Shux) bootstrapFresh(ctx context.Context) error {
 	defer a.hub.Send(ctx, protocol.EventUnregisterSubscriber{ClientID: bootstrapClientID})
 
 	const defaultSessionName = "main"
-	session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{Name: defaultSessionName})
+	session, err := a.createSession(ctx, defaultSessionName)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (a *Shux) restoreFromManifest(ctx context.Context, m persist.Manifest) erro
 		defaultName = m.Sessions[0].Name
 	}
 	for _, saved := range m.Sessions {
-		session, err := bootstrapStep[protocol.EventSessionCreated](ctx, a.supervisor, events, protocol.CommandCreateSession{Name: saved.Name})
+		session, err := a.createSession(ctx, saved.Name)
 		if err != nil {
 			return fmt.Errorf("restore session %q: %w", saved.Name, err)
 		}
