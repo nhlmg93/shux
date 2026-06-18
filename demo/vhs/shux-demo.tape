@@ -23,7 +23,7 @@ Type "./demo/vhs/run-shux.sh"
 Enter
 Wait+Screen@30s /SYNC:OFF/
 Show
-Sleep 1s
+Sleep 1.5s
 
 # Top-left: docs pane.
 Type "echo '  docs | less README'"
@@ -34,7 +34,7 @@ Sleep 500ms
 Ctrl+B
 Type "%"
 Sleep 400ms
-Type "node demo/vhs/node-heartbeat.js"
+Type "./demo/vhs/run-node-heartbeat.sh"
 Enter
 Sleep 2.5s
 

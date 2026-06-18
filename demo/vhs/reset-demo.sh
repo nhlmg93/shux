@@ -2,16 +2,20 @@
 # Reset demo state and start an isolated shux daemon for VHS recording.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+export SHUX_DEMO_ROOT="$ROOT"
 export XDG_CONFIG_HOME="$ROOT/demo/vhs/config"
-export XDG_STATE_HOME="$ROOT/demo/vhs/state"
-export SHUX_DEMO_SHELL="$ROOT/demo/vhs/bash-shell.sh"
+STATE_DIR="$ROOT/demo/vhs/state"
 LOG="$ROOT/demo/vhs/daemon.log"
-mkdir -p "$XDG_STATE_HOME"
+mkdir -p "$STATE_DIR"
+
+if command -v mise >/dev/null 2>&1; then
+  export SHUX_DEMO_NODE="$(mise which node 2>/dev/null || true)"
+fi
 
 fuser -k 23299/tcp 2>/dev/null || true
 sleep 0.2
-rm -rf "$XDG_STATE_HOME"/*
-mkdir -p "$XDG_STATE_HOME"
+rm -rf "$STATE_DIR"/*
+mkdir -p "$STATE_DIR"
 
 # Non-interactive shux starts the daemon child (see main.go isDaemonChild).
 "$ROOT/shux" --bash </dev/null >>"$LOG" 2>&1 &
