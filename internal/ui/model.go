@@ -3,9 +3,11 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"shux/internal/actor"
 	"shux/internal/cfg"
 	"shux/internal/luabind"
@@ -156,6 +158,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Data:      []byte(msg.Content),
 		})
 	case tea.MouseMsg:
+		if shouldFocusPaneFromMouse(msg) {
+			if pane, ok := m.paneAt(msg.Mouse().X, msg.Mouse().Y); ok {
+				m.ActivePaneID = pane.PaneID
+				m.Layout.ActivePane = pane.PaneID
+			}
+		}
 		if cmd, ok := m.scrollCommand(msg); ok {
 			return m, m.dispatch(cmd)
 		}
@@ -811,17 +819,155 @@ func (m Model) viewString() string {
 	if rows <= 0 {
 		rows = 24
 	}
-	canvas := newRuneCanvas(cols, rows)
-	if len(m.Layout.Panes) == 0 {
-		canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
-		return canvas.String()
+	paneRows := rows - 1
+	if paneRows < 0 {
+		paneRows = 0
 	}
-	for i, p := range m.Layout.Panes {
-		active := p.PaneID == m.Layout.ActivePane
-		if m.Layout.ActivePane == "" && i == 0 {
-			active = true
+	var paneView string
+	if paneRows > 0 {
+		canvas := newRuneCanvas(cols, paneRows)
+		if len(m.Layout.Panes) == 0 {
+			canvas.drawText(0, 0, fmt.Sprintf("%s  waiting for layout", m.PaneID))
+		} else {
+			for i, p := range m.Layout.Panes {
+				active := p.PaneID == m.Layout.ActivePane
+				if m.Layout.ActivePane == "" && i == 0 {
+					active = true
+				}
+				canvas.drawPaneWithScreenEvent(p, active, m.paneScreen(p.PaneID))
+			}
 		}
-		canvas.drawPaneWithScreenEvent(p, active, m.paneScreen(p.PaneID))
+		paneView = canvas.String()
 	}
-	return canvas.String()
+
+	statusRow := m.renderStatusRow(cols)
+	if paneView == "" {
+		return statusRow
+	}
+	return paneView + "\n" + statusRow
+}
+
+func shouldFocusPaneFromMouse(msg tea.MouseMsg) bool {
+	switch msg.(type) {
+	case tea.MouseClickMsg, tea.MouseReleaseMsg:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) renderStatusRow(width int) string {
+	if width <= 0 {
+		width = 1
+	}
+	left, right := m.defaultStatusSegments()
+	if m.Lua != nil {
+		luaLeft, luaRight := m.Lua.Statusline(m.statuslineContext())
+		if strings.TrimSpace(luaLeft) != "" {
+			left = strings.TrimSpace(luaLeft)
+		}
+		if strings.TrimSpace(luaRight) != "" {
+			right = strings.TrimSpace(luaRight)
+		}
+	}
+	if strings.TrimSpace(right) == "" && strings.TrimSpace(m.Layout.Status) != "" {
+		right = strings.TrimSpace(m.Layout.Status)
+	}
+	line := joinStatusSegments(width, left, right)
+	return lipgloss.NewStyle().Reverse(true).Width(width).Render(line)
+}
+
+func joinStatusSegments(width int, left, right string) string {
+	left = clipRunes(strings.TrimSpace(left), width)
+	if width-leftWidth(left) <= 0 {
+		return clipRunes(left, width)
+	}
+	right = clipRunes(strings.TrimSpace(right), width-leftWidth(left)-1)
+	space := width - leftWidth(left) - leftWidth(right)
+	if space <= 0 {
+		right = clipRunes(right, width-leftWidth(left))
+		space = width - leftWidth(left) - leftWidth(right)
+		if space <= 0 {
+			return clipRunes(left+right, width)
+		}
+	}
+	return left + strings.Repeat(" ", space) + right
+}
+
+func leftWidth(s string) int {
+	return lipgloss.Width(s)
+}
+
+func clipRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
+}
+
+func (m Model) defaultStatusSegments() (left, right string) {
+	left = fmt.Sprintf("%s | %d:%s | %s",
+		m.SessionID,
+		m.windowIndex(),
+		m.windowName(),
+		m.activePaneLabel(),
+	)
+	right = m.hostname()
+	return left, right
+}
+
+func (m Model) statuslineContext() luabind.StatuslineContext {
+	return luabind.StatuslineContext{
+		SessionID:   string(m.SessionID),
+		WindowID:    string(m.WindowID),
+		WindowIndex: m.windowIndex(),
+		WindowName:  m.windowName(),
+		ActivePane:  m.activePaneLabel(),
+		Hostname:    m.hostname(),
+		Title:       m.Layout.Title,
+		Status:      m.Layout.Status,
+	}
+}
+
+func (m Model) windowIndex() int {
+	for i, wid := range m.WindowIDs {
+		if wid == m.WindowID {
+			return i + 1
+		}
+	}
+	return 1
+}
+
+func (m Model) windowName() string {
+	title := strings.TrimSpace(m.Layout.Title)
+	if title != "" && title != m.Title {
+		return title
+	}
+	if m.WindowID.Valid() {
+		return string(m.WindowID)
+	}
+	return "window"
+}
+
+func (m Model) activePaneLabel() string {
+	paneID := m.Layout.ActivePane
+	if !paneID.Valid() {
+		paneID = m.ActivePaneID
+	}
+	if paneID.Valid() {
+		return string(paneID)
+	}
+	return "none"
+}
+
+func (m Model) hostname() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "localhost"
+	}
+	return host
 }

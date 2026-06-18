@@ -126,6 +126,34 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneResizeDelta: delta out of range")
 		}
 		return nil
+	case CommandWindowSelectLayout:
+		if !c.Meta.Valid() {
+			return fmt.Errorf("protocol: CommandWindowSelectLayout: invalid Meta")
+		}
+		if err := validateWindowTarget("CommandWindowSelectLayout", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		if !c.ActivePaneID.Valid() {
+			return fmt.Errorf("protocol: CommandWindowSelectLayout: invalid ActivePaneID")
+		}
+		if !c.Preset.Valid() {
+			return fmt.Errorf("protocol: CommandWindowSelectLayout: invalid Preset %q", string(c.Preset))
+		}
+		return nil
+	case CommandPaneSwap:
+		if !c.Meta.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSwap: invalid Meta")
+		}
+		if err := validateWindowTarget("CommandPaneSwap", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		if !c.PaneID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSwap: invalid PaneID")
+		}
+		if !c.Direction.Valid() {
+			return fmt.Errorf("protocol: CommandPaneSwap: invalid Direction %d", int(c.Direction))
+		}
+		return nil
 	default:
 		return fmt.Errorf("protocol: unknown command type %T", cmd)
 	}
@@ -195,6 +223,10 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPaneResizeDelta:
 		return c.SessionID, true
+	case CommandWindowSelectLayout:
+		return c.SessionID, true
+	case CommandPaneSwap:
+		return c.SessionID, true
 	case CommandPaneClose:
 		return c.SessionID, true
 	case CommandPaneResize:
@@ -242,6 +274,10 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandPaneSplit:
 		return c.WindowID, true
 	case CommandPaneResizeDelta:
+		return c.WindowID, true
+	case CommandWindowSelectLayout:
+		return c.WindowID, true
+	case CommandPaneSwap:
 		return c.WindowID, true
 	case CommandPaneClose:
 		return c.WindowID, true
@@ -305,6 +341,38 @@ const (
 // validation in ValidateCommand for CommandPaneSplit.
 func (d SplitDirection) Valid() bool {
 	return d == SplitVertical || d == SplitHorizontal
+}
+
+// LayoutPreset is a named window layout transform.
+type LayoutPreset string
+
+const (
+	LayoutPresetEvenHorizontal LayoutPreset = "even-horizontal"
+	LayoutPresetEvenVertical   LayoutPreset = "even-vertical"
+	LayoutPresetMainHorizontal LayoutPreset = "main-horizontal"
+)
+
+func (p LayoutPreset) Valid() bool {
+	switch p {
+	case LayoutPresetEvenHorizontal, LayoutPresetEvenVertical, LayoutPresetMainHorizontal:
+		return true
+	default:
+		return false
+	}
+}
+
+// PaneDirection points to an adjacent pane.
+type PaneDirection int
+
+const (
+	PaneDirectionLeft PaneDirection = iota
+	PaneDirectionRight
+	PaneDirectionUp
+	PaneDirectionDown
+)
+
+func (d PaneDirection) Valid() bool {
+	return d == PaneDirectionLeft || d == PaneDirectionRight || d == PaneDirectionUp || d == PaneDirectionDown
 }
 
 // CommandPaneResize updates a pane’s libghostty size after the terminal has
@@ -484,4 +552,22 @@ type CommandPaneResizeDelta struct {
 	TargetPaneID PaneID
 	Edge         PaneResizeEdge
 	Delta        int
+}
+
+// CommandWindowSelectLayout applies a named layout preset across current panes.
+type CommandWindowSelectLayout struct {
+	Meta         CommandMeta
+	SessionID    SessionID
+	WindowID     WindowID
+	ActivePaneID PaneID
+	Preset       LayoutPreset
+}
+
+// CommandPaneSwap swaps a pane with its adjacent neighbor in Direction.
+type CommandPaneSwap struct {
+	Meta      CommandMeta
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
+	Direction PaneDirection
 }
