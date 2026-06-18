@@ -1,6 +1,6 @@
 Output demo/vhs/shux-demo.gif
 
-Require sh
+Require bash
 
 Set Shell "bash"
 Set FontSize 16
@@ -20,7 +20,7 @@ Enter
 Sleep 500ms
 Type "./demo/vhs/run-shux.sh"
 Enter
-Wait+Screen@30s /sh-5\.3\$ /
+Wait+Screen@30s /SYNC:OFF/
 Show
 Sleep 1s
 
