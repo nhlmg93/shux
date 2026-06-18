@@ -106,6 +106,11 @@ func (m Model) dispatchBuiltin(action cfg.BuiltinKeyAction) (Model, tea.Cmd) {
 	case cfg.ActionSelectWindow10:
 		m = m.switchWindowByNumber(10)
 		return m, m.currentWindowResizeCmd()
+	case cfg.ActionToggleSyncPanes:
+		return m, m.dispatch(protocol.CommandWindowToggleSyncPanes{
+			SessionID: m.SessionID,
+			WindowID:  m.WindowID,
+		})
 	case cfg.ActionListKeymaps:
 		for _, b := range m.Keymaps.List("prefix") {
 			action := string(b.Builtin)

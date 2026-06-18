@@ -1104,7 +1104,6 @@ func (m Model) viewString() string {
 		}
 		paneView = canvas.String()
 	}
-
 	statusRow := m.renderStatusRow(cols)
 	if paneView == "" {
 		return statusRow
@@ -1137,6 +1136,14 @@ func (m Model) renderStatusRow(width int) string {
 	}
 	if strings.TrimSpace(right) == "" && strings.TrimSpace(m.Layout.Status) != "" {
 		right = strings.TrimSpace(m.Layout.Status)
+	}
+	if m.Layout.SyncPanes {
+		const syncIndicator = "[SYNC]"
+		if strings.TrimSpace(right) == "" {
+			right = syncIndicator
+		} else {
+			right = syncIndicator + " " + right
+		}
 	}
 	line := joinStatusSegments(width, left, right)
 	return lipgloss.NewStyle().Reverse(true).Width(width).Render(line)

@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1304,6 +1305,77 @@ func TestHub_windowAndPaneRenameEvents(t *testing.T) {
 	})
 }
 
+func TestWindowSyncPanes_fansOutPaneKeyInput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	eref := hub.Start(ctx)
+	events := make(protocol.EventChanAdapter, 64)
+	if err := eref.Send(ctx, protocol.EventRegisterSubscriber{ClientID: "test-sync-panes", Sink: events}); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := supervisor.StartWithHub(ctx, &eref)
+	bootstrapWindow(t, ctx, ref, events)
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowToggleSyncPanes{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+	})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      80,
+		Rows:      24,
+		SyncPanes: true,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+
+	sendPaneKeyText(t, ctx, ref, initPaneID, "echo sync-panes-15")
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneKey{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPaneID,
+		Action:    protocol.KeyActionPress,
+		Key:       "enter",
+	})
+
+	waitForPaneScreenText(t, events, initPaneID, "sync-panes-15")
+	waitForPaneScreenText(t, events, initPane2ID, "sync-panes-15")
+}
+
 func startWindowWithEvents(t *testing.T, ctx context.Context, clientID protocol.ClientID) (commandSender, <-chan protocol.Event) {
 	t.Helper()
 	eref := hub.Start(ctx)
@@ -1375,6 +1447,41 @@ func assertCloseRelatedEvents(t *testing.T, events <-chan protocol.Event) {
 		return
 	}
 	t.Fatalf("close events = [%#v, %#v], want EventWindowClosed and zero-window EventSessionWindowsChanged", got1, got2)
+}
+
+func sendPaneKeyText(t *testing.T, ctx context.Context, ref commandSender, paneID protocol.PaneID, text string) {
+	t.Helper()
+	for _, r := range text {
+		testutil.MustSend(t, ctx, ref, protocol.CommandPaneKey{
+			SessionID: initSessionID,
+			WindowID:  initWindowID,
+			PaneID:    paneID,
+			Action:    protocol.KeyActionPress,
+			Key:       string(r),
+			Text:      string(r),
+		})
+	}
+}
+
+func waitForPaneScreenText(t *testing.T, events <-chan protocol.Event, paneID protocol.PaneID, want string) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case evt := <-events:
+			screen, ok := evt.(protocol.EventPaneScreenChanged)
+			if !ok || screen.PaneID != paneID {
+				continue
+			}
+			for _, line := range screen.Lines {
+				if strings.Contains(line.Text, want) {
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for pane %s to contain %q", paneID, want)
+		}
+	}
 }
 
 func nextEvent(t *testing.T, events <-chan protocol.Event) protocol.Event {

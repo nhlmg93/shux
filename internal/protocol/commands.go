@@ -58,6 +58,8 @@ func ValidateCommand(cmd Command) error {
 			return err
 		}
 		return validateName("CommandWindowRename", c.Name)
+	case CommandWindowToggleSyncPanes:
+		return validateWindowTarget("CommandWindowToggleSyncPanes", c.SessionID, c.WindowID)
 	case CommandWindowClosed:
 		return validateWindowTarget("CommandWindowClosed", c.SessionID, c.WindowID)
 	case CommandPaneKey:
@@ -282,6 +284,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandWindowRename:
 		return c.SessionID, true
+	case CommandWindowToggleSyncPanes:
+		return c.SessionID, true
 	case CommandPaneSplit:
 		return c.SessionID, true
 	case CommandPaneFocus:
@@ -341,6 +345,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandCreatePane:
 		return c.WindowID, true
 	case CommandWindowResize:
+		return c.WindowID, true
+	case CommandWindowToggleSyncPanes:
 		return c.WindowID, true
 	case CommandPaneSplit:
 		return c.WindowID, true
@@ -534,6 +540,13 @@ type CommandWindowRename struct {
 	SessionID SessionID
 	WindowID  WindowID
 	Name      string
+}
+
+// CommandWindowToggleSyncPanes flips the window-local synchronize-panes mode.
+// When enabled, CommandPaneKey input is broadcast to every pane in the window.
+type CommandWindowToggleSyncPanes struct {
+	SessionID SessionID
+	WindowID  WindowID
 }
 
 // CommandWindowClosed notifies the session that a window is gone and should be
