@@ -17,6 +17,7 @@ sleep 0.2
 rm -rf "$STATE_DIR"/*
 mkdir -p "$STATE_DIR"
 rm -f "$ROOT/demo/vhs/draft.txt" "$ROOT/demo/vhs/draft.txt.save"
+rm -f "$HOME/.local/state/nvim/swap/"*draft.txt.swp 2>/dev/null || true
 
 # Non-interactive shux starts the daemon child (see main.go isDaemonChild).
 "$ROOT/shux" --bash </dev/null >>"$LOG" 2>&1 &
