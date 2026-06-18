@@ -49,6 +49,49 @@ func TestDaemon_gracefulRestartReplacesBackend(t *testing.T) {
 	attachAndDetach(t, addr)
 }
 
+func TestResurrectionCheckpoint_persistsWindowAndPaneNames(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	app, err := shux.NewShuxWithConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	if err := app.BootstrapDefaultSession(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ref := app.TestSupervisor()
+	sid, wid, pid := app.DefaultSessionID, app.DefaultWindowID, app.DefaultPaneID
+	testutil.MustSend(t, ctx, ref, protocol.CommandWindowRename{
+		SessionID: sid,
+		WindowID:  wid,
+		Name:      "workspace",
+	})
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneRename{
+		SessionID: sid,
+		WindowID:  wid,
+		PaneID:    pid,
+		Name:      "shell",
+	})
+
+	deadline := time.Now().Add(testutil.TestWaitTimeout)
+	for time.Now().Before(deadline) {
+		m, ok, err := persist.LoadManifest(dir)
+		if err == nil && ok &&
+			m.WindowNames[string(wid)] == "workspace" &&
+			m.PaneNames[persist.PaneNameMapKey(wid, pid)] == "shell" {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("checkpoint manifest missing renamed window/pane names")
+}
+
 func TestResurrection_windowAndPaneNamesSurviveRestart(t *testing.T) {
 	dir := t.TempDir()
 	cfg := testutil.ResurrectionConfig(dir, "/bin/true")
