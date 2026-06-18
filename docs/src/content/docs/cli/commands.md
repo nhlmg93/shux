@@ -30,7 +30,39 @@ Same behavior as `./shux` from an interactive terminal.
 ```bash
 shux attach
 shux attach --bash   # only affects new daemon spawn
+shux attach -C       # experimental control mode on stdin/stdout
 ```
+
+### Control mode (experimental)
+
+`shux attach -C` switches the attach client to a line-oriented protocol for automation.
+It runs over stdin/stdout (no full-screen UI), and may change between releases.
+
+#### Incoming notifications
+
+Subscribe with `subscribe pane-output` and/or `subscribe layout-change`.
+
+- `%output ...` emits pane screen snapshots when pane output updates.
+- `%layout ...` emits window layout updates.
+
+#### Commands
+
+Each command is one line:
+
+```text
+subscribe pane-output layout-change
+new-window
+split horizontal
+select-pane p-2
+capture-pane
+```
+
+Response lines:
+
+- `ok ...` for success
+- `error ...` for invalid commands or rejected operations
+
+`capture-pane` returns quoted text from the cached pane screen snapshot.
 
 ## `shux detach`
 
