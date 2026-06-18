@@ -18,7 +18,7 @@ ifeq ($(V),1)
   QUIET :=
 endif
 
-.PHONY: build test test-sim test-e2e test-integration libghostty clean help
+.PHONY: build test test-sim test-e2e test-integration libghostty clean help docs-dev docs-build
 
 build: libghostty
 	$(QUIET)CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" go build -o shux .
@@ -30,6 +30,8 @@ help:
 	@echo "make test-sim   — run deterministic sim tests in Docker"
 	@echo "make test-e2e   — run e2e tests locally"
 	@echo "make test-integration — run integration tests locally"
+	@echo "make docs-dev    — run Starlight docs dev server"
+	@echo "make docs-build  — build Starlight docs site"
 	@echo "make clean      — remove local libghostty build"
 
 test: test-sim test-e2e
@@ -44,6 +46,12 @@ test-e2e: libghostty
 
 test-integration: libghostty
 	$(QUIET)$(GO_TEST) ./test/integration/...
+
+docs-dev:
+	$(QUIET)cd docs && npm run dev
+
+docs-build:
+	$(QUIET)cd docs && npm run build
 
 $(GHOSTTY_SRC)/.git:
 	$(QUIET)mkdir -p $(DEPS_DIR)

@@ -1,0 +1,35 @@
+name: Publish wiki
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/publish-wiki.yml'
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: 'clone (append) or init (force-push bootstrap)'
+        required: false
+        default: clone
+        type: choice
+        options:
+          - clone
+          - init
+
+permissions:
+  contents: write
+
+jobs:
+  publish-wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Andrew-Chen-Wang/github-wiki-action@v4
+        with:
+          path: wiki
+          strategy: ${{ github.event_name == 'workflow_dispatch' && inputs.strategy || 'clone' }}
+          ignore: |
+            README.md
+          commit-message: Sync wiki from ${{ github.sha }}

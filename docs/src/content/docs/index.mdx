@@ -1,0 +1,50 @@
+---
+title: shux
+description: An experimental terminal multiplexer with resurrection and Neovim-style Lua configuration.
+template: splash
+hero:
+  tagline: A simpler, modern terminal multiplexer with durable session recovery.
+  actions:
+    - text: Get started
+      link: /getting-started/install/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/nhlmg93/shux
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+shux is an experimental terminal multiplexer with a tmux-like attach flow, Neovim-style Lua configuration, and a resurrection layer that records pane output so you can reattach closer to the state you left.
+
+:::caution[Experimental]
+shux is under active development. Behavior and configuration may change between releases.
+:::
+
+## What makes shux different
+
+<CardGrid stagger>
+	<Card title="Resurrection" icon="rocket">
+		Detach and come back later. shux journals PTY output and layout so reattach can restore scrollback and pane structure.
+	</Card>
+	<Card title="Lua configuration" icon="setting">
+		Configure options, keymaps, and plugins with a Neovim-inspired `~/.config/shux/` layout.
+	</Card>
+	<Card title="Daemon + clients" icon="laptop">
+		One local daemon holds your sessions. Clients attach over SSH to the same backend you can detach from and rejoin.
+	</Card>
+	<Card title="tmux-like keys" icon="open-book">
+		Familiar prefix bindings for split, window, and pane navigation — customizable in Lua.
+	</Card>
+</CardGrid>
+
+## Documentation map
+
+| Section | What you'll learn |
+| --- | --- |
+| [Getting started](/getting-started/install/) | Build shux and run your first session |
+| [Concepts](/concepts/daemon/) | How the daemon, clients, and layout model fit together |
+| [Resurrection](/resurrection/overview/) | Detach, restart, and recovery behavior |
+| [Configuration](/configuration/overview/) | `init.lua`, options, and keymaps |
+| [CLI](/cli/commands/) | `attach`, `detach`, `restart`, and flags |

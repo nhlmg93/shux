@@ -7,8 +7,11 @@ Building shux to replace tmux with a simpler, modern, reliable architecture.
 ## Development Guidelines
 
 ### Documentation Boundaries
-- The `docs/` directory is only for shux terminal multiplexer end-user documentation.
+- The `docs/` directory is the **Astro Starlight** end-user documentation site (markdown in `docs/src/content/docs/`).
+- Published docs: [https://nhlmg93.github.io/shux/](https://nhlmg93.github.io/shux/) via GitHub Pages.
+- The GitHub wiki is a lightweight hub for links and community supplements only; canonical content lives in `docs/`.
 - Do not treat `docs/` as a place for internal developer notes, implementation scratch docs, or agent workflow notes.
+- Developer and agent notes belong in `AGENTS.md`, not in `docs/`.
 
 
 ### Testing
