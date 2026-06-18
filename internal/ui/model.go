@@ -107,6 +107,7 @@ type Model struct {
 	CopyCursor             copyPoint
 	CopySelection          copySelection
 	CopyRegister           string
+	Search                 searchState
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
@@ -150,6 +151,7 @@ func NewModel(mc ModelConfig) Model {
 		Keymaps:                keymaps,
 		Lua:                    mc.Lua,
 		PaneQuickSelectTimeout: quickSelectTimeout,
+		Search:                 newSearchState(),
 	}
 }
 
@@ -851,6 +853,7 @@ func (m Model) WithLayoutSnapshot(snap LayoutSnapshot) Model {
 
 func (m Model) WithPaneScreen(screen protocol.EventPaneScreenChanged) Model {
 	m.storePaneScreen(screen)
+	m.refreshSearchMatchesForPane(screen.PaneID)
 	return m
 }
 
@@ -984,8 +987,12 @@ func (m Model) viewString() string {
 				if m.CopyMode && active {
 					screen = m.copyModeScreenOverlay(screen)
 				}
-				canvas.drawPaneWithScreenEvent(p, active, quickLabel, screen)
+				overlay := m.searchOverlayForPane(p.PaneID)
+				canvas.drawPaneWithScreenEvent(p, active, quickLabel, screen, overlay)
 			}
+		}
+		if m.CopyMode {
+			canvas.drawOverlayStatus(copyModeStatusANSI, m.copyModeStatusText())
 		}
 		paneView = canvas.String()
 	}
@@ -1120,4 +1127,29 @@ func (m Model) hostname() string {
 		return "localhost"
 	}
 	return host
+}
+
+func (m Model) copyModeStatusText() string {
+	if m.Search.Active {
+		prefix := "/"
+		if m.Search.Direction == searchDirectionReverse {
+			prefix = "?"
+		}
+		return "[copy] " + prefix + m.Search.Query
+	}
+	if m.Search.Query == "" {
+		return "[copy] / ? search  n/N next-prev  q/esc exit"
+	}
+	if len(m.Search.Matches) == 0 {
+		return "[copy] " + m.Search.Query + "  0 matches"
+	}
+	match := m.Search.ActiveIndex + 1
+	if match <= 0 {
+		match = 1
+	}
+	suffix := ""
+	if m.Search.MatchLimited {
+		suffix = "+"
+	}
+	return fmt.Sprintf("[copy] %s  %d/%d%s", m.Search.Query, match, len(m.Search.Matches), suffix)
 }

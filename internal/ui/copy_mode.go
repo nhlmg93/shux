@@ -23,6 +23,10 @@ type copySelection struct {
 func (m Model) enterCopyMode() Model {
 	m.CopyMode = true
 	m.CopySelection = copySelection{}
+	m.Search.PaneID = m.ActivePaneID
+	if m.Search.ActiveIndex < 0 {
+		m.Search.ActiveIndex = -1
+	}
 	screen := m.paneScreen(m.ActivePaneID)
 	row, col := copyCursorForScreen(screen)
 	m.CopyCursor = copyPoint{Row: row, Col: col}
@@ -32,6 +36,7 @@ func (m Model) enterCopyMode() Model {
 func (m Model) exitCopyMode() Model {
 	m.CopyMode = false
 	m.CopySelection = copySelection{}
+	m.Search.Active = false
 	return m
 }
 
@@ -49,6 +54,25 @@ func copyCursorForScreen(screen protocol.EventPaneScreenChanged) (row int, col i
 }
 
 func (m Model) handleCopyModeKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.Search.Active {
+		return m.handleSearchPromptKey(msg), nil
+	}
+	switch msg.Key().Text {
+	case "/":
+		m.beginSearch(searchDirectionForward)
+		return m, nil
+	case "?":
+		m.beginSearch(searchDirectionReverse)
+		return m, nil
+	case "n":
+		if m.moveSearchSelection(false) {
+			return m, nil
+		}
+	case "N":
+		if m.moveSearchSelection(true) {
+			return m, nil
+		}
+	}
 	key := normalizeCopyKey(msg)
 	binding, ok := m.Keymaps.Lookup("copy_mode", key)
 	if !ok {
@@ -65,6 +89,32 @@ func (m Model) handleCopyModeKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m = m.exitCopyMode()
 	}
 	return m, cmd
+}
+
+func (m Model) handleSearchPromptKey(msg tea.KeyPressMsg) Model {
+	keyName := normalizeKeyName(msg.Key().String())
+	switch keyName {
+	case "escape":
+		m.Search.Active = false
+		return m
+	case "enter":
+		m.commitSearch()
+		return m
+	case "backspace":
+		if m.Search.Query == "" {
+			return m
+		}
+		runes := []rune(m.Search.Query)
+		m.Search.Query = string(runes[:len(runes)-1])
+		return m
+	}
+	text := msg.Key().Text
+	if text == "" {
+		return m
+	}
+	m.Search.Query = trimToRunes(m.Search.Query+text, searchMaxQueryRunes)
+	m.Search.Query = strings.TrimLeft(m.Search.Query, "\n\r")
+	return m
 }
 
 func normalizeCopyKey(msg tea.KeyPressMsg) string {
