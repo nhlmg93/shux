@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"shux/internal/actor"
 	"shux/internal/hub"
+	"shux/internal/luabind"
 	"shux/internal/persist"
 	"shux/internal/protocol"
 	"shux/internal/supervisor"
@@ -27,8 +28,6 @@ const (
 const bootstrapClientID = protocol.ClientID("bootstrap")
 const cacheClientID = protocol.ClientID("state-cache")
 
-var bootstrapSplitReq protocol.RequestID
-
 type Shux struct {
 	Logger *Logger
 	Config Config
@@ -37,11 +36,12 @@ type Shux struct {
 	DefaultWindowID  protocol.WindowID
 	DefaultPaneID    protocol.PaneID
 
-	hub         actor.Ref[protocol.Event]
-	supervisor  actor.Ref[protocol.Command]
-	actorCancel context.CancelFunc
-	cache       *stateCache
-	luaRuntime  any // *lua.Runtime; kept alive for plugin autocmds
+	hub          actor.Ref[protocol.Event]
+	supervisor   actor.Ref[protocol.Command]
+	actorCancel  context.CancelFunc
+	cache        *stateCache
+	bootstrapReq protocol.RequestID
+	luaRuntime   luabind.Runtime // kept alive for plugin autocmds
 
 	Autocmds *AutocmdRegistry
 
@@ -77,7 +77,7 @@ func NewShuxWithConfig(config Config) (*Shux, error) {
 	}, nil
 }
 
-func (a *Shux) SetLuaRuntime(rt any) {
+func (a *Shux) SetLuaRuntime(rt luabind.Runtime) {
 	a.luaRuntime = rt
 }
 
@@ -129,8 +129,8 @@ func (a *Shux) Close() error {
 	if cancel != nil {
 		cancel()
 	}
-	if rt, ok := a.luaRuntime.(interface{ Close() }); ok {
-		rt.Close()
+	if a.luaRuntime != nil {
+		a.luaRuntime.Close()
 	}
 	a.luaRuntime = nil
 	return a.Logger.Close()

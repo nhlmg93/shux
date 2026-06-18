@@ -6,12 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"shux/internal/cfg"
+	"shux/internal/luabind"
 	"shux/internal/protocol"
 )
-
-type luaInvoker interface {
-	CallKeymapRef(ref int)
-}
 
 func (m Model) handlePrefixKey(key string) (Model, tea.Cmd) {
 	m.Prefix = false
@@ -23,8 +20,9 @@ func (m Model) handlePrefixKey(key string) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if b.LuaCallback != 0 {
-		if inv, ok := m.Lua.(luaInvoker); ok {
-			inv.CallKeymapRef(b.LuaCallback)
+		var rt luabind.Runtime = m.Lua
+		if rt != nil {
+			rt.CallKeymapRef(b.LuaCallback)
 		}
 		return m, nil
 	}

@@ -3,7 +3,6 @@ package hub
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"shux/internal/actor"
 	"shux/internal/protocol"
@@ -45,8 +44,7 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Event], inbox <-ch
 			case protocol.EventNoop:
 			case protocol.EventRegisterSubscriber:
 				if _, ok := a.sinks[m.ClientID]; ok {
-					fmt.Fprintf(os.Stderr, "hub: duplicate EventRegisterSubscriber for %q (ignored)\n", m.ClientID)
-					continue
+					panic(fmt.Errorf("hub: duplicate EventRegisterSubscriber for %q", m.ClientID))
 				}
 				a.sinks[m.ClientID] = m.Sink
 			case protocol.EventUnregisterSubscriber:
