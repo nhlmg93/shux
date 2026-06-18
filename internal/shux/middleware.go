@@ -134,6 +134,21 @@ func ShuxUiMiddleware(app *Shux, ids *ClientIDSource) wish.Middleware {
 					}
 					_, _ = fmt.Fprintln(sess, msg)
 					return
+				case "query":
+					if len(command[1:]) > 0 {
+						wish.Fatalln(sess, "shux: query does not accept command arguments")
+						return
+					}
+					resp, err := runQueryRPC(app, sess)
+					if err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					if err := json.NewEncoder(sess).Encode(resp); err != nil {
+						wish.Fatalln(sess, err)
+						return
+					}
+					return
 				default:
 					wish.Fatalln(sess, "shux: unknown command")
 					return
@@ -198,4 +213,30 @@ func parseJSONFlag(args []string) (bool, []string, error) {
 		}
 	}
 	return jsonOut, rest, nil
+}
+
+func runQueryRPC(app *Shux, sess ssh.Session) (protocol.QueryResponse, error) {
+	var req protocol.QueryRequest
+	if err := json.NewDecoder(sess).Decode(&req); err != nil {
+		return protocol.QueryResponse{}, fmt.Errorf("shux: decode query request: %w", err)
+	}
+	switch req.Method {
+	case protocol.QueryListWindows:
+		return protocol.QueryResponse{Windows: app.ListWindows()}, nil
+	case protocol.QueryListPanes:
+		return protocol.QueryResponse{Panes: app.ListPanes()}, nil
+	case protocol.QueryDisplayMessage:
+		if req.Format == "" {
+			return protocol.QueryResponse{}, fmt.Errorf("shux: display-message requires FORMAT")
+		}
+		ctx := app.DisplayMessageContext()
+		return protocol.QueryResponse{
+			Display: &protocol.DisplayMessageInfo{
+				Message:               FormatDisplayMessage(req.Format, ctx),
+				DisplayMessageContext: ctx,
+			},
+		}, nil
+	default:
+		return protocol.QueryResponse{}, fmt.Errorf("shux: unknown query method %q", req.Method)
+	}
 }

@@ -1,7 +1,9 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,12 +12,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
+	"shux/internal/protocol"
 	"shux/internal/sshkey"
 )
 
@@ -219,47 +222,44 @@ func Restart(ctx context.Context, addr string) error {
 }
 
 func ListWindows(ctx context.Context, addr string, jsonOutput bool) error {
-	command := "list-windows"
-	if jsonOutput {
-		command += " --json"
-	}
-	out, err := runExec(ctx, addr, command)
+	resp, err := runQuery(ctx, addr, protocol.QueryRequest{Method: protocol.QueryListWindows})
 	if err != nil {
 		return fmt.Errorf("client: list-windows: %w", err)
 	}
-	if len(out) > 0 {
-		_, _ = os.Stdout.Write(out)
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Windows)
 	}
+	writeWindowsTable(os.Stdout, resp.Windows)
 	return nil
 }
 
 func ListPanes(ctx context.Context, addr string, jsonOutput bool) error {
-	command := "list-panes"
-	if jsonOutput {
-		command += " --json"
-	}
-	out, err := runExec(ctx, addr, command)
+	resp, err := runQuery(ctx, addr, protocol.QueryRequest{Method: protocol.QueryListPanes})
 	if err != nil {
 		return fmt.Errorf("client: list-panes: %w", err)
 	}
-	if len(out) > 0 {
-		_, _ = os.Stdout.Write(out)
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Panes)
 	}
+	writePanesTable(os.Stdout, resp.Panes)
 	return nil
 }
 
 func DisplayMessage(ctx context.Context, addr string, format string, jsonOutput bool) error {
-	command := "display-message " + shellQuote(format)
-	if jsonOutput {
-		command += " --json"
-	}
-	out, err := runExec(ctx, addr, command)
+	resp, err := runQuery(ctx, addr, protocol.QueryRequest{
+		Method: protocol.QueryDisplayMessage,
+		Format: format,
+	})
 	if err != nil {
 		return fmt.Errorf("client: display-message: %w", err)
 	}
-	if len(out) > 0 {
-		_, _ = os.Stdout.Write(out)
+	if resp.Display == nil {
+		return fmt.Errorf("client: display-message: daemon returned empty response")
 	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(resp.Display)
+	}
+	_, _ = fmt.Fprintln(os.Stdout, resp.Display.Message)
 	return nil
 }
 
@@ -283,8 +283,61 @@ func runExec(ctx context.Context, addr string, command string) ([]byte, error) {
 	return out, nil
 }
 
-func shellQuote(arg string) string {
-	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+func runQuery(ctx context.Context, addr string, req protocol.QueryRequest) (protocol.QueryResponse, error) {
+	sshClient, err := dialTrusted(ctx, addr)
+	if err != nil {
+		return protocol.QueryResponse{}, err
+	}
+	defer sshClient.Close()
+
+	sess, err := sshClient.NewSession()
+	if err != nil {
+		return protocol.QueryResponse{}, fmt.Errorf("client: new ssh session: %w", err)
+	}
+	defer sess.Close()
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return protocol.QueryResponse{}, fmt.Errorf("client: marshal query request: %w", err)
+	}
+	sess.Stdin = bytes.NewReader(payload)
+	out, err := sess.CombinedOutput("query")
+	if err != nil {
+		return protocol.QueryResponse{}, fmt.Errorf("%w: %s", err, out)
+	}
+	var resp protocol.QueryResponse
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return protocol.QueryResponse{}, fmt.Errorf("client: decode query response: %w", err)
+	}
+	return resp, nil
+}
+
+func writeWindowsTable(w io.Writer, windows []protocol.WindowInfo) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "INDEX\tSESSION\tWINDOW\tPANES")
+	for _, window := range windows {
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%d\n", window.Index, window.SessionID, window.WindowID, window.PaneCount)
+	}
+	_ = tw.Flush()
+}
+
+func writePanesTable(w io.Writer, panes []protocol.PaneInfo) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "INDEX\tSESSION\tWINDOW\tWIN_INDEX\tPANE\tCOL\tROW\tCOLS\tROWS")
+	for _, pane := range panes {
+		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%d\t%s\t%d\t%d\t%d\t%d\n",
+			pane.Index,
+			pane.SessionID,
+			pane.WindowID,
+			pane.WindowIndex,
+			pane.PaneID,
+			pane.Col,
+			pane.Row,
+			pane.Cols,
+			pane.Rows,
+		)
+	}
+	_ = tw.Flush()
 }
 
 func WaitReady(ctx context.Context, addr string, timeout time.Duration) error {

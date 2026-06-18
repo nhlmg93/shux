@@ -7,47 +7,20 @@ import (
 	"shux/internal/protocol"
 )
 
-type WindowInfo struct {
-	Index     int                `json:"index"`
-	SessionID protocol.SessionID `json:"session_id"`
-	WindowID  protocol.WindowID  `json:"window_id"`
-	PaneCount int                `json:"pane_count"`
-}
-
-type PaneInfo struct {
-	Index       int                `json:"index"`
-	SessionID   protocol.SessionID `json:"session_id"`
-	WindowID    protocol.WindowID  `json:"window_id"`
-	WindowIndex int                `json:"window_index"`
-	PaneID      protocol.PaneID    `json:"pane_id"`
-	Col         int                `json:"col"`
-	Row         int                `json:"row"`
-	Cols        int                `json:"cols"`
-	Rows        int                `json:"rows"`
-}
-
-type DisplayMessageContext struct {
-	SessionID   protocol.SessionID
-	WindowID    protocol.WindowID
-	WindowIndex int
-	PaneID      protocol.PaneID
-	PaneIndex   int
-}
-
-func (a *Shux) ListWindows() []WindowInfo {
+func (a *Shux) ListWindows() []protocol.WindowInfo {
 	if a.cache == nil {
 		return nil
 	}
 	sessionID := a.DefaultSessionID
 	windowIDs := a.cache.WindowIDs(sessionID)
-	windows := make([]WindowInfo, 0, len(windowIDs))
+	windows := make([]protocol.WindowInfo, 0, len(windowIDs))
 	for i, windowID := range windowIDs {
 		layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
 		paneCount := 0
 		if ok {
 			paneCount = len(layout.Panes)
 		}
-		windows = append(windows, WindowInfo{
+		windows = append(windows, protocol.WindowInfo{
 			Index:     i + 1,
 			SessionID: sessionID,
 			WindowID:  windowID,
@@ -57,20 +30,20 @@ func (a *Shux) ListWindows() []WindowInfo {
 	return windows
 }
 
-func (a *Shux) ListPanes() []PaneInfo {
+func (a *Shux) ListPanes() []protocol.PaneInfo {
 	if a.cache == nil {
 		return nil
 	}
 	sessionID := a.DefaultSessionID
 	windowIDs := a.cache.WindowIDs(sessionID)
-	panes := make([]PaneInfo, 0, len(windowIDs))
+	panes := make([]protocol.PaneInfo, 0, len(windowIDs))
 	for i, windowID := range windowIDs {
 		layout, ok := a.cache.LayoutSnapshot(sessionID, windowID)
 		if !ok {
 			continue
 		}
 		for _, pane := range layout.Panes {
-			panes = append(panes, PaneInfo{
+			panes = append(panes, protocol.PaneInfo{
 				Index:       len(panes) + 1,
 				SessionID:   sessionID,
 				WindowID:    windowID,
@@ -86,8 +59,8 @@ func (a *Shux) ListPanes() []PaneInfo {
 	return panes
 }
 
-func (a *Shux) DisplayMessageContext() DisplayMessageContext {
-	ctx := DisplayMessageContext{
+func (a *Shux) DisplayMessageContext() protocol.DisplayMessageContext {
+	ctx := protocol.DisplayMessageContext{
 		SessionID:   a.DefaultSessionID,
 		WindowID:    a.DefaultWindowID,
 		WindowIndex: 1,
@@ -116,7 +89,7 @@ func (a *Shux) DisplayMessageContext() DisplayMessageContext {
 	return ctx
 }
 
-func FormatDisplayMessage(format string, ctx DisplayMessageContext) string {
+func FormatDisplayMessage(format string, ctx protocol.DisplayMessageContext) string {
 	replacements := []string{
 		"#{session_id}", string(ctx.SessionID),
 		"#{window_id}", string(ctx.WindowID),
