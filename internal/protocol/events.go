@@ -127,6 +127,17 @@ func ValidateEvent(event Event) error {
 			return fmt.Errorf("protocol: EventPaneSplitCompleted: invalid Revision")
 		}
 		return nil
+	case EventPaneFocusResolved:
+		if err := validateRequestMeta("EventPaneFocusResolved", e.ClientID, e.RequestID); err != nil {
+			return err
+		}
+		if err := validateWindowTarget("EventPaneFocusResolved", e.SessionID, e.WindowID); err != nil {
+			return err
+		}
+		if !e.PaneID.Valid() {
+			return fmt.Errorf("protocol: EventPaneFocusResolved: invalid PaneID")
+		}
+		return nil
 	case EventCommandRejected:
 		if err := validateRequestMeta("EventCommandRejected", e.ClientID, e.RequestID); err != nil {
 			return err
@@ -357,6 +368,15 @@ type EventPaneSplitCompleted struct {
 	TargetPaneID PaneID
 	NewPaneID    PaneID
 	Revision     uint64
+}
+
+// EventPaneFocusResolved returns the pane focus selected for an originating client.
+type EventPaneFocusResolved struct {
+	ClientID  ClientID
+	RequestID RequestID
+	SessionID SessionID
+	WindowID  WindowID
+	PaneID    PaneID
 }
 
 // EventCommandRejected reports a bounded command failure without crashing actors.

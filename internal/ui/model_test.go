@@ -137,3 +137,50 @@ func TestViewUsesLuaStatuslineSegments(t *testing.T) {
 		t.Fatalf("status row should include lua segments, got %q", view)
 	}
 }
+
+func TestPaneQuickSelectLabel(t *testing.T) {
+	if got, ok := paneQuickSelectLabel(0); !ok || got != "1" {
+		t.Fatalf("index 0 = %q, %v; want %q, true", got, ok, "1")
+	}
+	if got, ok := paneQuickSelectLabel(9); !ok || got != "0" {
+		t.Fatalf("index 9 = %q, %v; want %q, true", got, ok, "0")
+	}
+	if got, ok := paneQuickSelectLabel(10); ok || got != "" {
+		t.Fatalf("index 10 = %q, %v; want empty,false", got, ok)
+	}
+}
+
+func TestPaneQuickSelectDigitStartsFocusCommand(t *testing.T) {
+	m := NewModel(ModelConfig{
+		ClientID:  protocol.ClientID("c-1"),
+		SessionID: protocol.SessionID("s-1"),
+		WindowID:  protocol.WindowID("w-1"),
+		PaneID:    protocol.PaneID("p-1"),
+	})
+	m = m.WithLayoutSnapshot(LayoutSnapshot{
+		SessionID:  "s-1",
+		WindowID:   "w-1",
+		WindowCols: 80,
+		WindowRows: 24,
+		Panes: []LayoutPane{
+			{PaneID: "p-1", Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: "p-2", Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	m.PaneQuickSelectEnabled = true
+
+	updated, _ := m.handlePaneQuickSelectKey("2")
+	got := updated.(Model)
+	if got.PaneQuickSelectEnabled {
+		t.Fatal("quick select should close after digit selection")
+	}
+	if len(got.Pending) != 1 {
+		t.Fatalf("pending size = %d, want 1", len(got.Pending))
+	}
+	if got.NextRequest != 1 {
+		t.Fatalf("next request = %d, want 1", got.NextRequest)
+	}
+	if got.Pending[got.NextRequest].Kind != pendingPaneFocus {
+		t.Fatalf("pending kind = %v, want pane focus", got.Pending[got.NextRequest].Kind)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,8 +17,12 @@ import (
 
 const maxPendingCommands = 32
 const prefixResizeStep = 5
+const defaultPaneQuickSelectTimeout = 2 * time.Second
 
 type initialRenderMsg struct{}
+type paneQuickSelectTimeoutMsg struct {
+	Nonce uint64
+}
 
 type pendingKind uint8
 
@@ -25,6 +30,7 @@ const (
 	pendingPaneSplit pendingKind = iota + 1
 	pendingPaneClose
 	pendingWindowCreate
+	pendingPaneFocus
 )
 
 type pendingCommand struct {
@@ -60,39 +66,43 @@ func (s *ProgramEventSink) DeliverEvent(_ context.Context, e protocol.Event) err
 // both omitted; the model wires Bubble Tea events to backend commands when
 // they're present and runs read-only otherwise.
 type ModelConfig struct {
-	ClientID   protocol.ClientID
-	SessionID  protocol.SessionID
-	WindowID   protocol.WindowID
-	PaneID     protocol.PaneID
-	Supervisor actor.Ref[protocol.Command]
-	Ctx        context.Context
-	OnExit     func(ExitIntent)
-	MapLeader  string
-	Keymaps    *cfg.Keymaps
-	Lua        luabind.Runtime // optional
+	ClientID               protocol.ClientID
+	SessionID              protocol.SessionID
+	WindowID               protocol.WindowID
+	PaneID                 protocol.PaneID
+	Supervisor             actor.Ref[protocol.Command]
+	Ctx                    context.Context
+	OnExit                 func(ExitIntent)
+	MapLeader              string
+	Keymaps                *cfg.Keymaps
+	Lua                    luabind.Runtime // optional
+	PaneQuickSelectTimeout time.Duration
 }
 
 type Model struct {
-	Title         string
-	ClientID      protocol.ClientID
-	SessionID     protocol.SessionID
-	WindowID      protocol.WindowID
-	PaneID        protocol.PaneID
-	ActivePaneID  protocol.PaneID
-	Pending       map[protocol.RequestID]pendingCommand
-	NextRequest   protocol.RequestID
-	Layout        LayoutSnapshot
-	WindowIDs     []protocol.WindowID
-	ClosedWindows map[protocol.WindowID]bool
-	Layouts       map[protocol.WindowID]LayoutSnapshot
-	WindowScreens map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged
-	Supervisor    actor.Ref[protocol.Command]
-	Ctx           context.Context
-	OnExit        func(ExitIntent)
-	Prefix        bool
-	MapLeader     string
-	Keymaps       *cfg.Keymaps
-	Lua           luabind.Runtime
+	Title                  string
+	ClientID               protocol.ClientID
+	SessionID              protocol.SessionID
+	WindowID               protocol.WindowID
+	PaneID                 protocol.PaneID
+	ActivePaneID           protocol.PaneID
+	Pending                map[protocol.RequestID]pendingCommand
+	NextRequest            protocol.RequestID
+	Layout                 LayoutSnapshot
+	WindowIDs              []protocol.WindowID
+	ClosedWindows          map[protocol.WindowID]bool
+	Layouts                map[protocol.WindowID]LayoutSnapshot
+	WindowScreens          map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged
+	Supervisor             actor.Ref[protocol.Command]
+	Ctx                    context.Context
+	OnExit                 func(ExitIntent)
+	Prefix                 bool
+	MapLeader              string
+	Keymaps                *cfg.Keymaps
+	Lua                    luabind.Runtime
+	PaneQuickSelectEnabled bool
+	PaneQuickSelectTimeout time.Duration
+	paneQuickSelectNonce   uint64
 }
 
 // NewModel returns a Model wired from cfg. Supervisor and Ctx must be set
@@ -112,25 +122,30 @@ func NewModel(mc ModelConfig) Model {
 	if keymaps == nil {
 		keymaps = cfg.DefaultKeymaps()
 	}
+	quickSelectTimeout := mc.PaneQuickSelectTimeout
+	if quickSelectTimeout <= 0 {
+		quickSelectTimeout = defaultPaneQuickSelectTimeout
+	}
 	return Model{
-		Title:         "shux",
-		ClientID:      mc.ClientID,
-		SessionID:     mc.SessionID,
-		WindowID:      mc.WindowID,
-		PaneID:        mc.PaneID,
-		ActivePaneID:  mc.PaneID,
-		Pending:       make(map[protocol.RequestID]pendingCommand),
-		Layout:        EmptyLayoutSnapshot(mc.SessionID, mc.WindowID),
-		WindowIDs:     []protocol.WindowID{mc.WindowID},
-		ClosedWindows: make(map[protocol.WindowID]bool),
-		Layouts:       make(map[protocol.WindowID]LayoutSnapshot),
-		WindowScreens: make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged),
-		Supervisor:    mc.Supervisor,
-		Ctx:           mc.Ctx,
-		OnExit:        mc.OnExit,
-		MapLeader:     mapLeader,
-		Keymaps:       keymaps,
-		Lua:           mc.Lua,
+		Title:                  "shux",
+		ClientID:               mc.ClientID,
+		SessionID:              mc.SessionID,
+		WindowID:               mc.WindowID,
+		PaneID:                 mc.PaneID,
+		ActivePaneID:           mc.PaneID,
+		Pending:                make(map[protocol.RequestID]pendingCommand),
+		Layout:                 EmptyLayoutSnapshot(mc.SessionID, mc.WindowID),
+		WindowIDs:              []protocol.WindowID{mc.WindowID},
+		ClosedWindows:          make(map[protocol.WindowID]bool),
+		Layouts:                make(map[protocol.WindowID]LayoutSnapshot),
+		WindowScreens:          make(map[protocol.WindowID]map[protocol.PaneID]protocol.EventPaneScreenChanged),
+		Supervisor:             mc.Supervisor,
+		Ctx:                    mc.Ctx,
+		OnExit:                 mc.OnExit,
+		MapLeader:              mapLeader,
+		Keymaps:                keymaps,
+		Lua:                    mc.Lua,
+		PaneQuickSelectTimeout: quickSelectTimeout,
 	}
 }
 
@@ -147,6 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg)
 	case tea.KeyReleaseMsg:
+		if m.PaneQuickSelectEnabled {
+			return m, nil
+		}
 		if !m.Prefix {
 			return m, m.dispatch(keyCommand(m.SessionID, m.WindowID, m.ActivePaneID, msg.Key(), protocol.KeyActionRelease))
 		}
@@ -158,6 +176,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Data:      []byte(msg.Content),
 		})
 	case tea.MouseMsg:
+		if m.PaneQuickSelectEnabled {
+			m.PaneQuickSelectEnabled = false
+		}
 		if shouldFocusPaneFromMouse(msg) {
 			if pane, ok := m.paneAt(msg.Mouse().X, msg.Mouse().Y); ok {
 				m.ActivePaneID = pane.PaneID
@@ -169,6 +190,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if cmd, ok := m.mouseCommand(msg); ok {
 			return m, m.dispatch(cmd)
+		}
+	case paneQuickSelectTimeoutMsg:
+		if m.PaneQuickSelectEnabled && msg.Nonce == m.paneQuickSelectNonce {
+			m.PaneQuickSelectEnabled = false
 		}
 	}
 	return m, nil
@@ -264,6 +289,15 @@ func (m Model) handleHubEvent(e protocol.Event) (Model, tea.Cmd) {
 			m.ActivePaneID = e.NewPaneID
 			m.Layout.ActivePane = normalizeActivePane(m.ActivePaneID, m.Layout.Panes)
 		}
+	case protocol.EventPaneFocusResolved:
+		if e.ClientID != m.ClientID {
+			return m, nil
+		}
+		if pending, ok := m.Pending[e.RequestID]; ok && pending.Kind == pendingPaneFocus {
+			delete(m.Pending, e.RequestID)
+			m.ActivePaneID = e.PaneID
+			m.Layout.ActivePane = normalizeActivePane(m.ActivePaneID, m.Layout.Panes)
+		}
 	case protocol.EventCommandRejected:
 		if e.ClientID == m.ClientID {
 			delete(m.Pending, e.RequestID)
@@ -291,6 +325,9 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.PaneQuickSelectEnabled {
+		return m.handlePaneQuickSelectKey(normalizePrefixKey(key))
+	}
 	if !m.Prefix {
 		if key == m.MapLeader {
 			m.Prefix = true
@@ -396,6 +433,63 @@ func (m Model) startPaneResize(edge protocol.PaneResizeEdge) (Model, tea.Cmd) {
 		Edge:         edge,
 		Delta:        prefixResizeStep,
 	})
+}
+
+func (m Model) startPaneFocusDirection(dir protocol.PaneFocusDirection) (Model, tea.Cmd) {
+	if !m.ClientID.Valid() || !m.ActivePaneID.Valid() {
+		return m, nil
+	}
+	req := m.rememberPending(pendingCommand{Kind: pendingPaneFocus})
+	return m, m.dispatch(protocol.CommandPaneFocus{
+		Meta:          protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID:     m.SessionID,
+		WindowID:      m.WindowID,
+		CurrentPaneID: m.ActivePaneID,
+		Direction:     dir,
+	})
+}
+
+func (m Model) startPaneFocusTarget(target protocol.PaneID) (Model, tea.Cmd) {
+	if !m.ClientID.Valid() || !target.Valid() {
+		return m, nil
+	}
+	req := m.rememberPending(pendingCommand{Kind: pendingPaneFocus})
+	return m, m.dispatch(protocol.CommandPaneFocus{
+		Meta:         protocol.CommandMeta{ClientID: m.ClientID, RequestID: req},
+		SessionID:    m.SessionID,
+		WindowID:     m.WindowID,
+		TargetPaneID: target,
+	})
+}
+
+func (m Model) startPaneQuickSelect() (Model, tea.Cmd) {
+	if len(m.Layout.Panes) == 0 {
+		return m, nil
+	}
+	m.PaneQuickSelectEnabled = true
+	m.paneQuickSelectNonce++
+	timeout := m.PaneQuickSelectTimeout
+	if timeout <= 0 {
+		timeout = defaultPaneQuickSelectTimeout
+	}
+	nonce := m.paneQuickSelectNonce
+	return m, tea.Tick(timeout, func(time.Time) tea.Msg {
+		return paneQuickSelectTimeoutMsg{Nonce: nonce}
+	})
+}
+
+func (m Model) handlePaneQuickSelectKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "escape":
+		m.PaneQuickSelectEnabled = false
+		return m, nil
+	}
+	if target, ok := paneQuickSelectTarget(key, m.Layout.Panes); ok {
+		m.PaneQuickSelectEnabled = false
+		return m.startPaneFocusTarget(target)
+	}
+	m.PaneQuickSelectEnabled = false
+	return m, nil
 }
 
 func keyActionFromPress(msg tea.KeyPressMsg) protocol.KeyAction {
@@ -763,6 +857,30 @@ func cycleActivePane(active protocol.PaneID, panes []LayoutPane) protocol.PaneID
 	return panes[0].PaneID
 }
 
+func paneQuickSelectTarget(key string, panes []LayoutPane) (protocol.PaneID, bool) {
+	for i, pane := range panes {
+		label, ok := paneQuickSelectLabel(i)
+		if !ok {
+			return "", false
+		}
+		if label == key {
+			return pane.PaneID, true
+		}
+	}
+	return "", false
+}
+
+func paneQuickSelectLabel(index int) (string, bool) {
+	switch {
+	case index >= 0 && index < 9:
+		return string(rune('1' + index)), true
+	case index == 9:
+		return "0", true
+	default:
+		return "", false
+	}
+}
+
 func (m Model) paneScreen(paneID protocol.PaneID) protocol.EventPaneScreenChanged {
 	screen, ok := m.activeScreens()[paneID]
 	if !ok {
@@ -834,7 +952,13 @@ func (m Model) viewString() string {
 				if m.Layout.ActivePane == "" && i == 0 {
 					active = true
 				}
-				canvas.drawPaneWithScreenEvent(p, active, m.paneScreen(p.PaneID))
+				quickLabel := ""
+				if m.PaneQuickSelectEnabled {
+					if label, ok := paneQuickSelectLabel(i); ok {
+						quickLabel = "[" + label + "]"
+					}
+				}
+				canvas.drawPaneWithScreenEvent(p, active, quickLabel, m.paneScreen(p.PaneID))
 			}
 		}
 		paneView = canvas.String()

@@ -39,7 +39,7 @@ func newRuneCanvas(cols, rows int) *runeCanvas {
 	return &runeCanvas{cols: cols, rows: rows, buf: buf, ansi: ansi}
 }
 
-func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, screen protocol.EventPaneScreenChanged) {
+func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, quickSelectLabel string, screen protocol.EventPaneScreenChanged) {
 	lines := screen.Lines
 	x, y := p.Col, p.Row
 	w, h := p.Cols, p.Rows
@@ -76,6 +76,9 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, screen p
 			c.set(col, y, horiz)
 		}
 		c.drawText(x, y, labelForPane(p))
+		if quickSelectLabel != "" {
+			c.drawText(x+1, y, quickSelectLabel)
+		}
 		return
 	}
 	if w == 1 {
@@ -99,6 +102,9 @@ func (c *runeCanvas) drawPaneWithScreenEvent(p LayoutPane, active bool, screen p
 	}
 	c.drawText(x+1, y, labelForPane(p))
 	c.drawPaneContent(x+1, y+1, w-2, h-2, lines)
+	if quickSelectLabel != "" {
+		c.drawText(x+2, y+1, quickSelectLabel)
+	}
 	if active {
 		c.drawCursor(x+1, y+1, w-2, h-2, screen.Cursor)
 	}

@@ -167,6 +167,8 @@ func (rt *Runtime) optIndex(L *glua.LState) int {
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
 	case "journal_replay_delay_ms":
 		L.Push(glua.LNumber(rt.Config.JournalReplayDelay.Milliseconds()))
+	case "display_panes_timeout_ms":
+		L.Push(glua.LNumber(rt.Config.PaneQuickSelectTimeout.Milliseconds()))
 	case "state_dir":
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":
@@ -193,6 +195,8 @@ func (rt *Runtime) optNewIndex(L *glua.LState) int {
 		rt.Config.JournalMaxMB = uint(luaNumber(val))
 	case "journal_replay_delay_ms":
 		rt.Config.JournalReplayDelay = time.Duration(luaNumber(val)) * time.Millisecond
+	case "display_panes_timeout_ms":
+		rt.Config.PaneQuickSelectTimeout = time.Duration(luaNumber(val)) * time.Millisecond
 	case "state_dir":
 		rt.Config.StateDir = luaString(val)
 	case "resurrection":
@@ -321,6 +325,8 @@ func (rt *Runtime) apiGetOption(L *glua.LState) int {
 		L.Push(glua.LNumber(rt.Config.JournalMaxMB))
 	case "journal_replay_delay_ms":
 		L.Push(glua.LNumber(rt.Config.JournalReplayDelay.Milliseconds()))
+	case "display_panes_timeout_ms":
+		L.Push(glua.LNumber(rt.Config.PaneQuickSelectTimeout.Milliseconds()))
 	case "state_dir":
 		L.Push(glua.LString(rt.Config.StateDir))
 	case "resurrection":

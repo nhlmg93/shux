@@ -2,6 +2,7 @@ package window
 
 import (
 	"fmt"
+	"math"
 
 	"shux/internal/protocol"
 )
@@ -532,11 +533,125 @@ func (l *Layout) Rect(id protocol.PaneID) (Rect, bool) {
 	return r, ok
 }
 
+// FocusTarget resolves geometry-based directional focus from current pane.
+// Returns false when current pane is unknown or no pane exists in that direction.
+func (l *Layout) FocusTarget(current protocol.PaneID, dir protocol.PaneFocusDirection) (protocol.PaneID, bool) {
+	cur, ok := l.Rect(current)
+	if !ok {
+		return "", false
+	}
+	bestID := protocol.PaneID("")
+	bestPenalty := 2
+	bestPrimary := math.MaxInt
+	bestOverlap := -1
+	bestSecondary := math.MaxInt
+	for _, pid := range l.PaneIDs() {
+		if pid == current {
+			continue
+		}
+		candidate, ok := l.Rect(pid)
+		if !ok {
+			continue
+		}
+		primary, valid := directionalGap(cur, candidate, dir)
+		if !valid {
+			continue
+		}
+		overlap := axisOverlap(cur, candidate, dir)
+		penalty := 1
+		if overlap > 0 {
+			penalty = 0
+		}
+		secondary := axisCenterDistance(cur, candidate, dir)
+		if penalty < bestPenalty ||
+			(penalty == bestPenalty && primary < bestPrimary) ||
+			(penalty == bestPenalty && primary == bestPrimary && overlap > bestOverlap) ||
+			(penalty == bestPenalty && primary == bestPrimary && overlap == bestOverlap && secondary < bestSecondary) {
+			bestID = pid
+			bestPenalty = penalty
+			bestPrimary = primary
+			bestOverlap = overlap
+			bestSecondary = secondary
+		}
+	}
+	if !bestID.Valid() {
+		return "", false
+	}
+	return bestID, true
+}
+
 // PaneIDs returns pane ids in stable render order.
 func (l *Layout) PaneIDs() []protocol.PaneID {
 	ids := make([]protocol.PaneID, 0, len(l.panes))
 	collectPaneIDs(l.root, &ids)
 	return ids
+}
+
+func directionalGap(from, to Rect, dir protocol.PaneFocusDirection) (int, bool) {
+	switch dir {
+	case protocol.PaneFocusLeft:
+		right := int(to.Col) + int(to.Cols)
+		return int(from.Col) - right, right <= int(from.Col)
+	case protocol.PaneFocusRight:
+		left := int(to.Col)
+		return left - (int(from.Col) + int(from.Cols)), left >= int(from.Col)+int(from.Cols)
+	case protocol.PaneFocusUp:
+		bottom := int(to.Row) + int(to.Rows)
+		return int(from.Row) - bottom, bottom <= int(from.Row)
+	case protocol.PaneFocusDown:
+		top := int(to.Row)
+		return top - (int(from.Row) + int(from.Rows)), top >= int(from.Row)+int(from.Rows)
+	default:
+		return 0, false
+	}
+}
+
+func axisOverlap(from, to Rect, dir protocol.PaneFocusDirection) int {
+	if dir == protocol.PaneFocusLeft || dir == protocol.PaneFocusRight {
+		return spanOverlap(int(from.Row), int(from.Row)+int(from.Rows), int(to.Row), int(to.Row)+int(to.Rows))
+	}
+	return spanOverlap(int(from.Col), int(from.Col)+int(from.Cols), int(to.Col), int(to.Col)+int(to.Cols))
+}
+
+func axisCenterDistance(from, to Rect, dir protocol.PaneFocusDirection) int {
+	if dir == protocol.PaneFocusLeft || dir == protocol.PaneFocusRight {
+		return abs(center(int(from.Row), int(from.Rows)) - center(int(to.Row), int(to.Rows)))
+	}
+	return abs(center(int(from.Col), int(from.Cols)) - center(int(to.Col), int(to.Cols)))
+}
+
+func center(start, size int) int {
+	return start + size/2
+}
+
+func spanOverlap(a0, a1, b0, b1 int) int {
+	start := maxInt(a0, b0)
+	end := minInt(a1, b1)
+	if end <= start {
+		return 0
+	}
+	return end - start
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func collectPaneIDs(n *layoutNode, ids *[]protocol.PaneID) {
@@ -641,13 +756,6 @@ func rangeOverlap(aStart, aEnd, bStart, bEnd int) int {
 		end = bEnd
 	}
 	return end - start
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
 
 func (l *Layout) assertRectInWindow(r Rect) error {

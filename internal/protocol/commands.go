@@ -106,6 +106,22 @@ func ValidateCommand(cmd Command) error {
 			return fmt.Errorf("protocol: CommandPaneSplit: invalid Direction %d", int(c.Direction))
 		}
 		return nil
+	case CommandPaneFocus:
+		if !c.Meta.Valid() {
+			return fmt.Errorf("protocol: CommandPaneFocus: invalid Meta")
+		}
+		if err := validateWindowTarget("CommandPaneFocus", c.SessionID, c.WindowID); err != nil {
+			return err
+		}
+		directionSet := c.Direction.Valid()
+		targetSet := c.TargetPaneID.Valid()
+		if directionSet == targetSet {
+			return fmt.Errorf("protocol: CommandPaneFocus: must set exactly one of Direction or TargetPaneID")
+		}
+		if directionSet && !c.CurrentPaneID.Valid() {
+			return fmt.Errorf("protocol: CommandPaneFocus: invalid CurrentPaneID")
+		}
+		return nil
 	case CommandPaneResizeDelta:
 		if !c.Meta.Empty() && !c.Meta.Valid() {
 			return fmt.Errorf("protocol: CommandPaneResizeDelta: invalid Meta")
@@ -221,6 +237,8 @@ func RouteSessionID(cmd Command) (SessionID, bool) {
 		return c.SessionID, true
 	case CommandPaneSplit:
 		return c.SessionID, true
+	case CommandPaneFocus:
+		return c.SessionID, true
 	case CommandPaneResizeDelta:
 		return c.SessionID, true
 	case CommandWindowSelectLayout:
@@ -272,6 +290,8 @@ func RouteWindowID(cmd Command) (WindowID, bool) {
 	case CommandWindowResize:
 		return c.WindowID, true
 	case CommandPaneSplit:
+		return c.WindowID, true
+	case CommandPaneFocus:
 		return c.WindowID, true
 	case CommandPaneResizeDelta:
 		return c.WindowID, true
@@ -373,6 +393,20 @@ const (
 
 func (d PaneDirection) Valid() bool {
 	return d == PaneDirectionLeft || d == PaneDirectionRight || d == PaneDirectionUp || d == PaneDirectionDown
+}
+
+// PaneFocusDirection is the directional target for pane navigation.
+type PaneFocusDirection int
+
+const (
+	PaneFocusLeft PaneFocusDirection = iota + 1
+	PaneFocusRight
+	PaneFocusUp
+	PaneFocusDown
+)
+
+func (d PaneFocusDirection) Valid() bool {
+	return d == PaneFocusLeft || d == PaneFocusRight || d == PaneFocusUp || d == PaneFocusDown
 }
 
 // CommandPaneResize updates a pane’s libghostty size after the terminal has
@@ -524,6 +558,17 @@ type CommandPaneSplit struct {
 	WindowID     WindowID
 	TargetPaneID PaneID
 	Direction    SplitDirection
+}
+
+// CommandPaneFocus requests client-scoped pane focus resolution inside a window.
+// Set exactly one of Direction (with CurrentPaneID) or TargetPaneID.
+type CommandPaneFocus struct {
+	Meta          CommandMeta
+	SessionID     SessionID
+	WindowID      WindowID
+	CurrentPaneID PaneID
+	Direction     PaneFocusDirection
+	TargetPaneID  PaneID
 }
 
 // PaneResizeEdge identifies which pane edge should move for resize delta.

@@ -5,12 +5,13 @@ import "shux/internal/cfg"
 type Config = cfg.Config
 
 const (
-	DefaultShellPath    = cfg.DefaultShellPath
-	BashShellPath       = cfg.BashShellPath
-	DefaultBindAddr     = cfg.DefaultBindAddr
-	DefaultMapLeader    = cfg.DefaultMapLeader
-	DefaultScrollback   = cfg.DefaultScrollback
-	DefaultJournalMaxMB = cfg.DefaultJournalMaxMB
+	DefaultShellPath              = cfg.DefaultShellPath
+	BashShellPath                 = cfg.BashShellPath
+	DefaultBindAddr               = cfg.DefaultBindAddr
+	DefaultMapLeader              = cfg.DefaultMapLeader
+	DefaultScrollback             = cfg.DefaultScrollback
+	DefaultJournalMaxMB           = cfg.DefaultJournalMaxMB
+	DefaultPaneQuickSelectTimeout = cfg.DefaultPaneQuickSelectTimeout
 )
 
 type BuiltinKeyAction = cfg.BuiltinKeyAction
@@ -25,6 +26,11 @@ const (
 	ActionResizePaneUp    = cfg.ActionResizePaneUp
 	ActionResizePaneRight = cfg.ActionResizePaneRight
 	ActionNextPane        = cfg.ActionNextPane
+	ActionFocusPaneLeft   = cfg.ActionFocusPaneLeft
+	ActionFocusPaneRight  = cfg.ActionFocusPaneRight
+	ActionFocusPaneUp     = cfg.ActionFocusPaneUp
+	ActionFocusPaneDown   = cfg.ActionFocusPaneDown
+	ActionDisplayPanes    = cfg.ActionDisplayPanes
 	ActionClosePane       = cfg.ActionClosePane
 	ActionNewWindow       = cfg.ActionNewWindow
 	ActionNextWindow      = cfg.ActionNextWindow

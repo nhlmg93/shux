@@ -73,6 +73,8 @@ func (a *Actor) Run(ctx context.Context, _ actor.Ref[protocol.Command], inbox <-
 				a.handleWindowResize(ctx, m)
 			case protocol.CommandPaneSplit:
 				a.handlePaneSplit(ctx, m)
+			case protocol.CommandPaneFocus:
+				a.handlePaneFocus(ctx, m)
 			case protocol.CommandPaneResizeDelta:
 				a.handlePaneResizeDelta(ctx, m)
 			case protocol.CommandWindowSelectLayout:
@@ -216,6 +218,33 @@ func (a *Actor) handlePaneSwap(ctx context.Context, m protocol.CommandPaneSwap) 
 	a.emitLayout(ctx, m.SessionID, m.WindowID)
 }
 
+func (a *Actor) handlePaneFocus(ctx context.Context, m protocol.CommandPaneFocus) {
+	target := m.TargetPaneID
+	if m.Direction.Valid() {
+		if _, ok := a.Layout.Rect(m.CurrentPaneID); !ok {
+			a.rejectFocus(ctx, m, "current pane missing")
+			return
+		}
+		next, ok := a.Layout.FocusTarget(m.CurrentPaneID, m.Direction)
+		if !ok {
+			target = m.CurrentPaneID
+		} else {
+			target = next
+		}
+	}
+	if _, ok := a.Layout.Rect(target); !ok {
+		a.rejectFocus(ctx, m, "target pane missing")
+		return
+	}
+	a.emit(ctx, protocol.EventPaneFocusResolved{
+		ClientID:  m.Meta.ClientID,
+		RequestID: m.Meta.RequestID,
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		PaneID:    target,
+	})
+}
+
 func (a *Actor) nextPaneID() protocol.PaneID {
 	a.seq++
 	return protocol.PaneID("p-" + strconv.FormatUint(a.seq, 10))
@@ -299,6 +328,17 @@ func (a *Actor) rejectPaneSwap(ctx context.Context, m protocol.CommandPaneSwap, 
 		SessionID: m.SessionID,
 		WindowID:  m.WindowID,
 		Command:   "swap-pane",
+		Reason:    reason,
+	})
+}
+
+func (a *Actor) rejectFocus(ctx context.Context, m protocol.CommandPaneFocus, reason string) {
+	a.emit(ctx, protocol.EventCommandRejected{
+		ClientID:  m.Meta.ClientID,
+		RequestID: m.Meta.RequestID,
+		SessionID: m.SessionID,
+		WindowID:  m.WindowID,
+		Command:   "pane-focus",
 		Reason:    reason,
 	})
 }

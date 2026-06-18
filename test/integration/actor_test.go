@@ -299,6 +299,177 @@ func TestHub_pane_resize_delta_updates_layout(t *testing.T) {
 	})
 }
 
+func TestHub_pane_focus_grid_navigation_and_target(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	ref, events := startWindowWithEvents(t, ctx, "test-pane-focus-grid")
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 1},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitVertical,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane2ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  2,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 24},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    1,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane2ID,
+		Revision:     2,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 2},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		Direction:    protocol.SplitHorizontal,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane3ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  3,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 12},
+			{PaneID: initPane3ID, Col: 0, Row: 12, Cols: 40, Rows: 12},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 24},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    2,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPaneID,
+		NewPaneID:    initPane3ID,
+		Revision:     3,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneSplit{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 3},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPane2ID,
+		Direction:    protocol.SplitHorizontal,
+	})
+	assertEvent(t, events, protocol.EventPaneCreated{SessionID: initSessionID, WindowID: initWindowID, PaneID: initPane4ID})
+	assertEvent(t, events, protocol.EventWindowLayoutChanged{
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		Revision:  4,
+		Cols:      80,
+		Rows:      24,
+		Panes: []protocol.EventLayoutPane{
+			{PaneID: initPaneID, Col: 0, Row: 0, Cols: 40, Rows: 12},
+			{PaneID: initPane3ID, Col: 0, Row: 12, Cols: 40, Rows: 12},
+			{PaneID: initPane2ID, Col: 40, Row: 0, Cols: 40, Rows: 12},
+			{PaneID: initPane4ID, Col: 40, Row: 12, Cols: 40, Rows: 12},
+		},
+	})
+	assertEvent(t, events, protocol.EventPaneSplitCompleted{
+		ClientID:     testClientID,
+		RequestID:    3,
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPane2ID,
+		NewPaneID:    initPane4ID,
+		Revision:     4,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneFocus{
+		Meta:          protocol.CommandMeta{ClientID: testClientID, RequestID: 10},
+		SessionID:     initSessionID,
+		WindowID:      initWindowID,
+		CurrentPaneID: initPaneID,
+		Direction:     protocol.PaneFocusRight,
+	})
+	assertEvent(t, events, protocol.EventPaneFocusResolved{
+		ClientID:  testClientID,
+		RequestID: 10,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane2ID,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneFocus{
+		Meta:          protocol.CommandMeta{ClientID: testClientID, RequestID: 11},
+		SessionID:     initSessionID,
+		WindowID:      initWindowID,
+		CurrentPaneID: initPaneID,
+		Direction:     protocol.PaneFocusDown,
+	})
+	assertEvent(t, events, protocol.EventPaneFocusResolved{
+		ClientID:  testClientID,
+		RequestID: 11,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane3ID,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneFocus{
+		Meta:          protocol.CommandMeta{ClientID: testClientID, RequestID: 12},
+		SessionID:     initSessionID,
+		WindowID:      initWindowID,
+		CurrentPaneID: initPane4ID,
+		Direction:     protocol.PaneFocusLeft,
+	})
+	assertEvent(t, events, protocol.EventPaneFocusResolved{
+		ClientID:  testClientID,
+		RequestID: 12,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane3ID,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneFocus{
+		Meta:          protocol.CommandMeta{ClientID: testClientID, RequestID: 13},
+		SessionID:     initSessionID,
+		WindowID:      initWindowID,
+		CurrentPaneID: initPane4ID,
+		Direction:     protocol.PaneFocusUp,
+	})
+	assertEvent(t, events, protocol.EventPaneFocusResolved{
+		ClientID:  testClientID,
+		RequestID: 13,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane2ID,
+	})
+
+	testutil.MustSend(t, ctx, ref, protocol.CommandPaneFocus{
+		Meta:         protocol.CommandMeta{ClientID: testClientID, RequestID: 14},
+		SessionID:    initSessionID,
+		WindowID:     initWindowID,
+		TargetPaneID: initPane4ID,
+	})
+	assertEvent(t, events, protocol.EventPaneFocusResolved{
+		ClientID:  testClientID,
+		RequestID: 14,
+		SessionID: initSessionID,
+		WindowID:  initWindowID,
+		PaneID:    initPane4ID,
+	})
+}
+
 func TestHub_pane_resize_delta_rejected_when_min_size_hit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

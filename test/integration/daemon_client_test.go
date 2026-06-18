@@ -82,7 +82,7 @@ func TestClientQuitBindingDoesNotStopDaemonWhenPeerRemains(t *testing.T) {
 	go func() { peerDone <- attachAndDetachAfter(t, addr, 400*time.Millisecond) }()
 	time.Sleep(100 * time.Millisecond)
 
-	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, '!'}, 0)
 
 	select {
 	case <-peerDone:
@@ -130,7 +130,7 @@ func TestDaemonStopsAfterClientQuitBinding(t *testing.T) {
 	if err := client.WaitReady(t.Context(), addr, 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	attachAndSendKeys(t, addr, []byte{sshCtrlB, 'q'}, 0)
+	attachAndSendKeys(t, addr, []byte{sshCtrlB, '!'}, 0)
 
 	select {
 	case err := <-done:
